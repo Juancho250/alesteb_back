@@ -12,6 +12,8 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
+app.use("/api/stats", require("./routes/stats.routes"));
+
 app.use(
   cors({
     origin: "*", // luego lo restringimos
