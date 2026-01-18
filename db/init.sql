@@ -52,3 +52,12 @@ CREATE TABLE IF NOT EXISTS product_images (
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
 
+CREATE TABLE banners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  description TEXT,
+  image_url TEXT NOT NULL,
+  button_text TEXT DEFAULT 'Ver más',
+  button_link TEXT DEFAULT '/productos',
+  is_active BOOLEAN DEFAULT 1
+);
