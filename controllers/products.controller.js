@@ -10,17 +10,20 @@ exports.getAll = (req, res) => {
 
 // Crear producto
 exports.create = (req, res) => {
-  const { name, price, stock } = req.body;
+  const { name, price, stock, category } = req.body;
+  const image = req.file ? req.file.path : null;
 
   db.run(
-    "INSERT INTO products (name, price, stock) VALUES (?, ?, ?)",
-    [name, price, stock],
+    `INSERT INTO products (name, price, stock, category, image)
+     VALUES (?, ?, ?, ?, ?)`,
+    [name, price, stock, category, image],
     function (err) {
       if (err) return res.status(500).json(err);
       res.json({ id: this.lastID });
     }
   );
 };
+
 
 // Actualizar producto
 exports.update = (req, res) => {
