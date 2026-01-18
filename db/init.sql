@@ -1,8 +1,7 @@
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL,
-  role TEXT NOT NULL
+  password TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -27,4 +26,20 @@ CREATE TABLE IF NOT EXISTS sale_items (
   price REAL,
   FOREIGN KEY (sale_id) REFERENCES sales(id),
   FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+-- Roles
+CREATE TABLE IF NOT EXISTS roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
+
+-- Relación Users-Roles
+CREATE TABLE IF NOT EXISTS user_roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  role_id INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (role_id) REFERENCES roles(id),
+  UNIQUE(user_id, role_id)
 );

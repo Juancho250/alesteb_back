@@ -47,3 +47,19 @@ exports.remove = (req, res) => {
   });
 };
 
+
+// Obtener producto por ID (WEB)
+exports.getById = (req, res) => {
+  const { id } = req.params;
+
+  db.get(
+    "SELECT * FROM products WHERE id = ?",
+    [id],
+    (err, row) => {
+      if (err) return res.status(500).json(err);
+      if (!row) return res.status(404).json({ message: "Producto no encontrado" });
+
+      res.json(row);
+    }
+  );
+};
