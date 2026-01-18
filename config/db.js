@@ -1,6 +1,5 @@
 const { Pool } = require("pg");
 require("dotenv").config();
-
 // Usamos Pool para gestionar múltiples conexiones eficientemente
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
