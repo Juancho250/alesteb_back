@@ -3,9 +3,13 @@ const auth = require("../middleware/auth.middleware");
 const ctrl = require("../controllers/products.controller");
 const upload = require("../middleware/upload.middleware");
 
-// PRIVADAS (ADMIN)
-router.post("/", auth, upload.single("image"), ctrl.create);
-    
+router.post(
+  "/",
+  auth,
+  upload.array("images", 6),
+  ctrl.create
+);
+
 // 🌐 RUTAS PÚBLICAS (WEB)
 router.get("/", ctrl.getAll);
 router.get("/:id", ctrl.getById);
