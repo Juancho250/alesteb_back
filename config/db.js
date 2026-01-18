@@ -1,13 +1,15 @@
 const { Pool } = require("pg");
-require("dotenv").config();
-// Usamos Pool para gestionar múltiples conexiones eficientemente
+const dns = require("node:dns");
+
+// Forzar a Node.js a preferir IPv4 sobre IPv6
+dns.setDefaultResultOrder("ipv4first");
+
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false, // Necesario para servicios como Render y Supabase
+    rejectUnauthorized: false,
   },
 });
-
 // Verificación de conexión
 db.connect((err, client, release) => {
   if (err) {
