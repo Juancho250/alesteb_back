@@ -25,14 +25,17 @@ exports.getAll = (req, res) => {
 // Crear producto
 exports.create = (req, res) => {
   const { name, price, stock, category } = req.body;
-  const images = req.files || [];
+  const images = Array.isArray(req.files) ? req.files : [];
 
   db.run(
     `INSERT INTO products (name, price, stock, category)
      VALUES (?, ?, ?, ?)`,
     [name, price, stock, category],
     function (err) {
-      if (err) return res.status(500).json(err);
+      if (err) {
+        console.error("INSERT PRODUCT ERROR:", err);
+        return res.status(500).json(err);
+      }
 
       const productId = this.lastID;
 
@@ -46,7 +49,8 @@ exports.create = (req, res) => {
       );
 
       images.forEach((img, index) => {
-        stmt.run(productId, img.path, index === 0 ? 1 : 0);
+        const imageUrl = img.path || img.secure_url;
+        stmt.run(productId, imageUrl, index === 0 ? 1 : 0);
       });
 
       stmt.finalize(() => {
@@ -55,6 +59,7 @@ exports.create = (req, res) => {
     }
   );
 };
+
 
 
 // Actualizar producto
