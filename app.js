@@ -9,8 +9,9 @@ const usersRoutes = require('./routes/users.routes');
 const salesRoutes = require("./routes/sales.routes");
 const bannerRoutes = require("./routes/banners.routes");
 const app = express();
+const expensesRoutes= require("./routes/expenses.routes.js");
 
-
+app.use("/expenses", expensesRoutes);
 app.use(cors());
 app.use(express.json());
 app.use("/api/banners", bannerRoutes);
