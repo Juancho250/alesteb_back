@@ -7,16 +7,14 @@ exports.createSale = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Insertar en sales 
-    // Si falla aquí, es porque 'sale_type' no existe en tu tabla 'sales'
+    // CAMBIO AQUÍ: Usamos "total" en lugar de "total_amount"
     const saleResult = await client.query(
-      `INSERT INTO sales (total_amount, customer_id, sale_type, payment_status)
+      `INSERT INTO sales (total, customer_id, sale_type, payment_status)
        VALUES ($1, $2, $3, $4) RETURNING id`,
       [total, customer_id, sale_type || 'fisica', 'paid']
     );
     const saleId = saleResult.rows[0].id;
 
-    // 2. Insertar items
     for (const item of items) {
       await client.query(
         `INSERT INTO sale_items (sale_id, product_id, quantity, price)
@@ -24,23 +22,17 @@ exports.createSale = async (req, res) => {
         [saleId, item.id, item.quantity, item.price]
       );
 
-      // 3. Actualizar stock
       await client.query(
         `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1`,
         [item.quantity, item.id]
       );
     }
 
-    // 4. Actualizar total_spent (Opcional - envuelto en try/catch interno)
-    try {
-      if (customer_id) {
-        await client.query(
-          `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
-          [total, customer_id]
-        );
-      }
-    } catch (e) { 
-      console.log("Nota: No se pudo actualizar total_spent, posiblemente falta la columna."); 
+    if (customer_id) {
+      await client.query(
+        `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
+        [total, customer_id]
+      );
     }
 
     await client.query("COMMIT");
@@ -49,15 +41,11 @@ exports.createSale = async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("ERROR REAL EN BD:", error.message);
-    res.status(500).json({ 
-      message: "Error al registrar venta", 
-      error: error.message // IMPORTANTE: Esto te dirá qué columna falta
-    });
+    res.status(500).json({ message: "Error en base de datos", error: error.message });
   } finally {
     client.release();
   }
 };
-
 // ACTUALIZA TAMBIÉN ESTA PARTE PARA QUE NO DE ERROR AL VER EL DETALLE
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
@@ -74,13 +62,12 @@ exports.getSaleById = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-// Obtener todas las ventas
 exports.getSales = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
         s.id,
-        s.total_amount as total,
+        s.total as total, -- Cambiado de total_amount a total
         s.sale_type,
         s.created_at,
         u.name as customer_name,
@@ -89,12 +76,9 @@ exports.getSales = async (req, res) => {
       LEFT JOIN users u ON s.customer_id = u.id
       ORDER BY s.created_at DESC
     `);
-
     res.json(result.rows);
   } catch (error) {
-    console.error("GET SALES ERROR:", error);
     res.status(500).json({ message: "Error al obtener ventas" });
   }
 };
-
 
