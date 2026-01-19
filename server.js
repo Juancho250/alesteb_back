@@ -1,4 +1,8 @@
-process.env.NODE_OPTIONS = "--dns-result-order=ipv4first";
-require("dotenv").config();
+import 'dotenv/config'; // 1. Cargar env antes que nada
+import app from "./app.js"; // 2. Añadir la extensión .js (obligatorio en ESM)
 
-const pool = require("./config/db");
+const PORT = process.env.PORT || 4000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor corriendo en: http://localhost:${PORT}`);
+});
