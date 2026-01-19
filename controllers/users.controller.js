@@ -26,30 +26,28 @@ exports.getUsers = async (req, res) => {
   }
 };
 
-// Crear usuario
 exports.createUser = async (req, res) => {
-  const { email, password } = req.body;
+  // Añadimos los nuevos campos que configuramos para estadísticas y registro
+  const { email, password, name, phone, cedula, city, address } = req.body;
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await db.query(
       `
-      INSERT INTO users (email, password)
-      VALUES ($1, $2)
-      RETURNING id, email
+      INSERT INTO users (email, password, name, phone, cedula, city, address, user_roles)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'customer')
+      RETURNING id, email, name, cedula
       `,
-      [email, hashedPassword]
+      [email, hashedPassword, name, phone, cedula, city, address]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("CREATE USER ERROR:", error);
-
     if (error.code === "23505") {
-      return res.status(409).json({ message: "Email ya registrado" });
+      return res.status(409).json({ message: "La cédula o el email ya existen" });
     }
-
     res.status(500).json({ message: "Error al crear usuario" });
   }
 };
