@@ -1,109 +1,149 @@
 const db = require("../config/db");
 
 // Obtener todos los productos
-exports.getAll = (req, res) => {
-  const sql = `
-    SELECT 
-      p.*,
-      (
-        SELECT url 
-        FROM product_images 
-        WHERE product_id = p.id AND is_main = 1
-        LIMIT 1
-      ) AS main_image
-    FROM products p
-    ORDER BY p.created_at DESC
-  `;
+exports.getAll = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        p.*,
+        (
+          SELECT url
+          FROM product_images
+          WHERE product_id = p.id
+            AND is_main = true
+          LIMIT 1
+        ) AS main_image
+      FROM products p
+      ORDER BY p.created_at DESC
+    `);
 
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json(err);
-    res.json(rows);
-  });
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET PRODUCTS ERROR:", error);
+    res.status(500).json({ message: "Error al obtener productos" });
+  }
 };
 
-
 // Crear producto
-exports.create = (req, res) => {
+exports.create = async (req, res) => {
   const { name, price, stock, category } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
 
-  db.run(
-    `INSERT INTO products (name, price, stock, category)
-     VALUES (?, ?, ?, ?)`,
-    [name, price, stock, category],
-    function (err) {
-      if (err) {
-        console.error("INSERT PRODUCT ERROR:", err);
-        return res.status(500).json(err);
+  const client = await db.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const productResult = await client.query(
+      `
+      INSERT INTO products (name, price, stock, category)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id
+      `,
+      [name, price, stock, category]
+    );
+
+    const productId = productResult.rows[0].id;
+
+    if (images.length > 0) {
+      const insertImageQuery = `
+        INSERT INTO product_images (product_id, url, is_main)
+        VALUES ($1, $2, $3)
+      `;
+
+      for (let i = 0; i < images.length; i++) {
+        const imageUrl = images[i].path || images[i].secure_url;
+
+        await client.query(insertImageQuery, [
+          productId,
+          imageUrl,
+          i === 0 // primera imagen = principal
+        ]);
       }
-
-      const productId = this.lastID;
-
-      if (images.length === 0) {
-        return res.json({ id: productId });
-      }
-
-      const stmt = db.prepare(
-        `INSERT INTO product_images (product_id, url, is_main)
-         VALUES (?, ?, ?)`
-      );
-
-      images.forEach((img, index) => {
-        const imageUrl = img.path || img.secure_url;
-        stmt.run(productId, imageUrl, index === 0 ? 1 : 0);
-      });
-
-      stmt.finalize(() => {
-        res.json({ id: productId });
-      });
     }
-  );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({ id: productId });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("CREATE PRODUCT ERROR:", error);
+    res.status(500).json({ message: "Error al crear producto" });
+  } finally {
+    client.release();
+  }
 };
 
-
-
 // Actualizar producto
-exports.update = (req, res) => {
+exports.update = async (req, res) => {
   const { id } = req.params;
   const { name, price, stock } = req.body;
 
-  db.run(
-    "UPDATE products SET name=?, price=?, stock=? WHERE id=?",
-    [name, price, stock, id],
-    function (err) {
-      if (err) return res.status(500).json(err);
-      res.json({ updated: this.changes });
-    }
-  );
+  try {
+    const result = await db.query(
+      `
+      UPDATE products
+      SET name = $1,
+          price = $2,
+          stock = $3
+      WHERE id = $4
+      `,
+      [name, price, stock, id]
+    );
+
+    res.json({ updated: result.rowCount });
+  } catch (error) {
+    console.error("UPDATE PRODUCT ERROR:", error);
+    res.status(500).json({ message: "Error al actualizar producto" });
+  }
 };
 
 // Eliminar producto
-exports.remove = (req, res) => {
+exports.remove = async (req, res) => {
   const { id } = req.params;
 
-  db.run("DELETE FROM products WHERE id=?", [id], function (err) {
-    if (err) return res.status(500).json(err);
-    res.json({ deleted: this.changes });
-  });
-};
-
-
-// Obtener producto por ID (WEB)
-exports.getById = (req, res) => {
-  const { id } = req.params;
-
-  db.get("SELECT * FROM products WHERE id = ?", [id], (err, product) => {
-    if (err) return res.status(500).json(err);
-    if (!product) return res.status(404).json({ message: "No encontrado" });
-
-    db.all(
-      "SELECT id, url, is_main FROM product_images WHERE product_id = ?",
-      [id],
-      (err, images) => {
-        if (err) return res.status(500).json(err);
-        res.json({ ...product, images });
-      }
+  try {
+    const result = await db.query(
+      "DELETE FROM products WHERE id = $1",
+      [id]
     );
-  });
+
+    res.json({ deleted: result.rowCount });
+  } catch (error) {
+    console.error("DELETE PRODUCT ERROR:", error);
+    res.status(500).json({ message: "Error al eliminar producto" });
+  }
 };
 
+// Obtener producto por ID
+exports.getById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const productResult = await db.query(
+      "SELECT * FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (productResult.rows.length === 0) {
+      return res.status(404).json({ message: "No encontrado" });
+    }
+
+    const imagesResult = await db.query(
+      `
+      SELECT id, url, is_main
+      FROM product_images
+      WHERE product_id = $1
+      `,
+      [id]
+    );
+
+    res.json({
+      ...productResult.rows[0],
+      images: imagesResult.rows
+    });
+  } catch (error) {
+    console.error("GET PRODUCT BY ID ERROR:", error);
+    res.status(500).json({ message: "Error al obtener producto" });
+  }
+};

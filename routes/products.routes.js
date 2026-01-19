@@ -1,8 +1,9 @@
 const router = require("express").Router();
-const auth = require("../middleware/auth.middleware");
+const { auth } = require("../middleware/auth.middleware");
 const ctrl = require("../controllers/products.controller");
 const upload = require("../middleware/upload.middleware");
 
+// 🔐 CREAR PRODUCTO (ADMIN)
 router.post(
   "/",
   auth,
@@ -10,11 +11,11 @@ router.post(
   ctrl.create
 );
 
-// 🌐 RUTAS PÚBLICAS (WEB)
+// 🌐 RUTAS PÚBLICAS
 router.get("/", ctrl.getAll);
 router.get("/:id", ctrl.getById);
 
-// 🔐 RUTAS PRIVADAS (ADMIN)
+// 🔐 ACTUALIZAR / ELIMINAR (ADMIN)
 router.put("/:id", auth, ctrl.update);
 router.delete("/:id", auth, ctrl.remove);
 

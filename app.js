@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const helmet = require("helmet");
 const cors = require("cors");
 const authRoutes = require("./routes/auth.routes");
 const productRoutes = require("./routes/products.routes");
@@ -24,3 +25,13 @@ app.use(
   })
 );
 module.exports = app;
+
+
+app.use(helmet());
+app.use(cors({
+  origin: [
+    "https://alestebadmin.vercel.app",
+    "https://alesteb.vercel.app/"
+  ],
+  credentials: true
+}));

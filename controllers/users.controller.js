@@ -1,45 +1,80 @@
-// controllers/users.controller.js
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('./db/database.sqlite');
+const db = require("../config/db");
+const bcrypt = require("bcrypt");
 
-exports.getUsers = (req, res) => {
-  const sql = `
-    SELECT u.id, u.email,
-      GROUP_CONCAT(r.name) as roles
-    FROM users u
-    LEFT JOIN user_roles ur ON ur.user_id = u.id
-    LEFT JOIN roles r ON r.id = ur.role_id
-    GROUP BY u.id
-  `;
+// Obtener usuarios con roles
+exports.getUsers = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        u.id,
+        u.email,
+        COALESCE(
+          STRING_AGG(r.name, ', '),
+          ''
+        ) AS roles
+      FROM users u
+      LEFT JOIN user_roles ur ON ur.user_id = u.id
+      LEFT JOIN roles r ON r.id = ur.role_id
+      GROUP BY u.id
+      ORDER BY u.id
+    `);
 
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ message: err.message });
-    res.json(rows);
-  });
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET USERS ERROR:", error);
+    res.status(500).json({ message: "Error al obtener usuarios" });
+  }
 };
 
-exports.createUser = (req, res) => {
+// Crear usuario
+exports.createUser = async (req, res) => {
   const { email, password } = req.body;
 
-  db.run(
-    "INSERT INTO users(email, password) VALUES(?, ?)",
-    [email, password],
-    function(err) {
-      if (err) return res.status(500).json({ message: err.message });
-      res.status(201).json({ id: this.lastID, email });
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const result = await db.query(
+      `
+      INSERT INTO users (email, password)
+      VALUES ($1, $2)
+      RETURNING id, email
+      `,
+      [email, hashedPassword]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("CREATE USER ERROR:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({ message: "Email ya registrado" });
     }
-  );
+
+    res.status(500).json({ message: "Error al crear usuario" });
+  }
 };
 
-exports.assignRole = (req, res) => {
+// Asignar rol
+exports.assignRole = async (req, res) => {
   const { userId, roleId } = req.body;
 
-  db.run(
-    "INSERT INTO user_roles(user_id, role_id) VALUES(?, ?)",
-    [userId, roleId],
-    function(err) {
-      if (err) return res.status(500).json({ message: err.message });
-      res.json({ message: "Rol asignado correctamente" });
+  try {
+    await db.query(
+      `
+      INSERT INTO user_roles (user_id, role_id)
+      VALUES ($1, $2)
+      `,
+      [userId, roleId]
+    );
+
+    res.json({ message: "Rol asignado correctamente" });
+  } catch (error) {
+    console.error("ASSIGN ROLE ERROR:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({ message: "El usuario ya tiene este rol" });
     }
-  );
+
+    res.status(500).json({ message: "Error al asignar rol" });
+  }
 };

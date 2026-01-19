@@ -1,107 +1,117 @@
 const db = require("../config/db");
 
-exports.createSale = (req, res) => {
+// Crear venta
+exports.createSale = async (req, res) => {
   const { items, total } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ message: "Venta vacía" });
   }
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
+  const client = await db.connect();
 
-    db.run(
-      "INSERT INTO sales (total) VALUES (?)",
-      [total],
-      function (err) {
-        if (err) {
-          db.run("ROLLBACK");
-          return res.status(500).json(err);
-        }
+  try {
+    await client.query("BEGIN");
 
-        const saleId = this.lastID;
-
-        const stmtItem = db.prepare(
-          "INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)"
-        );
-
-        const stmtStock = db.prepare(
-          "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?"
-        );
-
-        for (const item of items) {
-          stmtItem.run(
-            saleId,
-            item.id,
-            item.quantity,
-            item.price
-          );
-
-          stmtStock.run(
-            item.quantity,
-            item.id,
-            item.quantity
-          );
-        }
-
-        stmtItem.finalize();
-        stmtStock.finalize();
-
-        db.run("COMMIT", (err) => {
-          if (err) {
-            db.run("ROLLBACK");
-            return res.status(500).json(err);
-          }
-
-          res.json({
-            message: "Venta registrada",
-            saleId,
-          });
-        });
-      }
+    // Crear venta
+    const saleResult = await client.query(
+      `
+      INSERT INTO sales (total)
+      VALUES ($1)
+      RETURNING id
+      `,
+      [total]
     );
-  });
-};
 
-exports.getSales = (req, res) => {
-  db.all(
-    `
-    SELECT s.id, s.total, s.created_at,
-           COUNT(si.id) as items
-    FROM sales s
-    LEFT JOIN sale_items si ON si.sale_id = s.id
-    GROUP BY s.id
-    ORDER BY s.created_at DESC
-    `,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json(err);
-      res.json(rows);
+    const saleId = saleResult.rows[0].id;
+
+    // Insertar items y actualizar stock
+    for (const item of items) {
+      // Insertar item
+      await client.query(
+        `
+        INSERT INTO sale_items (sale_id, product_id, quantity, price)
+        VALUES ($1, $2, $3, $4)
+        `,
+        [saleId, item.id, item.quantity, item.price]
+      );
+
+      // Actualizar stock (seguro)
+      const stockResult = await client.query(
+        `
+        UPDATE products
+        SET stock = stock - $1
+        WHERE id = $2 AND stock >= $1
+        `,
+        [item.quantity, item.id]
+      );
+
+      if (stockResult.rowCount === 0) {
+        throw new Error(`Stock insuficiente para producto ${item.id}`);
+      }
     }
-  );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Venta registrada",
+      saleId
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("CREATE SALE ERROR:", error);
+
+    res.status(500).json({
+      message: error.message || "Error al registrar venta"
+    });
+  } finally {
+    client.release();
+  }
 };
 
-exports.getSaleById = (req, res) => {
+// Obtener todas las ventas
+exports.getSales = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        s.id,
+        s.total,
+        s.created_at,
+        COUNT(si.id) AS items
+      FROM sales s
+      LEFT JOIN sale_items si ON si.sale_id = s.id
+      GROUP BY s.id
+      ORDER BY s.created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET SALES ERROR:", error);
+    res.status(500).json({ message: "Error al obtener ventas" });
+  }
+};
+
+// Obtener venta por ID
+exports.getSaleById = async (req, res) => {
   const { id } = req.params;
 
-  db.all(
-    `
-    SELECT 
-      p.name,
-      si.quantity,
-      si.price
-    FROM sale_items si
-    JOIN products p ON p.id = si.product_id
-    WHERE si.sale_id = ?
-    `,
-    [id],
-    (err, rows) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
+  try {
+    const result = await db.query(
+      `
+      SELECT 
+        p.name,
+        si.quantity,
+        si.price
+      FROM sale_items si
+      JOIN products p ON p.id = si.product_id
+      WHERE si.sale_id = $1
+      `,
+      [id]
+    );
 
-      res.json(rows);
-    }
-  );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET SALE BY ID ERROR:", error);
+    res.status(500).json({ message: "Error al obtener venta" });
+  }
 };
-

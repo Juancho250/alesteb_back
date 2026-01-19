@@ -1,7 +1,4 @@
-const app = require("./app");
+process.env.NODE_OPTIONS = "--dns-result-order=ipv4first";
+require("dotenv").config();
 
-const PORT = process.env.PORT || 4000;
-
-app.listen(PORT, () => {
-  console.log(`Servidor en puerto ${PORT}`);
-});
+const pool = require("./config/db");
