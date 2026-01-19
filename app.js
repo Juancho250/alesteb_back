@@ -1,39 +1,27 @@
-require("dotenv").config();
-const express = require("express");
-const helmet = require("helmet");
-const cors = require("cors");
-const authRoutes = require("./routes/auth.routes");
-const productRoutes = require("./routes/products.routes");
-const rolesRoutes = require('./routes/roles.routes');
-const usersRoutes = require('./routes/users.routes'); 
-const salesRoutes = require("./routes/sales.routes");
-const bannerRoutes = require("./routes/banners.routes");
-const app = express();
-const expensesRoutes= require("./routes/expenses.routes.js");
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
 
-app.use("/expenses", expensesRoutes);
+import expensesRoutes from "./routes/expenses.routes.js";
+import authRoutes from "./routes/auth.routes.js";
+import productRoutes from "./routes/products.routes.js";
+import salesRoutes from "./routes/sales.routes.js";
+import usersRoutes from "./routes/users.routes.js";
+import rolesRoutes from "./routes/roles.routes.js";
+import bannerRoutes from "./routes/banners.routes.js";
+
+const app = express();
+
 app.use(cors());
 app.use(express.json());
-app.use("/api/banners", bannerRoutes);
+app.use(helmet());
+
+app.use("/expenses", expensesRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
-app.use("/api/stats", require("./routes/stats.routes"));
-app.use('/api/users', usersRoutes);
-app.use('/api/roles', rolesRoutes);
-app.use(
-  cors({
-    origin: "*", // luego lo restringimos
-  })
-);
-module.exports = app;
+app.use("/api/users", usersRoutes);
+app.use("/api/roles", rolesRoutes);
+app.use("/api/banners", bannerRoutes);
 
-
-app.use(helmet());
-app.use(cors({
-  origin: [
-    "https://alestebadmin.vercel.app",
-    "https://alesteb.vercel.app/"
-  ],
-  credentials: true
-}));
+export default app;

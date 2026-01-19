@@ -62,6 +62,10 @@ export const getFinanceSummary = (req, res) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    res.json(row);
+
+    res.json({
+      totalGastos: row?.totalGastos || 0,
+      totalCompras: row?.totalCompras || 0
+    });
   });
 };
