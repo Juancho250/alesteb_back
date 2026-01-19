@@ -1,9 +1,6 @@
 const db = require("../config/db");
 
-// Crear venta
-// Crear venta
 exports.createSale = async (req, res) => {
-  // Ahora recibimos customer_id y sale_type desde el Modal del Frontend
   const { items, total, customer_id, sale_type } = req.body;
 
   if (!items || items.length === 0) {
@@ -15,68 +12,54 @@ exports.createSale = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Insertar en la tabla sales incluyendo el cliente y tipo de venta
+    // 1. Insertar en sales (usando total_amount que ya confirmamos que existe)
     const saleResult = await client.query(
-      `
-      INSERT INTO sales (total_amount, customer_id, sale_type, payment_status)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id
-      `,
+      `INSERT INTO sales (total_amount, customer_id, sale_type, payment_status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
       [total, customer_id, sale_type || 'fisica', 'paid']
     );
 
     const saleId = saleResult.rows[0].id;
 
-    // 2. Insertar items y actualizar stock
+    // 2. Insertar items
     for (const item of items) {
+      // Usamos unit_price para que coincida con tu DB
       await client.query(
-        `
-        INSERT INTO sale_items (sale_id, product_id, quantity, unit_price)
-        VALUES ($1, $2, $3, $4)
-        `,
+        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price)
+         VALUES ($1, $2, $3, $4)`,
         [saleId, item.id, item.quantity, item.price]
       );
 
       // 3. Actualizar stock
       const stockResult = await client.query(
-        `
-        UPDATE products
-        SET stock = stock - $1
-        WHERE id = $2 AND stock >= $1
-        `,
+        `UPDATE products SET stock = stock - $1 
+         WHERE id = $2 AND stock >= $1`,
         [item.quantity, item.id]
       );
 
       if (stockResult.rowCount === 0) {
-        throw new Error(`Stock insuficiente para el producto ID: ${item.id}`);
+        throw new Error(`Stock insuficiente para el producto: ${item.name || item.id}`);
       }
     }
 
-    // 4. ACTUALIZAR ESTADÍSTICAS DEL CLIENTE (Opcional pero recomendado)
+    // 4. Actualizar total_spent en users (solo si existe el cliente)
+    // He quitado orders_count por ahora para evitar errores si no existe la columna
     if (customer_id) {
       await client.query(
-        `
-        UPDATE users 
-        SET total_spent = total_spent + $1,
-            orders_count = orders_count + 1,
-            last_purchase = CURRENT_TIMESTAMP
-        WHERE id = $2
-        `,
+        `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
         [total, customer_id]
       );
     }
 
     await client.query("COMMIT");
+    res.status(201).json({ message: "Venta registrada con éxito", saleId });
 
-    res.status(201).json({
-      message: "Venta registrada con éxito",
-      saleId
-    });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("CREATE SALE ERROR:", error);
-    res.status(500).json({
-      message: error.message || "Error al registrar venta"
+    console.error("DETALLE DEL ERROR 500:", error);
+    res.status(500).json({ 
+      message: "Error interno", 
+      error: error.message // Esto te dirá el nombre exacto de la columna que falla
     });
   } finally {
     client.release();
