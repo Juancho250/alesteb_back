@@ -22,10 +22,11 @@ exports.createSale = async (req, res) => {
 
     for (const item of items) {
       await client.query(
-        `INSERT INTO sale_items (sale_id, product_id, quantity, price)
-         VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price)
+        VALUES ($1, $2, $3, $4)`,
         [saleId, item.id, item.quantity, item.price]
       );
+
 
       const stockResult = await client.query(
         `UPDATE products 
@@ -72,19 +73,26 @@ exports.createSale = async (req, res) => {
 // ACTUALIZA TAMBIÉN ESTA PARTE PARA QUE NO DE ERROR AL VER EL DETALLE
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
+
   try {
     const result = await db.query(
-      `SELECT p.name, si.quantity, si.price 
+      `SELECT 
+         p.name,
+         si.quantity,
+         si.unit_price
        FROM sale_items si
        JOIN products p ON p.id = si.product_id
        WHERE si.sale_id = $1`,
       [id]
     );
+
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
+
 exports.getSales = async (req, res) => {
   try {
     const result = await db.query(`
