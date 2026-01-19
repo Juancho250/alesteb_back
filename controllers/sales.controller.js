@@ -5,14 +5,19 @@ exports.createSale = async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: "La venta no tiene productos" });
+    }
+
     await client.query("BEGIN");
 
-    // CAMBIO AQUÍ: Usamos "total" en lugar de "total_amount"
     const saleResult = await client.query(
       `INSERT INTO sales (total, customer_id, sale_type, payment_status)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [total, customer_id, sale_type || 'fisica', 'paid']
+       VALUES ($1, $2, $3, 'paid')
+       RETURNING id`,
+      [total, customer_id || null, sale_type || "fisica"]
     );
+
     const saleId = saleResult.rows[0].id;
 
     for (const item of items) {
@@ -22,15 +27,32 @@ exports.createSale = async (req, res) => {
         [saleId, item.id, item.quantity, item.price]
       );
 
-      await client.query(
-        `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1`,
+      const stockResult = await client.query(
+        `UPDATE products 
+         SET stock = stock - $1 
+         WHERE id = $2 AND stock >= $1`,
         [item.quantity, item.id]
       );
+
+      if (stockResult.rowCount === 0) {
+        throw new Error(`Stock insuficiente para ${item.name}`);
+      }
     }
 
     if (customer_id) {
+      const userCheck = await client.query(
+        "SELECT id FROM users WHERE id = $1",
+        [customer_id]
+      );
+
+      if (userCheck.rowCount === 0) {
+        throw new Error("Cliente no existe");
+      }
+
       await client.query(
-        `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
+        `UPDATE users 
+         SET total_spent = COALESCE(total_spent, 0) + $1 
+         WHERE id = $2`,
         [total, customer_id]
       );
     }
@@ -41,11 +63,12 @@ exports.createSale = async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("ERROR REAL EN BD:", error.message);
-    res.status(500).json({ message: "Error en base de datos", error: error.message });
+    res.status(500).json({ message: error.message });
   } finally {
     client.release();
   }
 };
+
 // ACTUALIZA TAMBIÉN ESTA PARTE PARA QUE NO DE ERROR AL VER EL DETALLE
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
