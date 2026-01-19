@@ -17,8 +17,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/stats", require("./routes/stats.routes"));
-app.use('/users', usersRoutes);
-app.use('/roles', rolesRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/roles', rolesRoutes);
 app.use(
   cors({
     origin: "*", // luego lo restringimos
