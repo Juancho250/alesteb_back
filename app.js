@@ -10,6 +10,7 @@ const salesRoutes = require("./routes/sales.routes");
 const bannerRoutes = require("./routes/banners.routes");
 const app = express();
 
+
 app.use(cors());
 app.use(express.json());
 app.use("/api/banners", bannerRoutes);
