@@ -1,8 +1,10 @@
 const db = require("../config/db");
 
 // Crear venta
+// Crear venta
 exports.createSale = async (req, res) => {
-  const { items, total } = req.body;
+  // Ahora recibimos customer_id y sale_type desde el Modal del Frontend
+  const { items, total, customer_id, sale_type } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ message: "Venta vacía" });
@@ -13,30 +15,29 @@ exports.createSale = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Crear venta
+    // 1. Insertar en la tabla sales incluyendo el cliente y tipo de venta
     const saleResult = await client.query(
       `
-      INSERT INTO sales (total)
-      VALUES ($1)
+      INSERT INTO sales (total_amount, customer_id, sale_type, payment_status)
+      VALUES ($1, $2, $3, $4)
       RETURNING id
       `,
-      [total]
+      [total, customer_id, sale_type || 'fisica', 'paid']
     );
 
     const saleId = saleResult.rows[0].id;
 
-    // Insertar items y actualizar stock
+    // 2. Insertar items y actualizar stock
     for (const item of items) {
-      // Insertar item
       await client.query(
         `
-        INSERT INTO sale_items (sale_id, product_id, quantity, price)
+        INSERT INTO sale_items (sale_id, product_id, quantity, unit_price)
         VALUES ($1, $2, $3, $4)
         `,
         [saleId, item.id, item.quantity, item.price]
       );
 
-      // Actualizar stock (seguro)
+      // 3. Actualizar stock
       const stockResult = await client.query(
         `
         UPDATE products
@@ -47,20 +48,33 @@ exports.createSale = async (req, res) => {
       );
 
       if (stockResult.rowCount === 0) {
-        throw new Error(`Stock insuficiente para producto ${item.id}`);
+        throw new Error(`Stock insuficiente para el producto ID: ${item.id}`);
       }
+    }
+
+    // 4. ACTUALIZAR ESTADÍSTICAS DEL CLIENTE (Opcional pero recomendado)
+    if (customer_id) {
+      await client.query(
+        `
+        UPDATE users 
+        SET total_spent = total_spent + $1,
+            orders_count = orders_count + 1,
+            last_purchase = CURRENT_TIMESTAMP
+        WHERE id = $2
+        `,
+        [total, customer_id]
+      );
     }
 
     await client.query("COMMIT");
 
     res.status(201).json({
-      message: "Venta registrada",
+      message: "Venta registrada con éxito",
       saleId
     });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("CREATE SALE ERROR:", error);
-
     res.status(500).json({
       message: error.message || "Error al registrar venta"
     });
@@ -68,19 +82,19 @@ exports.createSale = async (req, res) => {
     client.release();
   }
 };
-
 // Obtener todas las ventas
 exports.getSales = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
         s.id,
-        s.total,
+        s.total_amount as total,
+        s.sale_type,
         s.created_at,
-        COUNT(si.id) AS items
+        u.name as customer_name,
+        (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id) AS items_count
       FROM sales s
-      LEFT JOIN sale_items si ON si.sale_id = s.id
-      GROUP BY s.id
+      LEFT JOIN users u ON s.customer_id = u.id
       ORDER BY s.created_at DESC
     `);
 
