@@ -7,17 +7,11 @@ exports.login = async (req, res) => {
 
   try {
     const result = await db.query(
-      `
-      SELECT 
-        u.id,
-        u.email,
-        u.password,
-        r.name AS role
-      FROM users u
-      LEFT JOIN user_roles ur ON ur.user_id = u.id
-      LEFT JOIN roles r ON r.id = ur.role_id
-      WHERE u.email = $1
-      `,
+      `SELECT u.id, u.email, u.password, r.name AS role
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+       WHERE u.email = $1`,
       [email]
     );
 
@@ -28,15 +22,9 @@ exports.login = async (req, res) => {
     const user = result.rows[0];
 
     const ok = await bcrypt.compare(password, user.password);
-    if (!ok) {
-      return res.status(401).json({ message: "Credenciales inválidas" });
-    }
+    if (!ok) return res.status(401).json({ message: "Credenciales inválidas" });
 
-    const token = jwt.sign(
-      { id: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "8h" }
-    );
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "8h" });
 
     res.json({ token });
   } catch (error) {
