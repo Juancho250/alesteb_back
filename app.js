@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 app.use(helmet());
 
-app.use("/expenses", expensesRoutes);
+app.use("/api/expenses", expensesRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
