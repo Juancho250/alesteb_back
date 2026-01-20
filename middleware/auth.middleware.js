@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-// Middleware base: solo verifica token
+// Verifica token
 exports.auth = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -10,28 +10,28 @@ exports.auth = (req, res, next) => {
 
   const token = authHeader.split(" ")[1];
 
-  if (!token) {
-    return res.status(401).json({ message: "Token inválido" });
-  }
-
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(403).json({ message: "Token no válido o expirado" });
+      return res.status(403).json({ message: "Token inválido o expirado" });
     }
 
-    req.user = decoded; // { id, role }
+    req.user = decoded; // { id, roles: [] }
     next();
   });
 };
 
-// Middleware por rol
-exports.requireRole = (roles = []) => {
+// Verifica roles
+exports.requireRole = (allowedRoles = []) => {
   return (req, res, next) => {
-    if (!req.user) {
+    if (!req.user || !req.user.roles) {
       return res.status(401).json({ message: "No autenticado" });
     }
 
-    if (!roles.includes(req.user.role)) {
+    const hasRole = req.user.roles.some(role =>
+      allowedRoles.includes(role)
+    );
+
+    if (!hasRole) {
       return res.status(403).json({ message: "No autorizado" });
     }
 
