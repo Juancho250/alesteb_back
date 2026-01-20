@@ -19,30 +19,51 @@ export const getExpenses = async (req, res) => {
 /* =========================
    CREAR GASTO / COMPRA
 ========================= */
+// En tu controlador de gastos (backend)
 export const createExpense = async (req, res) => {
-  const { type, category, description, amount } = req.body;
+  // Añadimos product_id al body
+  const { type, category, description, amount, product_id, quantity } = req.body;
 
   if (!type || !category || !amount) {
     return res.status(400).json({ error: "Datos incompletos" });
   }
 
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
-      `
-      INSERT INTO public.expenses (type, category, description, amount)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-      `,
+    await client.query("BEGIN");
+
+    // 1. Insertar el registro en la tabla de gastos
+    const result = await client.query(
+      `INSERT INTO public.expenses (type, category, description, amount)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
       [type, category, description, amount]
     );
 
+    // 2. SI ES COMPRA Y HAY PRODUCTO, SUMAR STOCK
+    if (type === 'compra' && product_id && quantity) {
+      const stockUpdate = await client.query(
+        `UPDATE products 
+         SET stock = stock + $1 
+         WHERE id = $2`,
+        [quantity, product_id]
+      );
+
+      if (stockUpdate.rowCount === 0) {
+        throw new Error("El producto seleccionado no existe para actualizar stock");
+      }
+    }
+
+    await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 };
-
 /* =========================
    RESUMEN FINANCIERO
 ========================= */
