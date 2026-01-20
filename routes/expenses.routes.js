@@ -1,6 +1,6 @@
 // backend/routes/expenses.routes.js
 import { Router } from "express";
-import { auth } from "../middleware/auth.middleware"; // Importa el middleware
+import { auth } from "../middleware/auth.middleware.js"; // ✅ Correcto
 import { getExpenses, getFinanceSummary, createExpense } from "../controllers/expenses.controller.js";
 
 const router = Router();
