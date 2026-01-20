@@ -1,29 +1,37 @@
-const jwt = require("jsonwebtoken");
+import jwt from "jsonwebtoken";
 
-// Verifica token
-exports.auth = (req, res, next) => {
-  const authHeader = req.headers.authorization;
+// 🔐 Verifica token
+export const auth = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    return res.status(401).json({ message: "Token no enviado" });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: "Token inválido o expirado" });
+    if (!authHeader) {
+      return res.status(401).json({ message: "Token no enviado" });
     }
 
-    req.user = decoded; // { id, roles: [] }
+    const parts = authHeader.split(" ");
+
+    if (parts.length !== 2 || parts[0] !== "Bearer") {
+      return res.status(401).json({ message: "Formato de token inválido" });
+    }
+
+    const token = parts[1];
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Esperado: { id, roles: [] }
+    req.user = decoded;
     next();
-  });
+  } catch (error) {
+    console.error("AUTH ERROR:", error.message);
+    return res.status(403).json({ message: "Token inválido o expirado" });
+  }
 };
 
-// Verifica roles
-exports.requireRole = (allowedRoles = []) => {
+// 🛡️ Verifica roles
+export const requireRole = (allowedRoles = []) => {
   return (req, res, next) => {
-    if (!req.user || !req.user.roles) {
+    if (!req.user || !Array.isArray(req.user.roles)) {
       return res.status(401).json({ message: "No autenticado" });
     }
 
