@@ -12,16 +12,27 @@ import bannerRoutes from "./routes/banners.routes.js";
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "PUT", "DELETE"]
+}));
+
 app.use(express.json());
 app.use(helmet());
 
-app.use("/api/expenses", expensesRoutes);
+// RUTAS
 app.use("/api/auth", authRoutes);
+app.use("/api/expenses", expensesRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/banners", bannerRoutes);
+
+// Health check
+app.get("/", (_, res) => {
+  res.send("API Alesteb OK");
+});
 
 export default app;
