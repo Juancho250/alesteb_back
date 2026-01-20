@@ -60,3 +60,8 @@ exports.createUser = async (req, res) => {
     res.status(500).json({ message: "Error interno" });
   }
 };
+
+exports.assignRole = async (req, res) => {
+  // Tu lógica aquí
+  res.json({ message: "Función assignRole pendiente de implementación" });
+};
