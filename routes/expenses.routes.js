@@ -1,12 +1,10 @@
-// backend/routes/expenses.routes.js
-import { Router } from "express";
-import { auth } from "../middleware/auth.middleware.js"; // ✅ Correcto
-import { getExpenses, getFinanceSummary, createExpense } from "../controllers/expenses.controller.js";
+const express = require("express");
+const router = express.Router();
+const { auth } = require("../middleware/auth.middleware");
+const expensesController = require("../controllers/expenses.controller");
 
-const router = Router();
+router.get("/", auth, expensesController.getExpenses);
+router.get("/summary", auth, expensesController.getFinanceSummary);
+router.post("/", auth, expensesController.createExpense);
 
-router.get("/", auth, getExpenses); // Protegido
-router.get("/summary", auth, getFinanceSummary); // Protegido
-router.post("/", auth, createExpense); // Protegido
-
-export default router;
+module.exports = router;
