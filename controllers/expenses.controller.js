@@ -5,14 +5,16 @@ import db from "../config/db.js";
 ========================= */
 export const getExpenses = async (req, res) => {
   try {
-    const { rows } = await db.query(
-      "SELECT * FROM expenses ORDER BY created_at DESC"
+    const result = await db.query(
+      "SELECT * FROM public.expenses ORDER BY created_at DESC"
     );
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 };
+
 
 /* =========================
    CREAR GASTO / COMPRA
@@ -25,18 +27,19 @@ export const createExpense = async (req, res) => {
   }
 
   try {
-    const { rows } = await db.query(
+    const result = await db.query(
       `
-      INSERT INTO expenses (type, category, description, amount)
+      INSERT INTO public.expenses (type, category, description, amount)
       VALUES ($1, $2, $3, $4)
       RETURNING *
       `,
       [type, category, description, amount]
     );
 
-    res.json(rows[0]);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 };
 
@@ -45,15 +48,16 @@ export const createExpense = async (req, res) => {
 ========================= */
 export const getFinanceSummary = async (req, res) => {
   try {
-    const { rows } = await db.query(`
+    const result = await db.query(`
       SELECT
-        COALESCE(SUM(CASE WHEN type = 'gasto' THEN amount ELSE 0 END), 0) AS totalGastos,
-        COALESCE(SUM(CASE WHEN type = 'compra' THEN amount ELSE 0 END), 0) AS totalCompras
-      FROM expenses
+        COALESCE(SUM(CASE WHEN type = 'gasto' THEN amount END), 0) AS "totalGastos",
+        COALESCE(SUM(CASE WHEN type = 'compra' THEN amount END), 0) AS "totalCompras"
+      FROM public.expenses
     `);
 
-    res.json(rows[0]);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 };
