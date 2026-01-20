@@ -6,27 +6,53 @@ exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const result = await db.query(
-      `SELECT u.id, u.email, u.password, r.name AS role
-       FROM users u
-       LEFT JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN roles r ON r.id = ur.role_id
-       WHERE u.email = $1`,
+    // 1. Buscar usuario
+    const userRes = await db.query(
+      "SELECT id, email, password FROM users WHERE email = $1",
       [email]
     );
 
-    if (result.rows.length === 0) {
+    if (userRes.rowCount === 0) {
       return res.status(401).json({ message: "Credenciales inválidas" });
     }
 
-    const user = result.rows[0];
+    const user = userRes.rows[0];
 
+    // 2. Validar password
     const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ message: "Credenciales inválidas" });
+    if (!ok) {
+      return res.status(401).json({ message: "Credenciales inválidas" });
+    }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "8h" });
+    // 3. Obtener roles
+    const rolesRes = await db.query(
+      `
+      SELECT r.name
+      FROM roles r
+      JOIN user_roles ur ON ur.role_id = r.id
+      WHERE ur.user_id = $1
+      `,
+      [user.id]
+    );
 
-    res.json({ token });
+    const roles = rolesRes.rows.map(r => r.name);
+
+    // 4. Firmar token
+    const token = jwt.sign(
+      { id: user.id, roles },
+      process.env.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        roles
+      }
+    });
+
   } catch (error) {
     console.error("LOGIN ERROR:", error);
     res.status(500).json({ message: "Error interno" });
