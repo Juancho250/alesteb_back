@@ -5,15 +5,44 @@ const bcrypt = require("bcrypt");
 exports.getUsers = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT id, name, email, cedula, phone, city, total_spent
+      SELECT id, name, email, cedula, phone, city, address, total_spent
       FROM users
       ORDER BY id DESC
     `);
-
     res.json(result.rows);
   } catch (error) {
     console.error("GET USERS ERROR:", error);
     res.status(500).json({ message: "Error al obtener usuarios" });
+  }
+};
+
+// 2. AGREGAR ESTA NUEVA FUNCIÓN
+exports.updateUser = async (req, res) => {
+  const { id } = req.params;
+  const { name, email, phone, cedula, city, address } = req.body;
+
+  try {
+    const result = await db.query(
+      `
+      UPDATE users 
+      SET name = $1, email = $2, phone = $3, cedula = $4, city = $5, address = $6
+      WHERE id = $7
+      RETURNING *
+      `,
+      [name, email, phone, cedula, city, address, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("UPDATE USER ERROR:", error);
+    if (error.code === "23505") { // Código de duplicado en Postgres
+      return res.status(409).json({ message: "Email o cédula ya en uso por otro usuario" });
+    }
+    res.status(500).json({ message: "Error actualizando usuario" });
   }
 };
 
