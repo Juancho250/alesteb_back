@@ -1,10 +1,11 @@
-const express = require("express");
+import express from "express";
+import { auth } from "../middleware/auth.middleware.js";
+import * as expensesController from "../controllers/expenses.controller.js";
+
 const router = express.Router();
-const { auth } = require("../middleware/auth.middleware");
-const expensesController = require("../controllers/expenses.controller");
 
 router.get("/", auth, expensesController.getExpenses);
 router.get("/summary", auth, expensesController.getFinanceSummary);
 router.post("/", auth, expensesController.createExpense);
 
-module.exports = router;
+export default router;
