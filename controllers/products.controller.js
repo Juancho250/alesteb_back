@@ -6,25 +6,46 @@ exports.getAll = async (req, res) => {
     const result = await db.query(`
       SELECT 
         p.*,
-        (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
-        d.name AS discount_name,
-        d.type AS discount_type,
-        d.value AS discount_value,
-        -- Usamos COALESCE para que si no hay descuento, el precio final sea el original
-        CASE 
-          WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-          WHEN d.type = 'fixed' THEN p.price - d.value
-          ELSE p.price
-        END AS final_price
+        (SELECT url 
+         FROM product_images 
+         WHERE product_id = p.id 
+         AND is_main = true 
+         LIMIT 1) AS main_image,
+
+        best_discount.name AS discount_name,
+        best_discount.type AS discount_type,
+        best_discount.value AS discount_value,
+
+        COALESCE(best_discount.final_price, p.price) AS final_price
+
       FROM products p
-      LEFT JOIN discount_targets dt ON (
-        (dt.target_type = 'product' AND dt.target_id = p.id::text) OR 
-        (dt.target_type = 'category' AND dt.target_id = p.category)
-      )
-      LEFT JOIN discounts d ON dt.discount_id = d.id 
-        -- IMPORTANTE: Verifica que la columna 'active' exista en tu tabla 'discounts'
-        -- Y que los tipos de fecha coincidan
-        AND NOW() BETWEEN d.starts_at AND d.ends_at
+
+      -- 🔥 SOLO EL MEJOR DESCUENTO
+      LEFT JOIN LATERAL (
+        SELECT
+          d.name,
+          d.type,
+          d.value,
+          CASE 
+            WHEN d.type = 'percentage'
+              THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+            WHEN d.type = 'fixed'
+              THEN p.price - d.value
+            ELSE p.price
+          END AS final_price
+        FROM discount_targets dt
+        JOIN discounts d ON d.id = dt.discount_id
+        WHERE
+          (
+            (dt.target_type = 'product' AND dt.target_id = p.id::text)
+            OR
+            (dt.target_type = 'category' AND dt.target_id = p.category)
+          )
+          AND NOW() BETWEEN d.starts_at AND d.ends_at
+        ORDER BY final_price ASC   -- 👈 EL DESCUENTO MÁS FUERTE
+        LIMIT 1
+      ) best_discount ON true
+
       ORDER BY p.created_at DESC
     `);
 
@@ -34,6 +55,7 @@ exports.getAll = async (req, res) => {
     res.status(500).json({ message: "Error al obtener productos" });
   }
 };
+
 
 // Crear producto
 exports.create = async (req, res) => {
