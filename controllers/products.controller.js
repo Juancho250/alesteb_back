@@ -6,6 +6,7 @@ exports.getAll = async (req, res) => {
     const result = await db.query(`
       SELECT 
         p.*,
+        c.name AS category_name, -- ✅ Añadido para obtener nombre de categoría
         (SELECT url 
          FROM product_images 
          WHERE product_id = p.id 
@@ -19,6 +20,7 @@ exports.getAll = async (req, res) => {
         COALESCE(best_discount.final_price, p.price) AS final_price
 
       FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id -- ✅ Unión con nueva tabla
 
       -- 🔥 SOLO EL MEJOR DESCUENTO
       LEFT JOIN LATERAL (
@@ -39,10 +41,10 @@ exports.getAll = async (req, res) => {
           (
             (dt.target_type = 'product' AND dt.target_id = p.id::text)
             OR
-            (dt.target_type = 'category' AND dt.target_id = p.category)
+            (dt.target_type = 'category' AND dt.target_id = p.category_id::text) -- ✅ Cambio a category_id
           )
           AND NOW() BETWEEN d.starts_at AND d.ends_at
-        ORDER BY final_price ASC   -- 👈 EL DESCUENTO MÁS FUERTE
+        ORDER BY final_price ASC
         LIMIT 1
       ) best_discount ON true
 
@@ -59,7 +61,7 @@ exports.getAll = async (req, res) => {
 
 // Crear producto
 exports.create = async (req, res) => {
-  const { name, price, stock, category } = req.body;
+  const { name, price, stock, category_id } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
 
   const client = await db.connect();
@@ -69,11 +71,11 @@ exports.create = async (req, res) => {
 
     const productResult = await client.query(
       `
-      INSERT INTO products (name, price, stock, category)
+      INSERT INTO products (name, price, stock, category_id) -- ✅ Cambio a category_id
       VALUES ($1, $2, $3, $4)
       RETURNING id
       `,
-      [name, price, stock, category]
+      [name, price, stock, category_id]
     );
 
     const productId = productResult.rows[0].id;
@@ -110,7 +112,7 @@ exports.create = async (req, res) => {
 // Actualizar producto
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { name, price, stock } = req.body;
+  const { name, price, stock, category_id } = req.body; 
 
   try {
     const result = await db.query(
@@ -118,10 +120,11 @@ exports.update = async (req, res) => {
       UPDATE products
       SET name = $1,
           price = $2,
-          stock = $3
-      WHERE id = $4
+          stock = $3,
+          category_id = $4 -- ✅ Actualización de categoría incluida
+      WHERE id = $5
       `,
-      [name, price, stock, id]
+      [name, price, stock, category_id, id]
     );
 
     res.json({ updated: result.rowCount });
@@ -155,6 +158,7 @@ exports.getById = async (req, res) => {
     const result = await db.query(`
       SELECT 
         p.*,
+        c.name AS category_name, -- ✅ Obtenemos nombre de categoría
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         d.name AS discount_name,
         d.type AS discount_type,
@@ -165,9 +169,10 @@ exports.getById = async (req, res) => {
           ELSE p.price
         END AS final_price
       FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id -- ✅ Unión con categorías
       LEFT JOIN discount_targets dt ON (
         (dt.target_type = 'product' AND dt.target_id = p.id::text) OR 
-        (dt.target_type = 'category' AND dt.target_id = p.category)
+        (dt.target_type = 'category' AND dt.target_id = p.category_id::text) -- ✅ Cambio a category_id
       )
       LEFT JOIN discounts d ON dt.discount_id = d.id 
         AND NOW() BETWEEN d.starts_at AND d.ends_at
@@ -194,4 +199,3 @@ exports.getById = async (req, res) => {
     res.status(500).json({ message: "Error al obtener producto" });
   }
 };
-
