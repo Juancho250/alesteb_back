@@ -1,4 +1,5 @@
-import db from "../config/db.js";
+const db = require("../config/db");
+
 
 /* =========================
    OBTENER TODOS LOS GASTOS
