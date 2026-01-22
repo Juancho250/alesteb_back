@@ -1,12 +1,8 @@
-import { Router } from "express";
-import {
-  auth,
-  requireRole
-} from "../middleware/auth.middleware.js";
-import upload from "../middleware/upload.middleware.js";
-import * as ctrl from "../controllers/products.controller.js";
-
-const router = Router();
+const express = require("express");
+const router = express.Router();
+const { auth, requireRole } = require("../middleware/auth.middleware");
+const upload = require("../middleware/upload.middleware");
+const ctrl = require("../controllers/products.controller");
 
 // 🌐 PÚBLICO
 router.get("/", ctrl.getAll);
@@ -35,4 +31,4 @@ router.delete(
   ctrl.remove
 );
 
-export default router;
+module.exports = router;

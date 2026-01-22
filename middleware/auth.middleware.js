@@ -1,4 +1,6 @@
 import jwt from "jsonwebtoken";
+// Dentro de src/middleware/auth.middleware.js
+module.exports = { auth, requireRole }; // 👈 Esto es clave
 
 // 🔐 Verifica token
 export const auth = (req, res, next) => {
