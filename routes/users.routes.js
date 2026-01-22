@@ -1,19 +1,21 @@
 const express = require('express');
 const router = express.Router();
-
-// Usa solo un import. Asegúrate de que el nombre del archivo sea exacto (con o sin el .controller)
 const usersController = require('../controllers/users.controller'); 
 
-// Cambia 'userController' por 'usersController' (con la 's')
-router.put("/:id", usersController.updateUser); 
+// 1. IMPORTA LOS MIDDLEWARES (Ajusta la ruta según tu estructura)
+const { auth, requirePermission } = require('../middlewares/auth.middleware');
 
-router.get('/', usersController.getUsers);
-router.post('/', usersController.createUser);
-router.post('/assign-role', usersController.assignRole);
-// Ahora es muy expresivo y seguro
+// 2. DEFINE LAS RUTAS (Protegidas)
+// GET - Listar usuarios
 router.get('/', auth, requirePermission('user.read'), usersController.getUsers);
+
+// POST - Crear usuario
 router.post('/', auth, requirePermission('user.create'), usersController.createUser);
-// Solo alguien con permiso de editar puede entrar aquí:
+
+// PUT - Actualizar usuario
 router.put('/:id', auth, requirePermission('user.update'), usersController.updateUser);
+
+// POST - Asignar roles
+router.post('/assign-role', auth, requirePermission('user.update'), usersController.assignRole);
 
 module.exports = router;
