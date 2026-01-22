@@ -58,3 +58,24 @@ exports.login = async (req, res) => {
     res.status(500).json({ message: "Error interno" });
   }
 };
+
+// ... validación de password ...
+
+// 3. Obtener Roles Y Permisos
+const permissionsRes = await db.query(`
+  SELECT DISTINCT p.slug
+  FROM permissions p
+  JOIN role_permissions rp ON rp.permission_id = p.id
+  JOIN user_roles ur ON ur.role_id = rp.role_id
+  WHERE ur.user_id = $1
+`, [user.id]);
+
+const permissions = permissionsRes.rows.map(p => p.slug); 
+// Resultado ejemplo: ['user.read', 'product.edit', 'product.delete']
+
+// 4. Firmar token (Incluye permisos en el token o guárdalos en Redis/Cache)
+const token = jwt.sign(
+  { id: user.id, roles, permissions }, // Payload aumentado
+  process.env.JWT_SECRET,
+  { expiresIn: "8h" }
+);

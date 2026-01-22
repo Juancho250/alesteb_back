@@ -46,4 +46,21 @@ const requireRole = (allowedRoles = []) => {
   };
 };
 
-module.exports = { auth, requireRole };
+// Middleware Híbrido: Puedes pedir un Rol O un Permiso específico
+const requirePermission = (requiredPermission) => {
+  return (req, res, next) => {
+    const userPermissions = req.user.permissions || [];
+    const userRoles = req.user.roles || [];
+
+    // Si es Super Admin, pasa siempre
+    if (userRoles.includes('super_admin')) return next();
+
+    if (!userPermissions.includes(requiredPermission)) {
+      return res.status(403).json({ message: "No tienes permisos para realizar esta acción." });
+    }
+
+    next();
+  };
+};
+
+module.exports = { auth, requirePermission, requireRole };
