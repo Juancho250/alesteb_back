@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const usersController = require('../controllers/users.controller'); 
 
-// 1. IMPORTA LOS MIDDLEWARES (Ajusta la ruta según tu estructura)
-const { auth, requirePermission } = require('../middlewares/auth.middleware');
+// Si la carpeta es 'middleware' (singular)
+const { auth, requirePermission } = require('../middleware/auth.middleware');
+
+// Si la carpeta es 'middlewares' (plural)
+// const { auth, requirePermission } = require('../middlewares/auth.middleware');
 
 // 2. DEFINE LAS RUTAS (Protegidas)
 // GET - Listar usuarios
