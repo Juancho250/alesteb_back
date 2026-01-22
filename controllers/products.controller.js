@@ -10,9 +10,9 @@ exports.getAll = async (req, res) => {
         d.name AS discount_name,
         d.type AS discount_type,
         d.value AS discount_value,
-        -- Cálculo del precio final
+        -- Usamos COALESCE para que si no hay descuento, el precio final sea el original
         CASE 
-          WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+          WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
           WHEN d.type = 'fixed' THEN p.price - d.value
           ELSE p.price
         END AS final_price
@@ -22,7 +22,8 @@ exports.getAll = async (req, res) => {
         (dt.target_type = 'category' AND dt.target_id = p.category)
       )
       LEFT JOIN discounts d ON dt.discount_id = d.id 
-        AND d.active = true 
+        -- IMPORTANTE: Verifica que la columna 'active' exista en tu tabla 'discounts'
+        -- Y que los tipos de fecha coincidan
         AND NOW() BETWEEN d.starts_at AND d.ends_at
       ORDER BY p.created_at DESC
     `);
