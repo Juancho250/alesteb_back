@@ -1,16 +1,16 @@
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
 
-import expensesRoutes from "./routes/expenses.routes.js";
-import authRoutes from "./routes/auth.routes.js";
-import productRoutes from "./routes/products.routes.js";
-import categoryRoutes from "./routes/categories.routes.js"; // ✅ Añadido
-import salesRoutes from "./routes/sales.routes.js";
-import usersRoutes from "./routes/users.routes.js";
-import rolesRoutes from "./routes/roles.routes.js";
-import bannerRoutes from "./routes/banners.routes.js";
-import discountRoutes from "./routes/discounts.routes.js";
+const expensesRoutes = require("./routes/expenses.routes");
+const authRoutes = require("./routes/auth.routes");
+const productRoutes = require("./routes/products.routes");
+const categoryRoutes = require("./routes/categories.routes");
+const salesRoutes = require("./routes/sales.routes");
+const usersRoutes = require("./routes/users.routes");
+const rolesRoutes = require("./routes/roles.routes");
+const bannerRoutes = require("./routes/banners.routes");
+const discountRoutes = require("./routes/discounts.routes");
 
 const app = express();
 
@@ -27,16 +27,15 @@ app.use(helmet());
 app.use("/api/auth", authRoutes);
 app.use("/api/expenses", expensesRoutes);
 app.use("/api/products", productRoutes);
-app.use("/api/categories", categoryRoutes); // ✅ Registrado
+app.use("/api/categories", categoryRoutes);
 app.use("/api/discounts", discountRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/banners", bannerRoutes);
 
-// Health check
 app.get("/", (_, res) => {
   res.send("API Alesteb OK");
 });
 
-export default app;
+module.exports = app;
