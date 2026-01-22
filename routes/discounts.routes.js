@@ -1,14 +1,12 @@
-import { Router } from "express";
-import { auth, requireRole } from "../middleware/auth.middleware.js";
-import * as ctrl from "../controllers/discounts.controller.js";
+const express = require("express");
+const { auth, requireRole } = require("../middleware/auth.middleware");
+const ctrl = require("../controllers/discounts.controller");
 
-const router = Router();
+const router = express.Router();
 
 router.get("/", auth, requireRole(["admin"]), ctrl.getAll);
 router.post("/", auth, requireRole(["admin"]), ctrl.create);
 router.delete("/:id", auth, requireRole(["admin"]), ctrl.remove);
+router.put("/:id", auth, requireRole(["admin"]), ctrl.update);
 
-// FALTA ESTA LÍNEA:
-router.put("/:id", auth, requireRole(["admin"]), ctrl.update); 
-
-export default router;
+module.exports = router;

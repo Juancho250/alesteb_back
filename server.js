@@ -1,5 +1,5 @@
-import 'dotenv/config'; // 1. Cargar env antes que nada
-import app from "./app.js"; // 2. Añadir la extensión .js (obligatorio en ESM)
+require('dotenv/config');
+const app = require("./app");
 
 const PORT = process.env.PORT || 4000;
 
