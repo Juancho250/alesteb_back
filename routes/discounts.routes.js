@@ -8,4 +8,7 @@ router.get("/", auth, requireRole(["admin"]), ctrl.getAll);
 router.post("/", auth, requireRole(["admin"]), ctrl.create);
 router.delete("/:id", auth, requireRole(["admin"]), ctrl.remove);
 
+// FALTA ESTA LÍNEA:
+router.put("/:id", auth, requireRole(["admin"]), ctrl.update); 
+
 export default router;
