@@ -1,10 +1,9 @@
 const db = require("../config/db");
 
-
 /* =========================
    OBTENER TODOS LOS GASTOS
 ========================= */
-export const getExpenses = async (req, res) => {
+exports.getExpenses = async (req, res) => {
   try {
     const result = await db.query(
       "SELECT * FROM public.expenses ORDER BY created_at DESC"
@@ -16,13 +15,10 @@ export const getExpenses = async (req, res) => {
   }
 };
 
-
 /* =========================
    CREAR GASTO / COMPRA
 ========================= */
-// En tu controlador de gastos (backend)
-export const createExpense = async (req, res) => {
-  // Añadimos product_id al body
+exports.createExpense = async (req, res) => {
   const { type, category, description, amount, product_id, quantity } = req.body;
 
   if (!type || !category || !amount) {
@@ -65,10 +61,11 @@ export const createExpense = async (req, res) => {
     client.release();
   }
 };
+
 /* =========================
    RESUMEN FINANCIERO
 ========================= */
-export const getFinanceSummary = async (req, res) => {
+exports.getFinanceSummary = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT
