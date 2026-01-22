@@ -126,35 +126,50 @@ exports.remove = async (req, res) => {
   }
 };
 
-// Obtener producto por ID
 exports.getById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const productResult = await db.query(
-      "SELECT * FROM products WHERE id = $1",
-      [id]
-    );
+    const result = await db.query(`
+      SELECT 
+        p.*,
+        (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
+        d.name AS discount_name,
+        d.type AS discount_type,
+        d.value AS discount_value,
+        CASE 
+          WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+          WHEN d.type = 'fixed' THEN p.price - d.value
+          ELSE p.price
+        END AS final_price
+      FROM products p
+      LEFT JOIN discount_targets dt ON (
+        (dt.target_type = 'product' AND dt.target_id = p.id::text) OR 
+        (dt.target_type = 'category' AND dt.target_id = p.category)
+      )
+      LEFT JOIN discounts d ON dt.discount_id = d.id 
+        AND NOW() BETWEEN d.starts_at AND d.ends_at
+      WHERE p.id = $1
+      LIMIT 1
+    `, [id]);
 
-    if (productResult.rows.length === 0) {
+    if (!result.rows.length) {
       return res.status(404).json({ message: "No encontrado" });
     }
 
     const imagesResult = await db.query(
-      `
-      SELECT id, url, is_main
-      FROM product_images
-      WHERE product_id = $1
-      `,
+      `SELECT id, url, is_main FROM product_images WHERE product_id = $1`,
       [id]
     );
 
     res.json({
-      ...productResult.rows[0],
+      ...result.rows[0],
       images: imagesResult.rows
     });
+
   } catch (error) {
     console.error("GET PRODUCT BY ID ERROR:", error);
     res.status(500).json({ message: "Error al obtener producto" });
   }
 };
+
