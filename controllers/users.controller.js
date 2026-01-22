@@ -90,6 +90,19 @@ exports.createUser = async (req, res) => {
   }
 };
 
+exports.deleteUser = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query("DELETE FROM users WHERE id = $1", [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+    res.json({ message: "Usuario eliminado correctamente" });
+  } catch (error) {
+    console.error("DELETE USER ERROR:", error);
+    res.status(500).json({ message: "Error al eliminar usuario" });
+  }
+};
 exports.assignRole = async (req, res) => {
   // Tu lógica aquí
   res.json({ message: "Función assignRole pendiente de implementación" });
