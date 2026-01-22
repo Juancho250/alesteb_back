@@ -6,14 +6,24 @@ exports.getAll = async (req, res) => {
     const result = await db.query(`
       SELECT 
         p.*,
-        (
-          SELECT url
-          FROM product_images
-          WHERE product_id = p.id
-            AND is_main = true
-          LIMIT 1
-        ) AS main_image
+        (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
+        d.name AS discount_name,
+        d.type AS discount_type,
+        d.value AS discount_value,
+        -- Cálculo del precio final
+        CASE 
+          WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+          WHEN d.type = 'fixed' THEN p.price - d.value
+          ELSE p.price
+        END AS final_price
       FROM products p
+      LEFT JOIN discount_targets dt ON (
+        (dt.target_type = 'product' AND dt.target_id = p.id::text) OR 
+        (dt.target_type = 'category' AND dt.target_id = p.category)
+      )
+      LEFT JOIN discounts d ON dt.discount_id = d.id 
+        AND d.active = true 
+        AND NOW() BETWEEN d.starts_at AND d.ends_at
       ORDER BY p.created_at DESC
     `);
 
