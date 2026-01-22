@@ -60,3 +60,40 @@ exports.remove = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar" });
   }
 };
+
+// Actualizar descuento
+exports.update = async (req, res) => {
+  const { id } = req.params;
+  const { name, type, value, starts_at, ends_at, targets } = req.body;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1. Actualizar datos básicos
+    await client.query(
+      `UPDATE discounts SET name = $1, type = $2, value = $3, starts_at = $4, ends_at = $5 
+       WHERE id = $6`,
+      [name, type, value, starts_at, ends_at, id]
+    );
+
+    // 2. Limpiar targets antiguos y poner los nuevos
+    await client.query("DELETE FROM discount_targets WHERE discount_id = $1", [id]);
+
+    if (targets && targets.length > 0) {
+      const targetQuery = `INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES ($1, $2, $3)`;
+      for (const target of targets) {
+        await client.query(targetQuery, [id, target.target_type, target.target_id]);
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "Descuento actualizado con éxito" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("DISCOUNT UPDATE ERROR:", error);
+    res.status(500).json({ message: "Error al actualizar" });
+  } finally {
+    client.release();
+  }
+};
