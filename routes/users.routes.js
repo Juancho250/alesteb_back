@@ -14,7 +14,8 @@ router.get('/', auth, requirePermission('user.read'), usersController.getUsers);
 
 // POST - Crear usuario
 router.post('/', auth, requirePermission('user.create'), usersController.createUser);
-
+// DELETE - Eliminar usuario
+router.delete('/:id', auth, requirePermission('user.delete'), usersController.deleteUser);
 // PUT - Actualizar usuario
 router.put('/:id', auth, requirePermission('user.update'), usersController.updateUser);
 
