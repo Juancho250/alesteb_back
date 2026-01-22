@@ -1,15 +1,15 @@
-const express = require("express");
-const router = express.Router();
-const categoriesController = require("../controllers/categories.controller");
-// CAMBIO AQUÍ: Importar 'auth' específicamente
-const { auth } = require("../middleware/auth.middleware"); 
+import express from "express";
+import * as categoriesController from "../controllers/categories.controller.js";
+import authMiddleware from "../middleware/auth.middleware.js";
 
-// Públicas
+const router = express.Router();
+
+// Públicas (Para el menú de la tienda)
 router.get("/", categoriesController.getTree); 
 
-// Privadas (Cambiamos authMiddleware por auth)
-router.get("/flat", auth, categoriesController.getFlatList); 
-router.post("/", auth, categoriesController.create);
-router.delete("/:id", auth, categoriesController.remove);
+// Privadas/Admin (Para el selector de productos y gestión)
+router.get("/flat", authMiddleware, categoriesController.getFlatList); 
+router.post("/", authMiddleware, categoriesController.create);
+router.delete("/:id", authMiddleware, categoriesController.remove);
 
-module.exports = router;
+export default router;
