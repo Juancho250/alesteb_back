@@ -1,7 +1,7 @@
-import jwt from "jsonwebtoken";
+const jwt = require("jsonwebtoken");
 
 // 🔐 Verifica token
-export const auth = (req, res, next) => {
+const auth = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -19,7 +19,6 @@ export const auth = (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Esperado: { id, roles: [] }
     req.user = decoded;
     next();
   } catch (error) {
@@ -29,7 +28,7 @@ export const auth = (req, res, next) => {
 };
 
 // 🛡️ Verifica roles
-export const requireRole = (allowedRoles = []) => {
+const requireRole = (allowedRoles = []) => {
   return (req, res, next) => {
     if (!req.user || !Array.isArray(req.user.roles)) {
       return res.status(401).json({ message: "No autenticado" });
@@ -46,3 +45,5 @@ export const requireRole = (allowedRoles = []) => {
     next();
   };
 };
+
+module.exports = { auth, requireRole };

@@ -1,8 +1,5 @@
-import db from "../config/db.js";
+const db = require("../config/db");
 
-/* =========================
-   UTILIDAD: CONSTRUIR ÁRBOL
-========================= */
 const buildTree = (items, parentId = null) => {
   return items
     .filter(item => item.parent_id === parentId)
@@ -12,10 +9,7 @@ const buildTree = (items, parentId = null) => {
     }));
 };
 
-/* =========================
-   OBTENER ÁRBOL (PÚBLICO)
-========================= */
-export const getTree = async (req, res) => {
+exports.getTree = async (req, res) => {
   try {
     const result = await db.query(
       "SELECT id, name, parent_id, slug, description FROM categories ORDER BY name ASC"
@@ -29,10 +23,7 @@ export const getTree = async (req, res) => {
   }
 };
 
-/* =========================
-   LISTA PLANA (ADMIN)
-========================= */
-export const getFlatList = async (req, res) => {
+exports.getFlatList = async (req, res) => {
   try {
     const result = await db.query(`
       WITH RECURSIVE category_path AS (
@@ -66,10 +57,7 @@ export const getFlatList = async (req, res) => {
   }
 };
 
-/* =========================
-   CREAR CATEGORÍA
-========================= */
-export const create = async (req, res) => {
+exports.create = async (req, res) => {
   const { name, parent_id, description } = req.body;
 
   if (!name) {
@@ -102,10 +90,7 @@ export const create = async (req, res) => {
   }
 };
 
-/* =========================
-   ELIMINAR CATEGORÍA
-========================= */
-export const remove = async (req, res) => {
+exports.remove = async (req, res) => {
   const { id } = req.params;
 
   try {
