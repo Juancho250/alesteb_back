@@ -5,9 +5,12 @@ const bcrypt = require("bcrypt");
 exports.getUsers = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT id, name, email, cedula, phone, city, address, total_spent
-      FROM users
-      ORDER BY id DESC
+      SELECT 
+        u.id, u.name, u.email, u.cedula, u.phone, u.city, u.address, u.total_spent,
+        ur.role_id  -- IMPORTANTE: Traer el ID del rol
+      FROM users u
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      ORDER BY u.id DESC
     `);
     res.json(result.rows);
   } catch (error) {
@@ -15,7 +18,6 @@ exports.getUsers = async (req, res) => {
     res.status(500).json({ message: "Error al obtener usuarios" });
   }
 };
-
 // 2. AGREGAR ESTA NUEVA FUNCIÓN
 exports.updateUser = async (req, res) => {
   const { id } = req.params;

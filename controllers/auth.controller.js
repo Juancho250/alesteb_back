@@ -34,6 +34,7 @@ exports.login = async (req, res) => {
     );
 
     // Cambia la consulta de permissionsRes por esta que une permisos de ROL + permisos de USUARIO:
+    // Este bloque en auth.controller.js ahora sí funcionará:
     const permissionsRes = await db.query(
       `SELECT DISTINCT p.slug
       FROM permissions p
