@@ -1,4 +1,5 @@
-// 🔐 Verifica token
+const jwt = require("jsonwebtoken"); // Importa jsonwebtoken
+
 const auth = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -14,7 +15,7 @@ const auth = (req, res, next) => {
     }
 
     const token = parts[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET); // Asegúrate de que JWT_SECRET esté configurado en el archivo .env
 
     req.user = decoded;
     next();
