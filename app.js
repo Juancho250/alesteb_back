@@ -11,6 +11,7 @@ const usersRoutes = require("./routes/users.routes");
 const rolesRoutes = require("./routes/roles.routes");
 const bannerRoutes = require("./routes/banners.routes");
 const discountRoutes = require("./routes/discounts.routes");
+const permissions = require("./routes/permissions.routes");
 
 const app = express();
 
@@ -33,6 +34,7 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/banners", bannerRoutes);
+app.use("/api/permissions", permissions);
 
 app.get("/", (_, res) => {
   res.send("API Alesteb OK");
