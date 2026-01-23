@@ -6,8 +6,12 @@ exports.getUsers = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
-        u.id, u.name, u.email, u.cedula, u.phone, u.city, u.address, u.total_spent,
-        ur.role_id  -- IMPORTANTE: Traer el ID del rol
+        u.*, 
+        ur.role_id,
+        (SELECT json_agg(json_build_object('id', p.id)) 
+         FROM user_permissions up 
+         JOIN permissions p ON up.permission_id = p.id 
+         WHERE up.user_id = u.id) as permissions
       FROM users u
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       ORDER BY u.id DESC
@@ -21,30 +25,52 @@ exports.getUsers = async (req, res) => {
 // 2. AGREGAR ESTA NUEVA FUNCIÓN
 exports.updateUser = async (req, res) => {
   const { id } = req.params;
-  const { name, email, phone, cedula, city, address } = req.body;
+  const { name, email, phone, cedula, city, address, role_id, permissions, password } = req.body;
+  const client = await db.connect();
 
   try {
-    const result = await db.query(
-      `
-      UPDATE users 
-      SET name = $1, email = $2, phone = $3, cedula = $4, city = $5, address = $6
-      WHERE id = $7
-      RETURNING *
-      `,
+    await client.query('BEGIN');
+
+    // 1. Actualizar datos básicos del usuario
+    await client.query(
+      `UPDATE users 
+       SET name = $1, email = $2, phone = $3, cedula = $4, city = $5, address = $6
+       WHERE id = $7`,
       [name, email, phone, cedula, city, address, id]
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Usuario no encontrado" });
+    // 2. Actualizar contraseña solo si se envió una nueva
+    if (password && password.trim() !== "") {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await client.query("UPDATE users SET password = $1 WHERE id = $2", [hashedPassword, id]);
     }
 
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error("UPDATE USER ERROR:", error);
-    if (error.code === "23505") { // Código de duplicado en Postgres
-      return res.status(409).json({ message: "Email o cédula ya en uso por otro usuario" });
+    // 3. Actualizar Rol
+    await client.query(
+      "UPDATE user_roles SET role_id = $1 WHERE user_id = $2",
+      [role_id, id]
+    );
+
+    // 4. Actualizar Permisos (Limpiar y volver a insertar)
+    await client.query("DELETE FROM user_permissions WHERE user_id = $1", [id]);
+    
+    if (permissions && permissions.length > 0) {
+      for (const permId of permissions) {
+        await client.query(
+          "INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2)",
+          [id, permId]
+        );
+      }
     }
-    res.status(500).json({ message: "Error actualizando usuario" });
+
+    await client.query('COMMIT');
+    res.json({ message: "Usuario actualizado correctamente" });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("UPDATE USER ERROR:", error);
+    res.status(500).json({ message: "Error actualizando usuario y permisos" });
+  } finally {
+    client.release();
   }
 };
 
