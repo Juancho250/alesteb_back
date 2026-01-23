@@ -1,63 +1,56 @@
 const db = require("../config/db");
 
 // Obtener todos los productos
+// controllers/products.controller.js
+
 exports.getAll = async (req, res) => {
+  const { categoria } = req.query; // Capturamos el slug de la URL (?categoria=slug)
+
   try {
-    const result = await db.query(`
+    let queryText = `
       SELECT 
         p.*,
-        c.name AS category_name, -- ✅ Añadido para obtener nombre de categoría
-        (SELECT url 
-         FROM product_images 
-         WHERE product_id = p.id 
-         AND is_main = true 
-         LIMIT 1) AS main_image,
-
-        best_discount.name AS discount_name,
+        c.name AS category_name,
+        c.slug AS category_slug,
+        (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         best_discount.type AS discount_type,
         best_discount.value AS discount_value,
-
         COALESCE(best_discount.final_price, p.price) AS final_price
-
       FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id -- ✅ Unión con nueva tabla
-
-      -- 🔥 SOLO EL MEJOR DESCUENTO
+      LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN LATERAL (
-        SELECT
-          d.name,
-          d.type,
-          d.value,
+        SELECT d.type, d.value,
           CASE 
-            WHEN d.type = 'percentage'
-              THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-            WHEN d.type = 'fixed'
-              THEN p.price - d.value
+            WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+            WHEN d.type = 'fixed' THEN p.price - d.value
             ELSE p.price
           END AS final_price
         FROM discount_targets dt
         JOIN discounts d ON d.id = dt.discount_id
-        WHERE
-          (
-            (dt.target_type = 'product' AND dt.target_id = p.id::text)
-            OR
-            (dt.target_type = 'category' AND dt.target_id = p.category_id::text) -- ✅ Cambio a category_id
-          )
+        WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+           OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
           AND NOW() BETWEEN d.starts_at AND d.ends_at
-        ORDER BY final_price ASC
-        LIMIT 1
+        ORDER BY final_price ASC LIMIT 1
       ) best_discount ON true
+    `;
 
-      ORDER BY p.created_at DESC
-    `);
+    const queryParams = [];
+    
+    // Si viene categoría, añadimos el WHERE usando el slug
+    if (categoria) {
+      queryText += ` WHERE c.slug = $1`;
+      queryParams.push(categoria);
+    }
 
+    queryText += ` ORDER BY p.created_at DESC`;
+
+    const result = await db.query(queryText, queryParams);
     res.json(result.rows);
   } catch (error) {
     console.error("GET PRODUCTS ERROR:", error);
     res.status(500).json({ message: "Error al obtener productos" });
   }
-};
-
+};  
 
 // Crear producto
 exports.create = async (req, res) => {
