@@ -52,15 +52,21 @@ exports.updateUser = async (req, res) => {
     );
 
     // 4. Actualizar Permisos (Limpiar y volver a insertar)
+    // Primero eliminamos los permisos actuales
     await client.query("DELETE FROM user_permissions WHERE user_id = $1", [id]);
-    
+
+    // Insertamos los nuevos permisos sin duplicar
     if (permissions && permissions.length > 0) {
-      for (const permId of permissions) {
-        await client.query(
-          "INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2)",
+      const insertPromises = permissions.map((permId) => {
+        return client.query(
+          `INSERT INTO user_permissions (user_id, permission_id)
+           VALUES ($1, $2) 
+           ON CONFLICT (user_id, permission_id) DO NOTHING`, // Evitar duplicados
           [id, permId]
         );
-      }
+      });
+
+      await Promise.all(insertPromises); // Ejecutar todas las inserciones
     }
 
     await client.query('COMMIT');
@@ -74,10 +80,11 @@ exports.updateUser = async (req, res) => {
   }
 };
 
+
 // Crear usuario
 exports.createUser = async (req, res) => {
   const { email, password, name, phone, cedula, city, address, role_id, permissions } = req.body;
-  const client = await db.connect(); // Usamos client para transacciones
+  const client = await db.connect();
 
   try {
     await client.query('BEGIN'); // Inicia la transacción
@@ -93,36 +100,37 @@ exports.createUser = async (req, res) => {
     );
     const userId = userRes.rows[0].id;
 
-    // 2. Asignar el Rol seleccionado (Admin o Cliente)
-    // role_id vendrá del modal del Frontend
+    // 2. Asignar el Rol seleccionado
     await client.query(
       "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
       [userId, role_id]
     );
 
-    // 3. SI es Admin y enviamos permisos, los guardamos en una tabla de permisos por usuario
-    // NOTA: Es mejor tener una tabla 'user_specific_permissions' o asignar los permisos al ROL.
-    // Si quieres que ese admin TENGA esos permisos específicos:
+    // 3. Asignar permisos sin duplicar
     if (permissions && permissions.length > 0) {
-      for (const permId of permissions) {
-        await client.query(
-          "INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2)",
+      const insertPromises = permissions.map((permId) => {
+        return client.query(
+          `INSERT INTO user_permissions (user_id, permission_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, permission_id) DO NOTHING`, // Evitar duplicados
           [userId, permId]
         );
-      }
+      });
+
+      await Promise.all(insertPromises); // Ejecutar todas las inserciones
     }
 
-    await client.query('COMMIT'); // Guarda todos los cambios
+    await client.query('COMMIT');
     res.status(201).json({ id: userId, email, name });
-
   } catch (error) {
-    await client.query('ROLLBACK'); // Cancela todo si hay error
+    await client.query('ROLLBACK');
     console.error("CREATE USER ERROR:", error);
     res.status(500).json({ message: "Error al crear usuario con permisos" });
   } finally {
     client.release();
   }
 };
+
 
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;

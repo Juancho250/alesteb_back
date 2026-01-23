@@ -1,5 +1,3 @@
-const jwt = require("jsonwebtoken");
-
 // 🔐 Verifica token
 const auth = (req, res, next) => {
   try {
@@ -16,7 +14,6 @@ const auth = (req, res, next) => {
     }
 
     const token = parts[1];
-
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     req.user = decoded;
@@ -46,7 +43,7 @@ const requireRole = (allowedRoles = []) => {
   };
 };
 
-// Middleware Híbrido: Puedes pedir un Rol O un Permiso específico
+// 🛡️ Verifica permisos
 const requirePermission = (requiredPermission) => {
   return (req, res, next) => {
     const userPermissions = req.user.permissions || [];
