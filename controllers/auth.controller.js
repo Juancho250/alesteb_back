@@ -33,12 +33,14 @@ exports.login = async (req, res) => {
       [user.id]
     );
 
+    // Cambia la consulta de permissionsRes por esta que une permisos de ROL + permisos de USUARIO:
     const permissionsRes = await db.query(
       `SELECT DISTINCT p.slug
-       FROM permissions p
-       JOIN role_permissions rp ON rp.permission_id = p.id
-       JOIN user_roles ur ON ur.role_id = rp.role_id
-       WHERE ur.user_id = $1`,
+      FROM permissions p
+      LEFT JOIN role_permissions rp ON rp.permission_id = p.id
+      LEFT JOIN user_roles ur ON ur.role_id = rp.role_id
+      LEFT JOIN user_permissions up ON up.permission_id = p.id
+      WHERE ur.user_id = $1 OR up.user_id = $1`,
       [user.id]
     );
 
