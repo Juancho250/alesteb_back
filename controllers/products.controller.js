@@ -61,7 +61,7 @@ exports.getAll = async (req, res) => {
 
 // Crear producto
 exports.create = async (req, res) => {
-  const { name, price, stock, category_id } = req.body;
+  const { name, price, stock, category_id, description } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
 
   const client = await db.connect();
@@ -71,11 +71,11 @@ exports.create = async (req, res) => {
 
     const productResult = await client.query(
       `
-      INSERT INTO products (name, price, stock, category_id) -- ✅ Cambio a category_id
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO products (name, price, stock, category_id, description)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING id
       `,
-      [name, price, stock, category_id]
+      [name, price, stock, category_id, description]
     );
 
     const productId = productResult.rows[0].id;
@@ -112,7 +112,7 @@ exports.create = async (req, res) => {
 // Actualizar producto
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { name, price, stock, category_id } = req.body; 
+  const { name, price, stock, category_id, description } = req.body;
 
   try {
     const result = await db.query(
@@ -121,10 +121,11 @@ exports.update = async (req, res) => {
       SET name = $1,
           price = $2,
           stock = $3,
-          category_id = $4 -- ✅ Actualización de categoría incluida
-      WHERE id = $5
+          category_id = $4,
+          description = $5
+      WHERE id = $6
       `,
-      [name, price, stock, category_id, id]
+      [name, price, stock, category_id, description, id]
     );
 
     res.json({ updated: result.rowCount });
@@ -133,6 +134,7 @@ exports.update = async (req, res) => {
     res.status(500).json({ message: "Error al actualizar producto" });
   }
 };
+
 
 // Eliminar producto
 exports.remove = async (req, res) => {
