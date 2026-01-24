@@ -134,25 +134,38 @@ exports.createUser = async (req, res) => {
 
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;
+  const client = await db.connect(); // Usar connect() para transacciones
+
   try {
-    // Verificar si el usuario existe
-    const userCheck = await db.query("SELECT * FROM users WHERE id = $1", [id]);
-    if (userCheck.rowCount === 0) {
+    await client.query('BEGIN');
+
+    // 1. Eliminar de user_permissions
+    await client.query("DELETE FROM user_permissions WHERE user_id = $1", [id]);
+
+    // 2. Eliminar de user_roles (ESTO ES LO QUE TE FALTA)
+    await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
+
+    // 3. Eliminar el usuario
+    const result = await client.query("DELETE FROM users WHERE id = $1", [id]);
+
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
-    // Primero elimina los permisos del usuario
-    await db.query("DELETE FROM user_permissions WHERE user_id = $1", [id]);
-
-    // Luego elimina el usuario
-    const result = await db.query("DELETE FROM users WHERE id = $1", [id]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Usuario no encontrado para eliminar" });
-    }
-
+    await client.query('COMMIT');
     res.json({ message: "Usuario eliminado correctamente" });
+    
   } catch (error) {
-    console.error("DELETE USER ERROR:", error.message);
-    res.status(500).json({ message: "Error al eliminar usuario" });
+    await client.query('ROLLBACK');
+    console.error("DELETE USER ERROR:", error);
+    
+    // Si el error persiste, es que hay otra tabla (ej. ventas) conectada
+    res.status(500).json({ 
+      message: "No se puede eliminar: el usuario tiene registros vinculados (ventas, gastos, etc.)",
+      error: error.message 
+    });
+  } finally {
+    client.release();
   }
 };
