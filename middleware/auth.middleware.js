@@ -1,4 +1,4 @@
-const jwt = require("jsonwebtoken"); // Importa jsonwebtoken
+const jwt = require("jsonwebtoken");
 
 const auth = (req, res, next) => {
   try {
@@ -15,7 +15,9 @@ const auth = (req, res, next) => {
     }
 
     const token = parts[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET); // Asegúrate de que JWT_SECRET esté configurado en el archivo .env
+
+    // Verifica el token utilizando la clave secreta del .env
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     req.user = decoded;
     next();
@@ -24,6 +26,7 @@ const auth = (req, res, next) => {
     return res.status(403).json({ message: "Token inválido o expirado" });
   }
 };
+
 
 // 🛡️ Verifica roles
 const requireRole = (allowedRoles = []) => {
