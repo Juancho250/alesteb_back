@@ -11,7 +11,7 @@ router.post('/', auth, requirePermission('user.create'), usersController.createU
 router.delete('/:id', auth, requirePermission('user.delete'), usersController.deleteUser);
 router.put('/:id', auth, requirePermission('user.update'), usersController.updateUser);
 
-// Asignación de roles
-router.post('/assign-role', auth, requirePermission('user.update'), usersController.assignRole);
+// --- ELIMINA ESTA LÍNEA QUE CAUSA EL ERROR ---
+// router.post('/assign-role', auth, requirePermission('user.update'), usersController.assignRole);
 
 module.exports = router;
