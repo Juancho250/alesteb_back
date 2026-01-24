@@ -83,49 +83,64 @@ exports.updateUser = async (req, res) => {
 
 // Crear usuario
 exports.createUser = async (req, res) => {
-  const { email, password, name, phone, cedula, city, address, role_id, permissions } = req.body;
+  const { 
+    email, password, name, phone, cedula, city, address, 
+    role_id = 3, // ⚠️ CAMBIADO A 23 (según tu tabla de Neon)
+    permissions = [] 
+  } = req.body;
+
+  console.log("DEBUG: Recibiendo permisos ->", permissions); // Ver en consola de Render
+
   const client = await db.connect();
 
   try {
-    await client.query('BEGIN'); // Inicia la transacción
+    await client.query('BEGIN');
 
+    // 1. Crear el usuario
     const passwordToHash = password || cedula || "123456";
     const hashedPassword = await bcrypt.hash(passwordToHash, 10);
 
-    // 1. Crear el usuario
     const userRes = await client.query(
       `INSERT INTO users (email, password, name, phone, cedula, city, address)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [email, hashedPassword, name, phone, cedula, city, address]
+      [email || null, hashedPassword, name, phone || null, cedula, city || null, address || null]
     );
     const userId = userRes.rows[0].id;
 
-    // 2. Asignar el Rol seleccionado
+    // 2. Asignar el Rol
+    // Validamos que el rol exista para dar un error claro
+    const roleExists = await client.query("SELECT id FROM roles WHERE id = $1", [role_id]);
+    if (roleExists.rowCount === 0) {
+        throw new Error(`El rol ID ${role_id} no existe en la base de datos.`);
+    }
+
     await client.query(
       "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
       [userId, role_id]
     );
 
-    // 3. Asignar permisos sin duplicar
-    if (permissions && permissions.length > 0) {
-      const insertPromises = permissions.map((permId) => {
-        return client.query(
+    // 3. Asignar permisos
+    // Importante: Asegurarnos de que permId sea un número
+    if (Array.isArray(permissions) && permissions.length > 0) {
+      console.log(`DEBUG: Insertando ${permissions.length} permisos para usuario ${userId}`);
+      
+      for (const permId of permissions) {
+        await client.query(
           `INSERT INTO user_permissions (user_id, permission_id)
            VALUES ($1, $2)
-           ON CONFLICT (user_id, permission_id) DO NOTHING`, // Evitar duplicados
+           ON CONFLICT (user_id, permission_id) DO NOTHING`,
           [userId, permId]
         );
-      });
-
-      await Promise.all(insertPromises); // Ejecutar todas las inserciones
+      }
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ id: userId, email, name });
+    res.status(201).json({ message: "Usuario y permisos creados", id: userId });
+
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("CREATE USER ERROR:", error);
-    res.status(500).json({ message: "Error al crear usuario con permisos" });
+    console.error("❌ ERROR EN CREATE USER:", error.message);
+    res.status(500).json({ message: "Error en el servidor", error: error.message });
   } finally {
     client.release();
   }
