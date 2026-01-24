@@ -135,17 +135,24 @@ exports.createUser = async (req, res) => {
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await db.query("DELETE FROM users WHERE id = $1", [id]);
-    if (result.rowCount === 0) {
+    // Verificar si el usuario existe
+    const userCheck = await db.query("SELECT * FROM users WHERE id = $1", [id]);
+    if (userCheck.rowCount === 0) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
+
+    // Primero elimina los permisos del usuario
+    await db.query("DELETE FROM user_permissions WHERE user_id = $1", [id]);
+
+    // Luego elimina el usuario
+    const result = await db.query("DELETE FROM users WHERE id = $1", [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Usuario no encontrado para eliminar" });
+    }
+
     res.json({ message: "Usuario eliminado correctamente" });
   } catch (error) {
-    console.error("DELETE USER ERROR:", error);
+    console.error("DELETE USER ERROR:", error.message);
     res.status(500).json({ message: "Error al eliminar usuario" });
   }
-};
-exports.assignRole = async (req, res) => {
-  // Tu lógica aquí
-  res.json({ message: "Función assignRole pendiente de implementación" });
 };
