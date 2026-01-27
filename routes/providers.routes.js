@@ -1,14 +1,16 @@
-const { Router } = require("express"); // Cambiar a require
+const { Router } = require("express");
 const { 
   getProviders, 
   createProvider, 
-  getProviderHistory 
-} = require("../controllers/providers.controller"); // Asegúrate que el controlador use exports.nombre
+  getProviderHistory,
+  getProductPriceHistory 
+} = require("../controllers/providers.controller");
 
 const router = Router();
 
-router.get("/", getProviders); // Nota: solo "/" porque el prefijo /api/providers se pone en app.js
+router.get("/", getProviders);
 router.post("/", createProvider);
 router.get("/:id/history", getProviderHistory);
+router.get("/:provider_id/product/:product_id/prices", getProductPriceHistory);
 
-module.exports = router; // Cambiar a module.exports
+module.exports = router;
