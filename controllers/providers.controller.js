@@ -1,0 +1,79 @@
+const db = require("../config/db"); // Usando require para mantener consistencia con tu backend
+
+/* ==========================================
+   OBTENER TODOS LOS PROVEEDORES
+   ========================================== */
+export const getProviders = async (req, res) => {
+  try {
+    const result = await db.query("SELECT * FROM public.providers ORDER BY name ASC");
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener proveedores" });
+  }
+};
+
+/* ==========================================
+   CREAR NUEVO PROVEEDOR
+   ========================================== */
+export const createProvider = async (req, res) => {
+  const { name, category, phone, email, address } = req.body;
+  
+  if (!name || !category) {
+    return res.status(400).json({ message: "Nombre y categoría son obligatorios" });
+  }
+
+  try {
+    const result = await db.query(
+      `INSERT INTO public.providers (name, category, phone, email, address, balance) 
+       VALUES ($1, $2, $3, $4, $5, 0) RETURNING *`,
+      [name, category, phone, email, address]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al crear proveedor" });
+  }
+};
+
+/* ==========================================
+   HISTORIAL DE COMPRAS DEL PROVEEDOR
+   ========================================== */
+export const getProviderHistory = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT e.*, p.name as product_name 
+       FROM public.expenses e
+       LEFT JOIN products p ON e.product_id = p.id
+       WHERE e.provider_id = $1 
+       ORDER BY e.created_at DESC`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener historial" });
+  }
+};
+
+/* ==========================================
+   HISTORIAL DE PRECIOS POR PRODUCTO
+   (Punto 3 de tu lista: Detección de subida de costos)
+   ========================================== */
+export const getProductPriceHistory = async (req, res) => {
+  const { provider_id, product_id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT amount, quantity, (amount / NULLIF(quantity, 0)) as unit_price, created_at 
+       FROM public.expenses 
+       WHERE provider_id = $1 AND product_id = $2 AND type = 'compra'
+       ORDER BY created_at DESC LIMIT 5`,
+      [provider_id, product_id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener historial de precios" });
+  }
+};
