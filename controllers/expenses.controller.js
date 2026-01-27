@@ -74,6 +74,7 @@ exports.createExpense = async (req, res) => {
 /* =========================
    RESUMEN FINANCIERO (CON DEUDA)
 ========================= */
+// Resumen financiero de compras, gastos y rentabilidad
 exports.getFinanceSummary = async (req, res) => {
   try {
     const result = await db.query(`
