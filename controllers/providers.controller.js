@@ -69,3 +69,21 @@ exports.getProductPriceHistory = async (req, res) => {
     res.status(500).json({ message: "Error al obtener historial de precios" });
   }
 };
+// Obtener estadísticas de compra por proveedor (Punto 4)
+exports.getProviderStats = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const stats = await db.query(
+      `SELECT 
+        COUNT(*) as total_pedidos,
+        SUM(amount) as volumen_total_compra,
+        AVG(amount) as ticket_promedio
+       FROM public.expenses 
+       WHERE provider_id = $1 AND type = 'compra'`,
+      [id]
+    );
+    res.json(stats.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
