@@ -12,6 +12,7 @@
   const bannerRoutes = require("./routes/banners.routes");
   const discountRoutes = require("./routes/discounts.routes");
   const permissions = require("./routes/permissions.routes");
+  const providersRoutes = require("./routes/providers.routes"); 
 
   const app = express();
 
@@ -25,6 +26,9 @@
   app.use(helmet());
 
   // RUTAS
+  app.use("/api/auth", authRoutes);
+  app.use("/api/providers", providersRoutes);
+  app.use("/api/expenses", expensesRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/expenses", expensesRoutes);
   app.use("/api/products", productRoutes);

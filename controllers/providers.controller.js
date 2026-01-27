@@ -1,28 +1,22 @@
-const db = require("../config/db"); // Usando require para mantener consistencia con tu backend
+const db = require("../config/db");
 
-/* ==========================================
-   OBTENER TODOS LOS PROVEEDORES
-   ========================================== */
-export const getProviders = async (req, res) => {
+/* =========================
+   OBTENER TODOS
+========================= */
+exports.getProviders = async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM public.providers ORDER BY name ASC");
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error al obtener proveedores" });
+    res.status(500).json({ message: error.message });
   }
 };
 
-/* ==========================================
-   CREAR NUEVO PROVEEDOR
-   ========================================== */
-export const createProvider = async (req, res) => {
+/* =========================
+   CREAR PROVEEDOR
+========================= */
+exports.createProvider = async (req, res) => {
   const { name, category, phone, email, address } = req.body;
-  
-  if (!name || !category) {
-    return res.status(400).json({ message: "Nombre y categoría son obligatorios" });
-  }
-
   try {
     const result = await db.query(
       `INSERT INTO public.providers (name, category, phone, email, address, balance) 
@@ -31,8 +25,7 @@ export const createProvider = async (req, res) => {
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error al crear proveedor" });
+    res.status(500).json({ message: error.message });
   }
 };
 
