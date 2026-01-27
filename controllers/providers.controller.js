@@ -1,4 +1,4 @@
-import db from "../config/db.js"; 
+const db = require("../config/db");
 
 /* =========================
    OBTENER TODOS
@@ -31,8 +31,8 @@ exports.createProvider = async (req, res) => {
 
 /* ==========================================
    HISTORIAL DE COMPRAS DEL PROVEEDOR
-   ========================================== */
-export const getProviderHistory = async (req, res) => {
+========================================== */
+exports.getProviderHistory = async (req, res) => {
   const { id } = req.params;
   try {
     const result = await db.query(
@@ -52,9 +52,8 @@ export const getProviderHistory = async (req, res) => {
 
 /* ==========================================
    HISTORIAL DE PRECIOS POR PRODUCTO
-   (Punto 3 de tu lista: Detección de subida de costos)
-   ========================================== */
-export const getProductPriceHistory = async (req, res) => {
+========================================== */
+exports.getProductPriceHistory = async (req, res) => {
   const { provider_id, product_id } = req.params;
   try {
     const result = await db.query(
