@@ -87,3 +87,70 @@ exports.getProviderStats = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// Obtener rentabilidad por proveedor
+exports.getProfitByProvider = async (req, res) => {
+  const { provider_id } = req.params;
+
+  try {
+    const result = await db.query(`
+      SELECT 
+        p.name AS product_name,
+        pr.name AS provider_name,
+        e.amount AS purchase_price,
+        e.utility_type,
+        e.utility_value,
+        CASE 
+          WHEN e.utility_type = 'percentage' THEN ROUND(e.amount * (1 + e.utility_value / 100), 2)
+          WHEN e.utility_type = 'fixed' THEN e.amount + e.utility_value
+          ELSE e.amount
+        END AS sale_price,
+        CASE 
+          WHEN e.utility_type = 'percentage' THEN ROUND(e.amount * (1 + e.utility_value / 100) - e.amount, 2)
+          WHEN e.utility_type = 'fixed' THEN e.utility_value
+          ELSE 0
+        END AS profit
+      FROM public.expenses e
+      LEFT JOIN products p ON e.product_id = p.id
+      LEFT JOIN providers pr ON e.provider_id = pr.id
+      WHERE e.provider_id = $1 AND e.type = 'compra'
+    `, [provider_id]);
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Comparar rentabilidad entre proveedores para un producto
+exports.compareProvidersProfit = async (req, res) => {
+  const { product_id } = req.params;
+
+  try {
+    const result = await db.query(`
+      SELECT 
+        pr.name AS provider_name,
+        e.amount AS purchase_price,
+        e.utility_type,
+        e.utility_value,
+        CASE 
+          WHEN e.utility_type = 'percentage' THEN ROUND(e.amount * (1 + e.utility_value / 100), 2)
+          WHEN e.utility_type = 'fixed' THEN e.amount + e.utility_value
+          ELSE e.amount
+        END AS sale_price,
+        CASE 
+          WHEN e.utility_type = 'percentage' THEN ROUND(e.amount * (1 + e.utility_value / 100) - e.amount, 2)
+          WHEN e.utility_type = 'fixed' THEN e.utility_value
+          ELSE 0
+        END AS profit
+      FROM public.expenses e
+      LEFT JOIN providers pr ON e.provider_id = pr.id
+      WHERE e.product_id = $1 AND e.type = 'compra'
+      ORDER BY profit DESC
+    `, [product_id]);
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
