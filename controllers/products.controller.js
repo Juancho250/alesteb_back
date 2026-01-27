@@ -1,5 +1,5 @@
 const db = require("../config/db");
-
+const cloudinary = require("../config/cloudinary"); // Asegúrate de importar tu config de cloudinary
 // Obtener todos los productos
 // controllers/products.controller.js
 
@@ -102,29 +102,104 @@ exports.create = async (req, res) => {
   }
 };
 
-// Actualizar producto
+const getPublicIdFromUrl = (url) => {
+  try {
+    const splitUrl = url.split('/');
+    const lastPart = splitUrl.pop(); // ej: "imagen.jpg"
+    const publicId = lastPart.split('.')[0]; // ej: "imagen"
+    // Si usas carpetas en Cloudinary, la lógica puede variar, pero esto sirve para la raíz
+    // Si guardas el public_id en la BD sería más fácil, pero con URL se hace así:
+    const folder = splitUrl.pop(); // ej: "productos" si tienes carpeta
+    return folder !== 'upload' ? `${folder}/${publicId}` : publicId;
+  } catch (error) {
+    return null;
+  }
+};
+
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { name, price, stock, category_id, description } = req.body;
+  // deleted_images será un array de IDs que vienen del front como JSON string o array
+  const { name, price, stock, category_id, description, deleted_image_ids } = req.body;
+  const newImages = req.files || [];
+
+  const client = await db.connect();
 
   try {
-    const result = await db.query(
-      `
-      UPDATE products
-      SET name = $1,
-          price = $2,
-          stock = $3,
-          category_id = $4,
-          description = $5
-      WHERE id = $6
-      `,
+    await client.query("BEGIN");
+
+    // 1. Validar reglas de imágenes (Minimo 1)
+    // Contamos las actuales
+    const currentImagesQuery = await client.query("SELECT id, url FROM product_images WHERE product_id = $1", [id]);
+    const currentImages = currentImagesQuery.rows;
+    
+    // IDs a eliminar (parsear si viene como string)
+    let idsToDelete = [];
+    if (deleted_image_ids) {
+      idsToDelete = Array.isArray(deleted_image_ids) ? deleted_image_ids : JSON.parse(deleted_image_ids);
+    }
+
+    const remainingImagesCount = currentImages.filter(img => !idsToDelete.includes(img.id.toString())).length;
+    const totalFinalImages = remainingImagesCount + newImages.length;
+
+    if (totalFinalImages < 1) {
+      throw new Error("El producto debe tener al menos una imagen.");
+    }
+
+    // 2. Actualizar datos básicos
+    await client.query(
+      `UPDATE products 
+       SET name = $1, price = $2, stock = $3, category_id = $4, description = $5 
+       WHERE id = $6`,
       [name, price, stock, category_id, description, id]
     );
 
-    res.json({ updated: result.rowCount });
+    // 3. Eliminar imágenes marcadas (de Cloudinary y BD)
+    if (idsToDelete.length > 0) {
+      // Buscar las URLs de las que vamos a borrar para decirle a Cloudinary
+      const imagesToDelete = currentImages.filter(img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id));
+      
+      for (const img of imagesToDelete) {
+        // Borrar de Cloudinary
+        const publicId = getPublicIdFromUrl(img.url);
+        if (publicId) {
+          await cloudinary.uploader.destroy(publicId);
+        }
+        // Borrar de BD
+        await client.query("DELETE FROM product_images WHERE id = $1", [img.id]);
+      }
+    }
+
+    // 4. Subir e insertar nuevas imágenes
+    if (newImages.length > 0) {
+      const insertImageQuery = `INSERT INTO product_images (product_id, url, is_main) VALUES ($1, $2, $3)`;
+      
+      // Si no quedan imágenes antiguas, la primera nueva es la principal
+      let isFirstNew = remainingImagesCount === 0;
+
+      for (const file of newImages) {
+        const imageUrl = file.path || file.secure_url;
+        await client.query(insertImageQuery, [id, imageUrl, isFirstNew]);
+        isFirstNew = false; // Solo la primera puede ser true si no había otras
+      }
+    }
+
+    // 5. Asegurar que haya una imagen principal (si borraron la principal anterior)
+    // Reseteamos todas a false y ponemos la más vieja como true (o lógica que prefieras)
+    await client.query(`UPDATE product_images SET is_main = false WHERE product_id = $1`, [id]);
+    await client.query(`
+      UPDATE product_images SET is_main = true 
+      WHERE id = (SELECT id FROM product_images WHERE product_id = $1 ORDER BY id ASC LIMIT 1)
+    `, [id]);
+
+    await client.query("COMMIT");
+    res.json({ message: "Producto actualizado correctamente" });
+
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("UPDATE PRODUCT ERROR:", error);
-    res.status(500).json({ message: "Error al actualizar producto" });
+    res.status(500).json({ message: error.message || "Error al actualizar producto" });
+  } finally {
+    client.release();
   }
 };
 

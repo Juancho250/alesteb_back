@@ -22,6 +22,7 @@ router.put(
   "/:id",
   auth,
   requireRole(["admin"]),
+  upload.array("images", 6), // <--- AGREGAR ESTO AQUÍ
   ctrl.update
 );
 
