@@ -82,6 +82,7 @@ exports.register = async (req, res) => {
         </div>`
     });
 
+
     await client.query('COMMIT');
     res.status(201).json({ message: "Código enviado", email });
   } catch (error) {
