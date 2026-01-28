@@ -1,8 +1,8 @@
-import { Router } from 'express';
-import { submitContact } from '../controllers/contact.controller.js';
+const express = require('express');
+const { submitContact } = require('../controllers/contact.controller');
 
-const router = Router();
+const router = express.Router();
 
 router.post('/', submitContact);
 
-export default router;
+module.exports = router; // Cambiado de 'export default' a 'module.exports'
