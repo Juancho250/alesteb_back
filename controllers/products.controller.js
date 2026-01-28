@@ -4,22 +4,50 @@ const cloudinary = require("../config/cloudinary"); // Asegúrate de importar tu
 // controllers/products.controller.js
 
 exports.getAll = async (req, res) => {
-  const { categoria } = req.query; // Capturamos el slug de la URL (?categoria=slug)
+  // Recibimos parámetros de paginación y búsqueda
+  const { categoria, page = 1, limit = 12, search = "" } = req.query;
+  
+  const offset = (page - 1) * limit;
 
   try {
-    let queryText = `
+    // Construcción dinámica del WHERE
+    let whereClause = [];
+    let queryParams = [];
+    let paramIndex = 1;
+
+    if (categoria) {
+      whereClause.push(`c.slug = $${paramIndex}`);
+      queryParams.push(categoria);
+      paramIndex++;
+    }
+
+    if (search) {
+      whereClause.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    const whereString = whereClause.length > 0 ? `WHERE ${whereClause.join(" AND ")}` : "";
+
+    // Query Principal Optimizado
+    const queryText = `
       SELECT 
-        p.*,
+        p.id, p.name, p.price, p.stock, p.category_id, -- NO traemos description si es muy larga para listados
         c.name AS category_name,
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
-        best_discount.type AS discount_type,
-        best_discount.value AS discount_value,
-        COALESCE(best_discount.final_price, p.price) AS final_price
+        
+        -- Lógica de descuento simplificada para lectura rápida
+        COALESCE(bd.final_price, p.price) AS final_price,
+        bd.value AS discount_value
+
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
+      
+      -- JOIN optimizado para descuentos (Calculado solo para la página actual)
       LEFT JOIN LATERAL (
-        SELECT d.type, d.value,
+        SELECT 
+          d.value,
           CASE 
             WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
             WHEN d.type = 'fixed' THEN p.price - d.value
@@ -28,29 +56,42 @@ exports.getAll = async (req, res) => {
         FROM discount_targets dt
         JOIN discounts d ON d.id = dt.discount_id
         WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
-           OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+            OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
           AND NOW() BETWEEN d.starts_at AND d.ends_at
         ORDER BY final_price ASC LIMIT 1
-      ) best_discount ON true
+      ) bd ON true
+
+      ${whereString}
+      ORDER BY p.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    const queryParams = [];
-    
-    // Si viene categoría, añadimos el WHERE usando el slug
-    if (categoria) {
-      queryText += ` WHERE c.slug = $1`;
-      queryParams.push(categoria);
-    }
+    // Añadimos limit y offset a los parámetros
+    queryParams.push(limit, offset);
 
-    queryText += ` ORDER BY p.created_at DESC`;
+    // Ejecutamos consultas en paralelo: Datos y Conteo Total (para paginación en front)
+    const [dataResult, countResult] = await Promise.all([
+      db.query(queryText, queryParams),
+      db.query(`
+        SELECT COUNT(p.id) 
+        FROM products p 
+        LEFT JOIN categories c ON p.category_id = c.id 
+        ${whereString}
+      `, queryParams.slice(0, paramIndex - 1)) // Usamos solo los params del WHERE
+    ]);
 
-    const result = await db.query(queryText, queryParams);
-    res.json(result.rows);
+    res.json({
+      products: dataResult.rows,
+      total: parseInt(countResult.rows[0].count),
+      page: parseInt(page),
+      totalPages: Math.ceil(countResult.rows[0].count / limit)
+    });
+
   } catch (error) {
     console.error("GET PRODUCTS ERROR:", error);
     res.status(500).json({ message: "Error al obtener productos" });
   }
-};  
+};
 
 // Crear producto
 exports.create = async (req, res) => {
