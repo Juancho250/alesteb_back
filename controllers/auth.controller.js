@@ -46,8 +46,10 @@ exports.login = async (req, res) => {
 };
 
 // 2. REGISTER (Asigna Rol 3 - Customer automáticamente)
+// 2. REGISTER (Ajustado con Teléfono)
 exports.register = async (req, res) => {
-  const { name, email, password } = req.body;
+  // Añadimos 'phone' a la petición
+  const { name, email, password, phone } = req.body; 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -57,33 +59,38 @@ exports.register = async (req, res) => {
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Insertamos incluyendo el campo 'phone'
     const userRes = await client.query(
-      `INSERT INTO users (name, email, password, verification_code, is_verified) 
-       VALUES ($1, $2, $3, $4, false) RETURNING id`,
-      [name, email, hashedPassword, verificationCode]
+      `INSERT INTO users (name, email, password, phone, verification_code, is_verified) 
+       VALUES ($1, $2, $3, $4, $5, false) RETURNING id`,
+      [name, email, hashedPassword, phone, verificationCode]
     );
     
-    // Asignación de rol 'customer' (ID 3)
     await client.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, 3)", [userRes.rows[0].id]);
 
     await resend.emails.send({
       from: 'ALESTEB <onboarding@resend.dev>',
       to: [email],
       subject: 'Tu Código de Verificación',
-      html: `<h1>${verificationCode}</h1><p>Usa este código para activar tu cuenta.</p>`
+      html: `
+        <div style="font-family: sans-serif; max-width: 400px; margin: auto; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
+          <h2 style="color: #333;">Verificación de Cuenta</h2>
+          <p>Hola <strong>${name}</strong>, usa el siguiente código para activar tu cuenta en Alesteb System:</p>
+          <div style="background: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #0071e3;">
+            ${verificationCode}
+          </div>
+        </div>`
     });
 
     await client.query('COMMIT');
     res.status(201).json({ message: "Código enviado", email });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error(error);
     res.status(500).json({ message: "Error en registro" });
   } finally {
     client.release();
   }
 };
-
 // 3. VERIFY CODE
 exports.verifyCode = async (req, res) => {
   const { email, code } = req.body;
