@@ -12,7 +12,7 @@ const usersRoutes = require("./routes/users.routes");
 const rolesRoutes = require("./routes/roles.routes");
 const bannerRoutes = require("./routes/banners.routes");
 const discountRoutes = require("./routes/discounts.routes");
-const permissions = require("./routes/permissions.routes");
+// ❌ Eliminada la línea de permissions.routes que causaba el error
 const providersRoutes = require("./routes/providers.routes"); 
 const contactRoutes = require("./routes/contact.routes");
 
@@ -27,7 +27,7 @@ app.use(cors({
 app.use(express.json());
 app.use(helmet());
 
-// RUTAS (Eliminadas las duplicadas)
+// RUTAS
 app.use("/api/auth", authRoutes);
 app.use("/api/providers", providersRoutes);
 app.use("/api/expenses", expensesRoutes);
@@ -38,8 +38,8 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/banners", bannerRoutes);
-app.use("/api/permissions", permissions);
-app.use("/api/contact", contactRoutes); // Ahora funcionará porque exportamos correctamente
+// ❌ Eliminado app.use("/api/permissions", ...)
+app.use("/api/contact", contactRoutes);
 
 app.get("/", (_, res) => {
   res.send("API Alesteb OK");
