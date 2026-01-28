@@ -13,6 +13,7 @@
   const discountRoutes = require("./routes/discounts.routes");
   const permissions = require("./routes/permissions.routes");
   const providersRoutes = require("./routes/providers.routes"); 
+  const contactRoutes = require("./routes/contact.routes");
 
   const app = express();
 
@@ -39,7 +40,8 @@
   app.use("/api/roles", rolesRoutes);
   app.use("/api/banners", bannerRoutes);
   app.use("/api/permissions", permissions);
-
+  app.use("/api/contact", contactRoutes);
+  
   app.get("/", (_, res) => {
     res.send("API Alesteb OK");
   });
