@@ -1,6 +1,6 @@
 import { Resend } from 'resend';
-// Asumo que tienes una pool de conexión configurada para Neon
-import { pool } from '../config/db.js'; 
+// Cambiamos require por import para ser consistentes con tus otros controladores
+import db from "../config/db.js"; 
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -13,23 +13,26 @@ export const submitContact = async (req, res) => {
       INSERT INTO contact_messages (name, email, subject, message, phone, created_at)
       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *
     `;
-    const result = await pool.query(query, [name, email, subject, message, phone]);
+    
+    // IMPORTANTE: Asegúrate de usar la variable 'db' que importaste arriba
+    const result = await db.query(query, [name, email, subject, message, phone]);
 
     // 2. Enviar correo vía Resend
     await resend.emails.send({
-      from: 'ALESTEB Store <onboarding@resend.dev>', // Luego configuras tu dominio
-      to: ['softturin@gmail.com'], // Donde quieres recibir las notificaciones
-      subject: `Nuevo Registro de Contacto: ${subject}`,
+      from: 'ALESTEB Store <onboarding@resend.dev>',
+      to: ['softturin@gmail.com'], 
+      subject: `Nuevo Registro: ${subject}`,
       html: `
-        <div style="font-family: sans-serif; color: #1d1d1f;">
-          <h1 style="font-size: 24px; font-weight: 900 italic;">NUEVO MENSAJE RECIBIDO</h1>
-          <hr />
-          <p><strong>Nombre:</strong> ${name}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Teléfono:</strong> ${phone || 'No provisto'}</p>
-          <p><strong>Asunto:</strong> ${subject}</p>
-          <p><strong>Mensaje:</strong></p>
-          <div style="background: #f5f5f7; padding: 20px; border-radius: 12px;">${message}</div>
+        <div style="font-family: sans-serif; color: #1d1d1f; max-width: 600px; margin: auto; border: 1px solid #f0f0f0; padding: 40px; border-radius: 24px;">
+          <p style="font-size: 10px; font-weight: 900; letter-spacing: 2px; color: #2563eb; text-transform: uppercase;">Notificación de Registro</p>
+          <h1 style="font-size: 32px; font-weight: 900; font-style: italic; letter-spacing: -1px; margin-bottom: 20px;">NUEVO MENSAJE</h1>
+          <div style="background: #f5f5f7; padding: 25px; border-radius: 20px; margin-bottom: 20px;">
+            <p style="margin: 5px 0;"><strong>Usuario:</strong> ${name}</p>
+            <p style="margin: 5px 0;"><strong>Email:</strong> ${email}</p>
+            <p style="margin: 5px 0;"><strong>Tel:</strong> ${phone || 'N/A'}</p>
+          </div>
+          <p style="font-size: 12px; font-weight: 800; text-transform: uppercase; color: #86868b;">Mensaje:</p>
+          <p style="line-height: 1.6; color: #424245;">${message}</p>
         </div>
       `
     });
