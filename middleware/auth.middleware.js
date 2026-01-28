@@ -9,16 +9,15 @@ const auth = (req, res, next) => {
     }
 
     const parts = authHeader.split(" ");
-
     if (parts.length !== 2 || parts[0] !== "Bearer") {
       return res.status(401).json({ message: "Formato de token inválido" });
     }
 
     const token = parts[1];
-
-    // Verifica el token utilizando la clave secreta del .env
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    // Guardamos el decodificado en req.user
+    // El payload ahora será: { id, role }
     req.user = decoded;
     next();
   } catch (error) {
@@ -27,41 +26,31 @@ const auth = (req, res, next) => {
   }
 };
 
-
-// 🛡️ Verifica roles
+/**
+ * 🛡️ Verifica roles (Simplificado)
+ * Puede recibir un string "admin" o un array ["admin", "staff"]
+ */
 const requireRole = (allowedRoles = []) => {
   return (req, res, next) => {
-    if (!req.user || !Array.isArray(req.user.roles)) {
-      return res.status(401).json({ message: "No autenticado" });
+    if (!req.user || !req.user.role) {
+      return res.status(401).json({ message: "No autenticado o sin rol asignado" });
     }
 
-    const hasRole = req.user.roles.some(role =>
-      allowedRoles.includes(role)
-    );
+    // Convertimos a array si nos pasan un solo string para poder usar .includes()
+    const rolesToVerify = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+    
+    // Verificamos si el rol del usuario está en la lista permitida
+    const hasRole = rolesToVerify.includes(req.user.role);
 
     if (!hasRole) {
-      return res.status(403).json({ message: "No autorizado" });
+      return res.status(403).json({ message: "No tienes nivel de acceso para esta sección" });
     }
 
     next();
   };
 };
 
-// 🛡️ Verifica permisos
-const requirePermission = (requiredPermission) => {
-  return (req, res, next) => {
-    const userPermissions = req.user.permissions || [];
-    const userRoles = req.user.roles || [];
+// 🛡️ Atajo rápido para administradores
+const isAdmin = requireRole(['admin', 'super_admin']);
 
-    // Si es Super Admin, pasa siempre
-    if (userRoles.includes('super_admin')) return next();
-
-    if (!userPermissions.includes(requiredPermission)) {
-      return res.status(403).json({ message: "No tienes permisos para realizar esta acción." });
-    }
-
-    next();
-  };
-};
-
-module.exports = { auth, requirePermission, requireRole };
+module.exports = { auth, requireRole, isAdmin };

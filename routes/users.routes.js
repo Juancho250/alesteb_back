@@ -2,16 +2,13 @@ const express = require('express');
 const router = express.Router();
 const usersController = require('../controllers/users.controller'); 
 
-// Middleware de autenticación y permisos
-const { auth, requirePermission } = require('../middleware/auth.middleware');
+// Importamos solo el middleware de autenticación
+const { auth, isAdmin, requireRole } = require('../middleware/auth.middleware');
 
-// Rutas protegidas
-router.get('/', auth, requirePermission('user.read'), usersController.getUsers);
-router.post('/', auth, requirePermission('user.create'), usersController.createUser);
-router.delete('/:id', auth, requirePermission('user.delete'), usersController.deleteUser);
-router.put('/:id', auth, requirePermission('user.update'), usersController.updateUser);
-
-// --- ELIMINA ESTA LÍNEA QUE CAUSA EL ERROR ---
-// router.post('/assign-role', auth, requirePermission('user.update'), usersController.assignRole);
+// Solo Admins pueden gestionar usuarios
+router.get('/', auth, isAdmin, usersController.getUsers);
+router.post('/', auth, isAdmin, usersController.createUser);
+router.put('/:id', auth, isAdmin, usersController.updateUser);
+router.delete('/:id', auth, isAdmin, usersController.deleteUser);
 
 module.exports = router;
