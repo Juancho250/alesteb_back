@@ -1,7 +1,7 @@
 const db = require("../config/db");
 const bcrypt = require("bcrypt");
 
-// Obtener usuarios (Simplificado sin permisos)
+// 1. Obtener usuarios
 exports.getUsers = async (req, res) => {
   try {
     const result = await db.query(`
@@ -18,12 +18,41 @@ exports.getUsers = async (req, res) => {
   }
 };
 
-// Actualizar usuario (Simplificado)
+// 2. Crear usuario
+exports.createUser = async (req, res) => {
+  const { email, password, name, phone, cedula, city, address, role_id = 3 } = req.body;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const hashedPassword = await bcrypt.hash(password || cedula || "123456", 10);
+
+    const userRes = await client.query(
+      `INSERT INTO users (email, password, name, phone, cedula, city, address, is_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id`,
+      [email, hashedPassword, name, phone, cedula, city, address]
+    );
+    const userId = userRes.rows[0].id;
+
+    await client.query(
+      "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
+      [userId, role_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({ message: "Usuario creado con éxito", id: userId });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: "Error al crear usuario" });
+  } finally {
+    client.release();
+  }
+};
+
+// 3. Actualizar usuario
 exports.updateUser = async (req, res) => {
   const { id } = req.params;
   const { name, email, phone, cedula, city, address, role_id, password } = req.body;
   const client = await db.connect();
-
   try {
     await client.query('BEGIN');
 
@@ -37,7 +66,6 @@ exports.updateUser = async (req, res) => {
       await client.query("UPDATE users SET password = $1 WHERE id = $2", [hashedPassword, id]);
     }
 
-    // Actualizar solo el Rol
     await client.query(
       "UPDATE user_roles SET role_id = $1 WHERE user_id = $2",
       [role_id, id]
@@ -53,32 +81,27 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-// Crear usuario (Simplificado)
-exports.createUser = async (req, res) => {
-  const { email, password, name, phone, cedula, city, address, role_id = 3 } = req.body;
+// 4. ELIMINAR USUARIO (La que faltaba)
+exports.deleteUser = async (req, res) => {
+  const { id } = req.params;
   const client = await db.connect();
-
   try {
     await client.query('BEGIN');
-    const hashedPassword = await bcrypt.hash(password || cedula || "123456", 10);
-
-    const userRes = await client.query(
-      `INSERT INTO users (email, password, name, phone, cedula, city, address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [email, hashedPassword, name, phone, cedula, city, address]
-    );
-    const userId = userRes.rows[0].id;
-
-    await client.query(
-      "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
-      [userId, role_id]
-    );
+    // Eliminar primero la relación de roles para evitar error de llave foránea
+    await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
+    const result = await client.query("DELETE FROM users WHERE id = $1", [id]);
+    
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
 
     await client.query('COMMIT');
-    res.status(201).json({ message: "Usuario creado con éxito", id: userId });
+    res.json({ message: "Usuario eliminado con éxito" });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: "Error al crear usuario" });
+    console.error("DELETE ERROR:", error);
+    res.status(500).json({ message: "No se pudo eliminar el usuario" });
   } finally {
     client.release();
   }
