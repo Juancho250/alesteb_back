@@ -1,4 +1,3 @@
-// controllers/auth.controller.js
 const db = require("../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -6,12 +5,12 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// 1. LOGIN (Faltaba exportar esta función en tu último código)
+// 1. LOGIN con protección de verificación
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   try {
     const userRes = await db.query(
-      `SELECT u.id, u.email, u.password, r.name as role 
+      `SELECT u.id, u.email, u.password, u.is_verified, r.name as role 
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
@@ -22,6 +21,12 @@ exports.login = async (req, res) => {
     if (userRes.rowCount === 0) return res.status(401).json({ message: "Credenciales inválidas" });
 
     const user = userRes.rows[0];
+
+    // BLOQUEO: Si no está verificado, no entra
+    if (!user.is_verified) {
+      return res.status(403).json({ message: "Por favor, verifica tu correo antes de iniciar sesión." });
+    }
+
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ message: "Credenciales inválidas" });
 
@@ -40,7 +45,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// 2. REGISTER
+// 2. REGISTER (Asigna Rol 3 - Customer automáticamente)
 exports.register = async (req, res) => {
   const { name, email, password } = req.body;
   const client = await db.connect();
@@ -58,26 +63,28 @@ exports.register = async (req, res) => {
       [name, email, hashedPassword, verificationCode]
     );
     
+    // Asignación de rol 'customer' (ID 3)
     await client.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, 3)", [userRes.rows[0].id]);
 
     await resend.emails.send({
       from: 'ALESTEB <onboarding@resend.dev>',
       to: [email],
-      subject: 'Código de Verificación',
-      html: `<h1>${verificationCode}</h1>`
+      subject: 'Tu Código de Verificación',
+      html: `<h1>${verificationCode}</h1><p>Usa este código para activar tu cuenta.</p>`
     });
 
     await client.query('COMMIT');
     res.status(201).json({ message: "Código enviado", email });
   } catch (error) {
     await client.query('ROLLBACK');
+    console.error(error);
     res.status(500).json({ message: "Error en registro" });
   } finally {
     client.release();
   }
 };
 
-// 3. VERIFY
+// 3. VERIFY CODE
 exports.verifyCode = async (req, res) => {
   const { email, code } = req.body;
   try {
@@ -85,9 +92,9 @@ exports.verifyCode = async (req, res) => {
       "UPDATE users SET is_verified = true, verification_code = NULL WHERE email = $1 AND verification_code = $2 RETURNING id",
       [email, code]
     );
-    if (result.rowCount === 0) return res.status(400).json({ message: "Código incorrecto" });
-    res.json({ message: "Verificado" });
+    if (result.rowCount === 0) return res.status(400).json({ message: "Código incorrecto o cuenta ya verificada" });
+    res.json({ message: "Cuenta verificada con éxito" });
   } catch (error) {
-    res.status(500).json({ message: "Error" });
+    res.status(500).json({ message: "Error en verificación" });
   }
 };
