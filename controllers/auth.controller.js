@@ -14,7 +14,7 @@ exports.login = async (req, res) => {
   const { email, password } = req.body;
   try {
     const userRes = await db.query(
-      `SELECT u.id, u.email, u.password, u.is_verified, r.name as role 
+      `SELECT u.id, u.name, u.email, u.password, u.is_verified, r.name as role 
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
@@ -40,9 +40,15 @@ exports.login = async (req, res) => {
       { expiresIn: "8h" }
     );
 
+    // ¡AQUÍ ESTÁ EL CAMBIO! Agregamos user.name a la respuesta
     res.json({
       token,
-      user: { id: user.id, email: user.email, role: user.role }
+      user: { 
+        id: user.id, 
+        name: user.name, // <-- ESTO FALTABA
+        email: user.email, 
+        role: user.role 
+      }
     });
   } catch (error) {
     res.status(500).json({ message: "Error en el login" });
