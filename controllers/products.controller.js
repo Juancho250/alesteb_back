@@ -40,8 +40,10 @@ const deleteFromCloudinary = async (url) => {
 };
 
 // Get all products
+// En products.controller.js - Función getAll
+
 exports.getAll = async (req, res) => {
-  const { categoria, page = 1, limit = 12, search = "" } = req.query;
+  const { categoria, page = 1, limit = 100, search = "" } = req.query;
   const offset = (page - 1) * limit;
 
   try {
@@ -66,32 +68,47 @@ exports.getAll = async (req, res) => {
     const queryText = `
       SELECT 
         p.id, p.name, p.price, p.stock, p.category_id,
+        p.purchase_price, p.markup_type, p.markup_value,
         c.name AS category_name,
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         
-        COALESCE(bd.final_price, p.price) AS final_price,
-        bd.value AS discount_value
+        -- ⭐ PRECIO FINAL CON DESCUENTOS
+        COALESCE(
+          (SELECT 
+            CASE 
+              WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+              WHEN d.type = 'fixed' THEN p.price - d.value
+              ELSE p.price
+            END
+           FROM discount_targets dt
+           JOIN discounts d ON d.id = dt.discount_id
+           WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+               OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+             AND NOW() BETWEEN d.starts_at AND d.ends_at
+             AND d.active = true
+           ORDER BY CASE 
+             WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+             ELSE p.price - d.value
+           END ASC
+           LIMIT 1
+          ),
+          p.price
+        ) AS final_price,
+        
+        -- VALOR DEL DESCUENTO ACTIVO
+        (SELECT d.value
+         FROM discount_targets dt
+         JOIN discounts d ON d.id = dt.discount_id
+         WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+             OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+           AND NOW() BETWEEN d.starts_at AND d.ends_at
+           AND d.active = true
+         LIMIT 1
+        ) AS discount_value
 
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      
-      LEFT JOIN LATERAL (
-        SELECT 
-          d.value,
-          CASE 
-            WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-            WHEN d.type = 'fixed' THEN p.price - d.value
-            ELSE p.price
-          END AS final_price
-        FROM discount_targets dt
-        JOIN discounts d ON d.id = dt.discount_id
-        WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
-            OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
-          AND NOW() BETWEEN d.starts_at AND d.ends_at
-        ORDER BY final_price ASC LIMIT 1
-      ) bd ON true
-
       ${whereString}
       ORDER BY p.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
