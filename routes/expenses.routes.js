@@ -2,19 +2,22 @@ const express = require('express');
 const router = express.Router();
 const expenseController = require('../controllers/expenses.controller');
 
-// Rutas existentes (NO las borres)
-router.get('/expenses', expenseController.getExpenses);
-router.post('/expenses', expenseController.createExpense);
-router.get('/expenses/summary', expenseController.getFinanceSummary);
+// ⚠️ ORDEN CRÍTICO: Las rutas específicas PRIMERO, las dinámicas DESPUÉS
 
-// ✨ NUEVAS RUTAS - Agregar estas
-// Add these NEW routes to your existing expenses routes file
+// 1. RUTAS ESPECÍFICAS (deben ir primero)
+router.get('/expenses/summary', expenseController.getFinanceSummary);
+router.get('/expenses/product-profitability', expenseController.getProductProfitability);
+router.get('/expenses/provider-profitability', expenseController.getProviderProfitability);
+router.get('/expenses/provider-payments', expenseController.getProviderPayments);
+
+// 2. PURCHASE ORDERS - RUTAS ESPECÍFICAS
 router.post('/expenses/purchase-orders', expenseController.createPurchaseOrder);
 router.get('/expenses/purchase-orders', expenseController.getPurchaseOrders);
 router.get('/expenses/purchase-orders/:id', expenseController.getPurchaseOrderDetails);
-router.get('/expenses/product-profitability', expenseController.getProductProfitability);
-router.get('/expenses/provider-profitability', expenseController.getProviderProfitability);
 router.post('/expenses/provider-payments', expenseController.recordProviderPayment);
-router.get('/expenses/provider-payments', expenseController.getProviderPayments);
+
+// 3. RUTAS GENERALES (al final)
+router.get('/expenses', expenseController.getExpenses);
+router.post('/expenses', expenseController.createExpense);
 
 module.exports = router;
