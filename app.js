@@ -12,7 +12,6 @@ const usersRoutes = require("./routes/users.routes");
 const rolesRoutes = require("./routes/roles.routes");
 const bannerRoutes = require("./routes/banners.routes");
 const discountRoutes = require("./routes/discounts.routes");
-// ❌ Eliminada la línea de permissions.routes que causaba el error
 const providersRoutes = require("./routes/providers.routes"); 
 const contactRoutes = require("./routes/contact.routes");
 
@@ -38,7 +37,6 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/banners", bannerRoutes);
-// ❌ Eliminado app.use("/api/permissions", ...)
 app.use("/api/contact", contactRoutes);
 
 app.get("/", (_, res) => {
