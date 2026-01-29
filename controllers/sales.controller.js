@@ -123,15 +123,24 @@ exports.getUserStats = async (req, res) => {
   }
 };
 // ACTUALIZA TAMBIÉN ESTA PARTE PARA QUE NO DE ERROR AL VER EL DETALLE
+// controllers/sales.controller.js -> Modifica getSaleById
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
+  const userId = req.user.id;
+  const userRole = req.user.role_id;
 
   try {
+    // Si no es admin, verificamos que la venta sea suya
+    const saleCheck = await db.query("SELECT customer_id FROM sales WHERE id = $1", [id]);
+    
+    if (saleCheck.rows.length === 0) return res.status(404).json({ message: "Venta no encontrada" });
+    
+    if (userRole !== 1 && saleCheck.rows[0].customer_id !== userId) {
+      return res.status(403).json({ message: "No tienes permiso para ver esta venta" });
+    }
+
     const result = await db.query(
-      `SELECT 
-         p.name,
-         si.quantity,
-         si.unit_price
+      `SELECT p.name, si.quantity, si.unit_price
        FROM sale_items si
        JOIN products p ON p.id = si.product_id
        WHERE si.sale_id = $1`,
