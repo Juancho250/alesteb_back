@@ -1,4 +1,150 @@
-// ... (tu código existente) ...
+const db = require("../config/db");
+
+/* =========================
+   OBTENER TODOS LOS GASTOS
+========================= */
+exports.getExpenses = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT e.*, p.name as provider_name 
+       FROM public.expenses e
+       LEFT JOIN providers p ON e.provider_id = p.id
+       ORDER BY e.created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* ===============================================
+   CREAR GASTO OPERATIVO SIMPLE
+=============================================== */
+exports.createExpense = async (req, res) => {
+  const { 
+    type, 
+    category, 
+    amount, 
+    description,
+    provider_id 
+  } = req.body;
+
+  const client = await db.connect();
+  
+  try {
+    await client.query("BEGIN");
+
+    // Insertar gasto
+    const result = await client.query(
+      `INSERT INTO expenses 
+       (type, category, amount, description, provider_id)
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING *`,
+      [type, category, amount, description, provider_id]
+    );
+
+    // Si es a crédito, actualizar balance del proveedor
+    if (provider_id && type === 'gasto') {
+      await client.query(
+        `UPDATE providers 
+         SET balance = balance + $1 
+         WHERE id = $2`,
+        [amount, provider_id]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json(result.rows[0]);
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("CREATE EXPENSE ERROR:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+};
+
+/* ===============================================
+   RESUMEN FINANCIERO COMPLETO
+=============================================== */
+exports.getFinanceSummary = async (req, res) => {
+  const { start_date, end_date } = req.query;
+
+  try {
+    let dateFilter = '';
+    const params = [];
+    let paramCount = 1;
+
+    if (start_date) {
+      dateFilter += ` AND e.created_at >= $${paramCount}`;
+      params.push(start_date);
+      paramCount++;
+    }
+
+    if (end_date) {
+      dateFilter += ` AND e.created_at <= $${paramCount}`;
+      params.push(end_date);
+      paramCount++;
+    }
+
+    // Gastos y compras
+    const expensesResult = await db.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'gasto' THEN amount END), 0) AS "totalGastos",
+        COALESCE(SUM(CASE WHEN type = 'compra' THEN amount END), 0) AS "totalCompras"
+      FROM expenses e
+      WHERE 1=1 ${dateFilter}
+    `, params);
+
+    // Ventas y rentabilidad real
+    const salesResult = await db.query(`
+      SELECT 
+        COALESCE(SUM(total), 0) as total_revenue,
+        COUNT(*) as total_sales
+      FROM sales 
+      WHERE payment_status = 'paid'
+      ${start_date ? `AND created_at >= $1` : ''}
+      ${end_date ? `AND created_at <= $${start_date ? 2 : 1}` : ''}
+    `, start_date && end_date ? [start_date, end_date] : start_date ? [start_date] : end_date ? [end_date] : []);
+
+    // Deuda total con proveedores
+    const debtResult = await db.query(`
+      SELECT COALESCE(SUM(balance), 0) AS "deudaTotal"
+      FROM providers
+    `);
+
+    // Rentabilidad por producto vendido
+    const profitResult = await db.query(`
+      SELECT 
+        COALESCE(SUM(si.quantity * (si.unit_price - p.purchase_price)), 0) as realized_profit
+      FROM sale_items si
+      JOIN products p ON si.product_id = p.id
+      JOIN sales s ON si.sale_id = s.id
+      WHERE s.payment_status = 'paid'
+      ${start_date ? `AND s.created_at >= $1` : ''}
+      ${end_date ? `AND s.created_at <= $${start_date ? 2 : 1}` : ''}
+    `, start_date && end_date ? [start_date, end_date] : start_date ? [start_date] : end_date ? [end_date] : []);
+
+    const summary = {
+      ...expensesResult.rows[0],
+      ...debtResult.rows[0],
+      totalVentas: Number(salesResult.rows[0].total_revenue),
+      totalSales: Number(salesResult.rows[0].total_sales),
+      realizedProfit: Number(profitResult.rows[0].realized_profit),
+      netProfit: Number(profitResult.rows[0].realized_profit) - 
+                 Number(expensesResult.rows[0].totalGastos)
+    };
+
+    res.json(summary);
+
+  } catch (err) {
+    console.error("GET FINANCE SUMMARY ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 
 /* ===============================================
    CREAR ORDEN DE COMPRA PROFESIONAL
