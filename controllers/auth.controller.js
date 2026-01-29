@@ -5,6 +5,10 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+if (!process.env.RESEND_API_KEY) {
+    console.error("CRÍTICO: Faltan la RESEND_API_KEY en el .env");
+}
+
 // 1. LOGIN con protección de verificación
 exports.login = async (req, res) => {
   const { email, password } = req.body;
