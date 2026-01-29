@@ -157,13 +157,25 @@ exports.getUserStats = async (req, res) => {
   }
 };
 
-// 4. Obtener detalles de venta por ID
+// 4. Obtener detalles de venta por ID (FIXED VERSION)
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
 
   try {
+    // ✅ FIX: Use a subquery to get the first image from product_images table
+    // instead of trying to access non-existent main_image column
     const result = await db.query(
-      `SELECT p.name, si.quantity, si.unit_price, p.main_image
+      `SELECT 
+        p.name, 
+        si.quantity, 
+        si.unit_price,
+        (
+          SELECT url 
+          FROM product_images 
+          WHERE product_id = p.id 
+          ORDER BY id ASC 
+          LIMIT 1
+        ) as main_image
       FROM sale_items si
       JOIN products p ON p.id = si.product_id
       WHERE si.sale_id = $1`,
