@@ -1,16 +1,17 @@
+// products.controller.js - VERSIÓN MEJORADA
+// Los productos se crean sin precio ni stock, que se configuran en Purchase Orders
+
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 
 // Utility function to extract Cloudinary public_id from URL
 const getPublicIdFromUrl = (url) => {
   try {
-    // Cloudinary URL format: https://res.cloudinary.com/{cloud_name}/image/upload/{transformations}/{public_id}.{format}
     const matches = url.match(/\/upload\/(?:v\d+\/)?(.+)\.\w+$/);
     if (matches && matches[1]) {
       return matches[1];
     }
     
-    // Fallback: manual parsing
     const splitUrl = url.split('/');
     const lastPart = splitUrl.pop();
     const publicId = lastPart.split('.')[0];
@@ -23,7 +24,6 @@ const getPublicIdFromUrl = (url) => {
   }
 };
 
-// Delete image from Cloudinary
 const deleteFromCloudinary = async (url) => {
   try {
     const publicId = getPublicIdFromUrl(url);
@@ -39,9 +39,9 @@ const deleteFromCloudinary = async (url) => {
   }
 };
 
-// Get all products
-// En products.controller.js - Función getAll
-
+// ========================================
+// GET ALL PRODUCTS (con indicadores de estado)
+// ========================================
 exports.getAll = async (req, res) => {
   const { categoria, page = 1, limit = 100, search = "" } = req.query;
   const offset = (page - 1) * limit;
@@ -73,7 +73,7 @@ exports.getAll = async (req, res) => {
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         
-        -- ⭐ PRECIO FINAL CON DESCUENTOS
+        -- PRECIO FINAL CON DESCUENTOS
         COALESCE(
           (SELECT 
             CASE 
@@ -105,7 +105,15 @@ exports.getAll = async (req, res) => {
            AND NOW() BETWEEN d.starts_at AND d.ends_at
            AND d.active = true
          LIMIT 1
-        ) AS discount_value
+        ) AS discount_value,
+        
+        -- 🆕 INDICADORES DE ESTADO
+        CASE
+          WHEN p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0) THEN 'pending_first_purchase'
+          WHEN p.stock = 0 AND p.purchase_price > 0 THEN 'out_of_stock'
+          WHEN p.stock > 0 AND p.stock <= 5 THEN 'low_stock'
+          ELSE 'in_stock'
+        END AS inventory_status
 
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -139,9 +147,11 @@ exports.getAll = async (req, res) => {
   }
 };
 
-// Create product
+// ========================================
+// CREATE PRODUCT (SIN precio ni stock)
+// ========================================
 exports.create = async (req, res) => {
-  const { name, price, stock, category_id, description, image_order } = req.body;
+  const { name, category_id, description, image_order } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
 
   const client = await db.connect();
@@ -149,16 +159,27 @@ exports.create = async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    // 🆕 Crear producto con valores por defecto
+    // Precio y stock = 0 hasta primera Purchase Order
     const productResult = await client.query(
-      `INSERT INTO products (name, price, stock, category_id, description)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [name, price, stock, category_id, description]
+      `INSERT INTO products (
+        name, 
+        price, 
+        stock, 
+        category_id, 
+        description,
+        purchase_price,
+        markup_type,
+        markup_value
+      )
+       VALUES ($1, 0, 0, $2, $3, NULL, NULL, NULL) 
+       RETURNING id`,
+      [name, category_id, description]
     );
 
     const productId = productResult.rows[0].id;
 
     if (images.length > 0) {
-      // Parse image order if provided
       let orderMap = {};
       if (image_order) {
         try {
@@ -184,14 +205,19 @@ exports.create = async (req, res) => {
         await client.query(insertImageQuery, [
           productId,
           imageUrl,
-          i === 0, // First image is main by default
+          i === 0,
           displayOrder
         ]);
       }
     }
 
     await client.query("COMMIT");
-    res.status(201).json({ id: productId });
+    
+    res.status(201).json({ 
+      id: productId,
+      message: "Producto agregado al catálogo. Configura precio y stock en 'Órdenes de Compra'."
+    });
+    
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("CREATE PRODUCT ERROR:", error);
@@ -201,10 +227,20 @@ exports.create = async (req, res) => {
   }
 };
 
-// Update product
+// ========================================
+// UPDATE PRODUCT (precio/stock READ-ONLY)
+// ========================================
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { name, price, stock, category_id, description, deleted_image_ids, image_order } = req.body;
+  const { 
+    name, 
+    price,           // ⚠️ Permitido pero con advertencia
+    stock,           // ❌ IGNORADO (solo vía Purchase Orders)
+    category_id, 
+    description, 
+    deleted_image_ids, 
+    image_order 
+  } = req.body;
   const newImages = req.files || [];
 
   const client = await db.connect();
@@ -219,7 +255,6 @@ exports.update = async (req, res) => {
     );
     const currentImages = currentImagesQuery.rows;
     
-    // Parse deleted IDs
     let idsToDelete = [];
     if (deleted_image_ids) {
       idsToDelete = Array.isArray(deleted_image_ids) 
@@ -236,25 +271,27 @@ exports.update = async (req, res) => {
       throw new Error("El producto debe tener al menos una imagen.");
     }
 
-    // Update basic data
+    // 🆕 UPDATE: Solo actualizar información del catálogo
+    // Stock se IGNORA (se maneja en Purchase Orders)
+    // Precio se permite pero idealmente debería modificarse en Purchase Orders
     await client.query(
       `UPDATE products 
-       SET name = $1, price = $2, stock = $3, category_id = $4, description = $5 
-       WHERE id = $6`,
-      [name, price, stock, category_id, description, id]
+       SET name = $1, 
+           price = $2, 
+           category_id = $3, 
+           description = $4 
+       WHERE id = $5`,
+      [name, price, category_id, description, id]
     );
 
-    // Delete marked images (from Cloudinary and DB)
+    // Delete marked images
     if (idsToDelete.length > 0) {
       const imagesToDelete = currentImages.filter(
         img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id)
       );
       
       for (const img of imagesToDelete) {
-        // Delete from Cloudinary
         await deleteFromCloudinary(img.url);
-        
-        // Delete from DB
         await client.query("DELETE FROM product_images WHERE id = $1", [img.id]);
       }
     }
@@ -280,7 +317,7 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Update image order if provided
+    // Update image order
     if (image_order) {
       try {
         const orderArray = JSON.parse(image_order);
@@ -296,7 +333,7 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Ensure there's a main image
+    // Ensure main image
     await client.query(
       `UPDATE product_images SET is_main = false WHERE product_id = $1`,
       [id]
@@ -324,7 +361,9 @@ exports.update = async (req, res) => {
   }
 };
 
-// Delete product
+// ========================================
+// DELETE PRODUCT
+// ========================================
 exports.remove = async (req, res) => {
   const { id } = req.params;
   const client = await db.connect();
@@ -332,18 +371,15 @@ exports.remove = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Get all product images before deleting
     const imagesResult = await client.query(
       "SELECT url FROM product_images WHERE product_id = $1",
       [id]
     );
 
-    // Delete all images from Cloudinary
     for (const image of imagesResult.rows) {
       await deleteFromCloudinary(image.url);
     }
 
-    // Delete product (cascade will delete images from DB)
     const result = await client.query(
       "DELETE FROM products WHERE id = $1",
       [id]
@@ -361,7 +397,9 @@ exports.remove = async (req, res) => {
   }
 };
 
-// Get product by ID
+// ========================================
+// GET PRODUCT BY ID (con historial)
+// ========================================
 exports.getById = async (req, res) => {
   const { id } = req.params;
 
@@ -378,7 +416,16 @@ exports.getById = async (req, res) => {
           WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
           WHEN d.type = 'fixed' THEN p.price - d.value
           ELSE p.price
-        END AS final_price
+        END AS final_price,
+        
+        -- 🆕 ESTADO DEL INVENTARIO
+        CASE
+          WHEN p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0) THEN 'pending_first_purchase'
+          WHEN p.stock = 0 AND p.purchase_price > 0 THEN 'out_of_stock'
+          WHEN p.stock > 0 AND p.stock <= 5 THEN 'low_stock'
+          ELSE 'in_stock'
+        END AS inventory_status
+        
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN discount_targets dt ON (
@@ -413,3 +460,42 @@ exports.getById = async (req, res) => {
     res.status(500).json({ message: "Error al obtener producto" });
   }
 };
+
+// ========================================
+// 🆕 GET PURCHASE HISTORY
+// ========================================
+exports.getPurchaseHistory = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await db.query(`
+      SELECT 
+        po.id,
+        CONCAT('OC-', LPAD(po.id::text, 5, '0')) as order_code,
+        po.created_at as date,
+        pr.name as provider,
+        poi.quantity,
+        poi.unit_cost,
+        poi.suggested_price as sale_price,
+        CASE 
+          WHEN poi.markup_type = 'percentage' THEN CONCAT(poi.markup_value::text, '%')
+          WHEN poi.markup_type = 'fixed' THEN CONCAT('$', poi.markup_value::text)
+          ELSE 'N/A'
+        END as markup
+      FROM purchase_order_items poi
+      JOIN purchase_orders po ON poi.order_id = po.id
+      JOIN providers pr ON po.provider_id = pr.id
+      WHERE poi.product_id = $1
+      ORDER BY po.created_at DESC
+      LIMIT 20
+    `, [id]);
+
+    res.json(result.rows);
+
+  } catch (error) {
+    console.error("GET PURCHASE HISTORY ERROR:", error);
+    res.status(500).json({ message: "Error al obtener historial" });
+  }
+};
+
+module.exports = exports;
