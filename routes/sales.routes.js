@@ -7,15 +7,14 @@ const {
   getUserSales,
   getUserStats,
 } = require("../controllers/sales.controller");
-const { verifyToken } = require("../middleware/auth.middleware");
 
 // Rutas para el Usuario/Cliente (Dashboard)
-router.get("/user/history", verifyToken, getUserSales); // Registros
-router.get("/user/stats", verifyToken, getUserStats);   // Resúmenes y Gráficas
+router.get("/user/history", getUserSales);
+router.get("/user/stats", getUserStats);
 
 // Rutas Generales / Admin
-router.post("/", verifyToken, createSale); // El carrito usará esta
-router.get("/", verifyToken, getSales);
-router.get("/:id", verifyToken, getSaleById);
+router.post("/", createSale);
+router.get("/", getSales);
+router.get("/:id", getSaleById);
 
 module.exports = router;
