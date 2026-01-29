@@ -149,6 +149,8 @@ exports.getFinanceSummary = async (req, res) => {
 /* ===============================================
    CREAR ORDEN DE COMPRA PROFESIONAL
 =============================================== */
+// En expenses.controller.js - Función createPurchaseOrder
+
 exports.createPurchaseOrder = async (req, res) => {
   const { 
     provider_id, 
@@ -186,6 +188,7 @@ exports.createPurchaseOrder = async (req, res) => {
         markup_value
       } = item;
 
+      // Calcular precio sugerido basado en el costo de compra
       let suggestedPrice;
       if (markup_type === 'percentage') {
         suggestedPrice = unit_cost * (1 + markup_value / 100);
@@ -195,6 +198,7 @@ exports.createPurchaseOrder = async (req, res) => {
         suggestedPrice = unit_cost * 1.30;
       }
 
+      // Insertar item de la orden
       await client.query(
         `INSERT INTO purchase_order_items 
          (order_id, product_id, quantity, unit_cost, markup_type, markup_value, suggested_price)
@@ -202,6 +206,9 @@ exports.createPurchaseOrder = async (req, res) => {
         [orderId, product_id, quantity, unit_cost, markup_type, markup_value, suggestedPrice]
       );
 
+      // ⭐ ACTUALIZACIÓN MEJORADA: Actualizar producto sin sobrescribir descuentos
+      // Solo actualizamos el precio base y el precio de compra
+      // El final_price se calcula dinámicamente en las consultas con descuentos activos
       await client.query(
         `UPDATE products 
          SET 
@@ -215,6 +222,7 @@ exports.createPurchaseOrder = async (req, res) => {
         [unit_cost, markup_type, markup_value, suggestedPrice, quantity, product_id]
       );
 
+      // Registrar en expenses
       await client.query(
         `INSERT INTO expenses 
          (type, category, amount, provider_id, product_id, quantity, utility_type, utility_value)
@@ -231,6 +239,7 @@ exports.createPurchaseOrder = async (req, res) => {
       );
     }
 
+    // Actualizar balance del proveedor si es necesario
     if (payment_status === 'pending' || payment_status === 'partial') {
       const pendingAmount = payment_status === 'partial' ? totalAmount / 2 : totalAmount;
       await client.query(
