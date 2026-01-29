@@ -27,6 +27,23 @@ const requireRole = (allowedRoles = []) => {
   };
 };
 
+const verifyToken = (req, res, next) => {
+  const token = req.headers["authorization"];
+  
+  if (!token) {
+    return res.status(403).json({ message: "No token provided" });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ message: "Invalid or expired token" });
+    }
+
+    req.user = decoded; // Asocia el payload del JWT al request
+    next();
+  });
+};
+
 const isAdmin = requireRole(['admin', 'super_admin']);
 
-module.exports = { auth, requireRole, isAdmin };
+module.exports = { auth, requireRole, isAdmin, verifyToken };
