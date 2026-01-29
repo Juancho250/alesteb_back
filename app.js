@@ -29,7 +29,7 @@ app.use(helmet());
 // RUTAS
 app.use("/api/auth", authRoutes);
 app.use("/api/providers", providersRoutes);
-app.use("/api/expenses", expensesRoutes);
+app.use("/api", expensesRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/discounts", discountRoutes);
