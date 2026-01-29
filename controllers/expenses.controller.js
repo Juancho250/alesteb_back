@@ -1,37 +1,15 @@
-const db = require("../config/db");
-
-/* =========================
-   OBTENER TODOS LOS GASTOS
-========================= */
-exports.getExpenses = async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT e.*, p.name as provider_name 
-       FROM public.expenses e
-       LEFT JOIN providers p ON e.provider_id = p.id
-       ORDER BY e.created_at DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-};
+// ... (tu código existente) ...
 
 /* ===============================================
    CREAR ORDEN DE COMPRA PROFESIONAL
-   - Registra múltiples productos en una sola compra
-   - Actualiza precios de compra y venta
-   - Gestiona márgenes de utilidad
-   - Actualiza stock automáticamente
 =============================================== */
 exports.createPurchaseOrder = async (req, res) => {
   const { 
     provider_id, 
-    items, // [{product_id, quantity, unit_cost, markup_type, markup_value}]
+    items,
     notes,
-    payment_method, // 'cash', 'credit', 'transfer'
-    payment_status // 'paid', 'pending', 'partial'
+    payment_method,
+    payment_status
   } = req.body;
 
   const client = await db.connect();
@@ -39,23 +17,20 @@ exports.createPurchaseOrder = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Calcular el total de la orden
     const totalAmount = items.reduce((sum, item) => 
       sum + (item.unit_cost * item.quantity), 0
     );
 
-    // 2. Crear el registro principal de la orden de compra
     const orderResult = await client.query(
       `INSERT INTO purchase_orders 
        (provider_id, total_amount, payment_method, payment_status, notes)
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, created_at`,
-      [provider_id, totalAmount, payment_method, payment_status, notes]
+      [provider_id, totalAmount, payment_method || 'credit', payment_status || 'pending', notes]
     );
 
     const orderId = orderResult.rows[0].id;
 
-    // 3. Insertar cada item de la orden
     for (const item of items) {
       const {
         product_id,
@@ -65,17 +40,15 @@ exports.createPurchaseOrder = async (req, res) => {
         markup_value
       } = item;
 
-      // Calcular precio de venta sugerido
       let suggestedPrice;
       if (markup_type === 'percentage') {
         suggestedPrice = unit_cost * (1 + markup_value / 100);
       } else if (markup_type === 'fixed') {
         suggestedPrice = unit_cost + markup_value;
       } else {
-        suggestedPrice = unit_cost * 1.30; // 30% default
+        suggestedPrice = unit_cost * 1.30;
       }
 
-      // Insertar item de la orden
       await client.query(
         `INSERT INTO purchase_order_items 
          (order_id, product_id, quantity, unit_cost, markup_type, markup_value, suggested_price)
@@ -83,7 +56,6 @@ exports.createPurchaseOrder = async (req, res) => {
         [orderId, product_id, quantity, unit_cost, markup_type, markup_value, suggestedPrice]
       );
 
-      // Actualizar producto: precio de compra, markup, y stock
       await client.query(
         `UPDATE products 
          SET 
@@ -97,7 +69,6 @@ exports.createPurchaseOrder = async (req, res) => {
         [unit_cost, markup_type, markup_value, suggestedPrice, quantity, product_id]
       );
 
-      // Registrar en expenses para contabilidad (un registro por producto)
       await client.query(
         `INSERT INTO expenses 
          (type, category, amount, provider_id, product_id, quantity, utility_type, utility_value)
@@ -114,16 +85,10 @@ exports.createPurchaseOrder = async (req, res) => {
       );
     }
 
-    // 4. Actualizar balance del proveedor si es compra a crédito
     if (payment_status === 'pending' || payment_status === 'partial') {
-      const pendingAmount = payment_status === 'partial' 
-        ? totalAmount / 2 // o el monto que indiques
-        : totalAmount;
-
+      const pendingAmount = payment_status === 'partial' ? totalAmount / 2 : totalAmount;
       await client.query(
-        `UPDATE providers 
-         SET balance = balance + $1 
-         WHERE id = $2`,
+        `UPDATE providers SET balance = balance + $1 WHERE id = $2`,
         [pendingAmount, provider_id]
       );
     }
@@ -211,7 +176,6 @@ exports.getPurchaseOrderDetails = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Obtener información de la orden
     const orderResult = await db.query(
       `SELECT 
         po.*,
@@ -229,7 +193,6 @@ exports.getPurchaseOrderDetails = async (req, res) => {
       return res.status(404).json({ message: "Orden no encontrada" });
     }
 
-    // Obtener items de la orden
     const itemsResult = await db.query(
       `SELECT 
         poi.*,
@@ -256,54 +219,6 @@ exports.getPurchaseOrderDetails = async (req, res) => {
 };
 
 /* ===============================================
-   CREAR GASTO OPERATIVO SIMPLE
-=============================================== */
-exports.createExpense = async (req, res) => {
-  const { 
-    type, 
-    category, 
-    amount, 
-    description,
-    provider_id 
-  } = req.body;
-
-  const client = await db.connect();
-  
-  try {
-    await client.query("BEGIN");
-
-    // Insertar gasto
-    const result = await client.query(
-      `INSERT INTO expenses 
-       (type, category, amount, description, provider_id)
-       VALUES ($1, $2, $3, $4, $5) 
-       RETURNING *`,
-      [type, category, amount, description, provider_id]
-    );
-
-    // Si es a crédito, actualizar balance del proveedor
-    if (provider_id && type === 'gasto') {
-      await client.query(
-        `UPDATE providers 
-         SET balance = balance + $1 
-         WHERE id = $2`,
-        [amount, provider_id]
-      );
-    }
-
-    await client.query("COMMIT");
-    res.status(201).json(result.rows[0]);
-
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("CREATE EXPENSE ERROR:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-};
-
-/* ===============================================
    ANÁLISIS DE RENTABILIDAD POR PRODUCTO
 =============================================== */
 exports.getProductProfitability = async (req, res) => {
@@ -319,16 +234,16 @@ exports.getProductProfitability = async (req, res) => {
         p.stock,
         p.markup_type,
         p.markup_value,
-        (p.price - p.purchase_price) as unit_profit,
+        (p.price - COALESCE(p.purchase_price, 0)) as unit_profit,
         CASE 
-          WHEN p.purchase_price > 0 THEN 
+          WHEN COALESCE(p.purchase_price, 0) > 0 THEN 
             ROUND(((p.price - p.purchase_price) / p.purchase_price * 100)::numeric, 2)
           ELSE 0 
         END as profit_margin_percent,
         COALESCE(SUM(si.quantity), 0) as total_sold,
         COALESCE(SUM(si.quantity * si.unit_price), 0) as revenue,
-        COALESCE(SUM(si.quantity * p.purchase_price), 0) as cost,
-        COALESCE(SUM(si.quantity * (si.unit_price - p.purchase_price)), 0) as total_profit
+        COALESCE(SUM(si.quantity * COALESCE(p.purchase_price, 0)), 0) as cost,
+        COALESCE(SUM(si.quantity * (si.unit_price - COALESCE(p.purchase_price, 0))), 0) as total_profit
       FROM products p
       LEFT JOIN sale_items si ON p.id = si.product_id
       LEFT JOIN sales s ON si.sale_id = s.id AND s.payment_status = 'paid'
@@ -439,85 +354,6 @@ exports.getProviderProfitability = async (req, res) => {
 };
 
 /* ===============================================
-   RESUMEN FINANCIERO COMPLETO
-=============================================== */
-exports.getFinanceSummary = async (req, res) => {
-  const { start_date, end_date } = req.query;
-
-  try {
-    let dateFilter = '';
-    const params = [];
-    let paramCount = 1;
-
-    if (start_date) {
-      dateFilter += ` AND e.created_at >= $${paramCount}`;
-      params.push(start_date);
-      paramCount++;
-    }
-
-    if (end_date) {
-      dateFilter += ` AND e.created_at <= $${paramCount}`;
-      params.push(end_date);
-      paramCount++;
-    }
-
-    // Gastos y compras
-    const expensesResult = await db.query(`
-      SELECT
-        COALESCE(SUM(CASE WHEN type = 'gasto' THEN amount END), 0) AS "totalGastos",
-        COALESCE(SUM(CASE WHEN type = 'compra' THEN amount END), 0) AS "totalCompras"
-      FROM expenses e
-      WHERE 1=1 ${dateFilter}
-    `, params);
-
-    // Ventas y rentabilidad real
-    const salesResult = await db.query(`
-      SELECT 
-        COALESCE(SUM(total), 0) as total_revenue,
-        COUNT(*) as total_sales
-      FROM sales 
-      WHERE payment_status = 'paid'
-      ${start_date ? `AND created_at >= $1` : ''}
-      ${end_date ? `AND created_at <= $${start_date ? 2 : 1}` : ''}
-    `, start_date && end_date ? [start_date, end_date] : start_date ? [start_date] : end_date ? [end_date] : []);
-
-    // Deuda total con proveedores
-    const debtResult = await db.query(`
-      SELECT COALESCE(SUM(balance), 0) AS "deudaTotal"
-      FROM providers
-    `);
-
-    // Rentabilidad por producto vendido
-    const profitResult = await db.query(`
-      SELECT 
-        COALESCE(SUM(si.quantity * (si.unit_price - p.purchase_price)), 0) as realized_profit
-      FROM sale_items si
-      JOIN products p ON si.product_id = p.id
-      JOIN sales s ON si.sale_id = s.id
-      WHERE s.payment_status = 'paid'
-      ${start_date ? `AND s.created_at >= $1` : ''}
-      ${end_date ? `AND s.created_at <= $${start_date ? 2 : 1}` : ''}
-    `, start_date && end_date ? [start_date, end_date] : start_date ? [start_date] : end_date ? [end_date] : []);
-
-    const summary = {
-      ...expensesResult.rows[0],
-      ...debtResult.rows[0],
-      totalVentas: Number(salesResult.rows[0].total_revenue),
-      totalSales: Number(salesResult.rows[0].total_sales),
-      realizedProfit: Number(profitResult.rows[0].realized_profit),
-      netProfit: Number(profitResult.rows[0].realized_profit) - 
-                 Number(expensesResult.rows[0].totalGastos)
-    };
-
-    res.json(summary);
-
-  } catch (err) {
-    console.error("GET FINANCE SUMMARY ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-/* ===============================================
    REGISTRAR PAGO A PROVEEDOR
 =============================================== */
 exports.recordProviderPayment = async (req, res) => {
@@ -528,14 +364,12 @@ exports.recordProviderPayment = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Registrar pago
     await client.query(
       `INSERT INTO provider_payments (provider_id, amount, payment_method, notes)
        VALUES ($1, $2, $3, $4)`,
       [provider_id, amount, payment_method, notes]
     );
 
-    // Reducir balance
     await client.query(
       `UPDATE providers SET balance = balance - $1 WHERE id = $2`,
       [amount, provider_id]
