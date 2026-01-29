@@ -4,8 +4,8 @@ const {
   createSale,
   getSales,
   getSaleById,
-  getUserSales,   // Asegúrate de que esta función esté definida en el controlador
-  getUserStats,   // Asegúrate de que esta función esté definida en el controlador
+  getUserSales,
+  getUserStats,
 } = require("../controllers/sales.controller");
 const { verifyToken } = require("../middleware/auth.middleware");
 
