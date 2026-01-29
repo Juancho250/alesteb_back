@@ -2,35 +2,11 @@ const express = require("express");
 const router = express.Router();
 const bannerController = require("../controllers/banners.controller");
 const upload = require("../middleware/upload.middleware");
-// Importamos auth e isAdmin (que ya definiste en tu middleware)
-const { auth, isAdmin } = require("../middleware/auth.middleware");
 
-// --- RUTAS PÚBLICAS ---
+// Todas las rutas públicas
 router.get("/", bannerController.getAll);
-
-// --- RUTAS PRIVADAS (Panel de Administración) ---
-// Ahora usamos 'isAdmin' directamente, que es mucho más corto y limpio
-router.post(
-    "/", 
-    auth, 
-    isAdmin, 
-    upload.single("image"), 
-    bannerController.create
-);
-
-router.put(
-    "/:id", 
-    auth, 
-    isAdmin, 
-    upload.single("image"), 
-    bannerController.update
-);
-
-router.delete(
-    "/:id", 
-    auth, 
-    isAdmin, 
-    bannerController.delete
-);
+router.post("/", upload.single("image"), bannerController.create);
+router.put("/:id", upload.single("image"), bannerController.update);
+router.delete("/:id", bannerController.delete);
 
 module.exports = router;
