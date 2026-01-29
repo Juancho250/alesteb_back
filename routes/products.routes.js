@@ -1,28 +1,18 @@
+// routes/products.js - AGREGAR ESTA RUTA
+
 const express = require("express");
-const upload = require("../middleware/upload.middleware");
-const ctrl = require("../controllers/products.controller");
-
 const router = express.Router();
+const productsController = require("../controllers/products.controller");
+const upload = require("../middleware/upload");
 
-// Todas las rutas públicas
-router.get("/", ctrl.getAll);
-router.get("/:id", ctrl.getById);
+// Rutas existentes...
+router.get("/", productsController.getAll);
+router.get("/:id", productsController.getById);
+router.post("/", upload.array("images", 10), productsController.create);
+router.put("/:id", upload.array("images", 10), productsController.update);
+router.delete("/:id", productsController.remove);
 
-router.post(
-  "/",
-  upload.array("images", 6),
-  ctrl.create
-);
-
-router.put(
-  "/:id",
-  upload.array("images", 6),
-  ctrl.update
-);
-
-router.delete(
-  "/:id",
-  ctrl.remove
-);
+// 🆕 NUEVA RUTA: Historial de compras del producto
+router.get("/:id/purchase-history", productsController.getPurchaseHistory);
 
 module.exports = router;
