@@ -2,10 +2,9 @@ const db = require("../config/db");
 
 // 1. INSERTAR VENTAS (Adaptado para Admin y Clientes Online)
 exports.createSale = async (req, res) => {
-  // Si viene del carrito online, el customer_id vendrá del middleware de auth (req.user.id)
   const { items, total, sale_type } = req.body;
   const customer_id = req.body.customer_id || (req.user ? req.user.id : null);
-  
+
   const client = await db.connect();
 
   try {
@@ -122,23 +121,12 @@ exports.getUserStats = async (req, res) => {
     res.status(500).json({ message: "Error al generar estadísticas" });
   }
 };
-// ACTUALIZA TAMBIÉN ESTA PARTE PARA QUE NO DE ERROR AL VER EL DETALLE
-// controllers/sales.controller.js -> Modifica getSaleById
+
+// 4. Obtener detalles de venta por ID (sin verificación de permisos)
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
-  const userId = req.user.id;
-  const userRole = req.user.role_id;
 
   try {
-    // Si no es admin, verificamos que la venta sea suya
-    const saleCheck = await db.query("SELECT customer_id FROM sales WHERE id = $1", [id]);
-    
-    if (saleCheck.rows.length === 0) return res.status(404).json({ message: "Venta no encontrada" });
-    
-    if (userRole !== 1 && saleCheck.rows[0].customer_id !== userId) {
-      return res.status(403).json({ message: "No tienes permiso para ver esta venta" });
-    }
-
     const result = await db.query(
       `SELECT p.name, si.quantity, si.unit_price
        FROM sale_items si
@@ -147,19 +135,23 @@ exports.getSaleById = async (req, res) => {
       [id]
     );
 
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Venta no encontrada" });
+    }
+
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-
+// 5. Obtener todas las ventas (para administradores)
 exports.getSales = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
         s.id,
-        s.total as total, -- Cambiado de total_amount a total
+        s.total as total,
         s.sale_type,
         s.created_at,
         u.name as customer_name,
@@ -173,4 +165,3 @@ exports.getSales = async (req, res) => {
     res.status(500).json({ message: "Error al obtener ventas" });
   }
 };
-
