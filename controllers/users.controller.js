@@ -19,30 +19,50 @@ exports.getUsers = async (req, res) => {
 };
 
 // 2. Crear usuario
+// 2. Crear usuario
 exports.createUser = async (req, res) => {
   const { email, password, name, phone, cedula, city, address, role_id = 3 } = req.body;
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    
+    // ✅ Validar que el role_id existe
+    const roleCheck = await client.query("SELECT id FROM roles WHERE id = $1", [role_id]);
+    if (roleCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "El rol especificado no existe" });
+    }
+
     const hashedPassword = await bcrypt.hash(password || cedula || "123456", 10);
 
     const userRes = await client.query(
       `INSERT INTO users (email, password, name, phone, cedula, city, address, is_verified)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id, email, name, phone, cedula, city, address`,
       [email, hashedPassword, name, phone, cedula, city, address]
     );
-    const userId = userRes.rows[0].id;
+    const newUser = userRes.rows[0];
 
     await client.query(
       "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
-      [userId, role_id]
+      [newUser.id, role_id]
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ message: "Usuario creado con éxito", id: userId });
+    
+    // ✅ Retornar el usuario completo con su role_id
+    res.status(201).json({ 
+      message: "Usuario creado con éxito", 
+      user: { ...newUser, role_id }
+    });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: "Error al crear usuario" });
+    console.error("CREATE USER ERROR:", error);
+    
+    if (error.code === '23505') {
+      return res.status(409).json({ message: "El email ya está registrado" });
+    }
+    
+    res.status(500).json({ message: "Error al crear usuario", error: error.message });
   } finally {
     client.release();
   }
