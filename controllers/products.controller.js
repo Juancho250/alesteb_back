@@ -1,16 +1,50 @@
 const db = require("../config/db");
-const cloudinary = require("../config/cloudinary"); // Asegúrate de importar tu config de cloudinary
-// Obtener todos los productos
-// controllers/products.controller.js
+const cloudinary = require("../config/cloudinary");
 
+// Utility function to extract Cloudinary public_id from URL
+const getPublicIdFromUrl = (url) => {
+  try {
+    // Cloudinary URL format: https://res.cloudinary.com/{cloud_name}/image/upload/{transformations}/{public_id}.{format}
+    const matches = url.match(/\/upload\/(?:v\d+\/)?(.+)\.\w+$/);
+    if (matches && matches[1]) {
+      return matches[1];
+    }
+    
+    // Fallback: manual parsing
+    const splitUrl = url.split('/');
+    const lastPart = splitUrl.pop();
+    const publicId = lastPart.split('.')[0];
+    const folder = splitUrl[splitUrl.length - 1];
+    
+    return folder !== 'upload' ? `${folder}/${publicId}` : publicId;
+  } catch (error) {
+    console.error('Error extracting public_id:', error);
+    return null;
+  }
+};
+
+// Delete image from Cloudinary
+const deleteFromCloudinary = async (url) => {
+  try {
+    const publicId = getPublicIdFromUrl(url);
+    if (publicId) {
+      await cloudinary.uploader.destroy(publicId);
+      console.log(`✅ Deleted from Cloudinary: ${publicId}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ Cloudinary deletion error:', error);
+    return false;
+  }
+};
+
+// Get all products
 exports.getAll = async (req, res) => {
-  // Recibimos parámetros de paginación y búsqueda
   const { categoria, page = 1, limit = 12, search = "" } = req.query;
-  
   const offset = (page - 1) * limit;
 
   try {
-    // Construcción dinámica del WHERE
     let whereClause = [];
     let queryParams = [];
     let paramIndex = 1;
@@ -29,22 +63,19 @@ exports.getAll = async (req, res) => {
 
     const whereString = whereClause.length > 0 ? `WHERE ${whereClause.join(" AND ")}` : "";
 
-    // Query Principal Optimizado
     const queryText = `
       SELECT 
-        p.id, p.name, p.price, p.stock, p.category_id, -- NO traemos description si es muy larga para listados
+        p.id, p.name, p.price, p.stock, p.category_id,
         c.name AS category_name,
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         
-        -- Lógica de descuento simplificada para lectura rápida
         COALESCE(bd.final_price, p.price) AS final_price,
         bd.value AS discount_value
 
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       
-      -- JOIN optimizado para descuentos (Calculado solo para la página actual)
       LEFT JOIN LATERAL (
         SELECT 
           d.value,
@@ -66,10 +97,8 @@ exports.getAll = async (req, res) => {
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    // Añadimos limit y offset a los parámetros
     queryParams.push(limit, offset);
 
-    // Ejecutamos consultas en paralelo: Datos y Conteo Total (para paginación en front)
     const [dataResult, countResult] = await Promise.all([
       db.query(queryText, queryParams),
       db.query(`
@@ -77,7 +106,7 @@ exports.getAll = async (req, res) => {
         FROM products p 
         LEFT JOIN categories c ON p.category_id = c.id 
         ${whereString}
-      `, queryParams.slice(0, paramIndex - 1)) // Usamos solo los params del WHERE
+      `, queryParams.slice(0, paramIndex - 1))
     ]);
 
     res.json({
@@ -93,9 +122,9 @@ exports.getAll = async (req, res) => {
   }
 };
 
-// Crear producto
+// Create product
 exports.create = async (req, res) => {
-  const { name, price, stock, category_id, description } = req.body;
+  const { name, price, stock, category_id, description, image_order } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
 
   const client = await db.connect();
@@ -104,35 +133,47 @@ exports.create = async (req, res) => {
     await client.query("BEGIN");
 
     const productResult = await client.query(
-      `
-      INSERT INTO products (name, price, stock, category_id, description)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id
-      `,
+      `INSERT INTO products (name, price, stock, category_id, description)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [name, price, stock, category_id, description]
     );
 
     const productId = productResult.rows[0].id;
 
     if (images.length > 0) {
+      // Parse image order if provided
+      let orderMap = {};
+      if (image_order) {
+        try {
+          const orderArray = JSON.parse(image_order);
+          orderArray.forEach((filename, index) => {
+            orderMap[filename] = index;
+          });
+        } catch (e) {
+          console.log('No image order provided, using upload order');
+        }
+      }
+
       const insertImageQuery = `
-        INSERT INTO product_images (product_id, url, is_main)
-        VALUES ($1, $2, $3)
+        INSERT INTO product_images (product_id, url, is_main, display_order)
+        VALUES ($1, $2, $3, $4)
       `;
 
       for (let i = 0; i < images.length; i++) {
         const imageUrl = images[i].path || images[i].secure_url;
+        const originalName = images[i].originalname;
+        const displayOrder = orderMap[originalName] !== undefined ? orderMap[originalName] : i;
 
         await client.query(insertImageQuery, [
           productId,
           imageUrl,
-          i === 0 // primera imagen = principal
+          i === 0, // First image is main by default
+          displayOrder
         ]);
       }
     }
 
     await client.query("COMMIT");
-
     res.status(201).json({ id: productId });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -143,24 +184,10 @@ exports.create = async (req, res) => {
   }
 };
 
-const getPublicIdFromUrl = (url) => {
-  try {
-    const splitUrl = url.split('/');
-    const lastPart = splitUrl.pop(); // ej: "imagen.jpg"
-    const publicId = lastPart.split('.')[0]; // ej: "imagen"
-    // Si usas carpetas en Cloudinary, la lógica puede variar, pero esto sirve para la raíz
-    // Si guardas el public_id en la BD sería más fácil, pero con URL se hace así:
-    const folder = splitUrl.pop(); // ej: "productos" si tienes carpeta
-    return folder !== 'upload' ? `${folder}/${publicId}` : publicId;
-  } catch (error) {
-    return null;
-  }
-};
-
+// Update product
 exports.update = async (req, res) => {
   const { id } = req.params;
-  // deleted_images será un array de IDs que vienen del front como JSON string o array
-  const { name, price, stock, category_id, description, deleted_image_ids } = req.body;
+  const { name, price, stock, category_id, description, deleted_image_ids, image_order } = req.body;
   const newImages = req.files || [];
 
   const client = await db.connect();
@@ -168,25 +195,31 @@ exports.update = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Validar reglas de imágenes (Minimo 1)
-    // Contamos las actuales
-    const currentImagesQuery = await client.query("SELECT id, url FROM product_images WHERE product_id = $1", [id]);
+    // Get current images
+    const currentImagesQuery = await client.query(
+      "SELECT id, url FROM product_images WHERE product_id = $1 ORDER BY display_order ASC",
+      [id]
+    );
     const currentImages = currentImagesQuery.rows;
     
-    // IDs a eliminar (parsear si viene como string)
+    // Parse deleted IDs
     let idsToDelete = [];
     if (deleted_image_ids) {
-      idsToDelete = Array.isArray(deleted_image_ids) ? deleted_image_ids : JSON.parse(deleted_image_ids);
+      idsToDelete = Array.isArray(deleted_image_ids) 
+        ? deleted_image_ids 
+        : JSON.parse(deleted_image_ids);
     }
 
-    const remainingImagesCount = currentImages.filter(img => !idsToDelete.includes(img.id.toString())).length;
+    const remainingImagesCount = currentImages.filter(
+      img => !idsToDelete.includes(img.id.toString()) && !idsToDelete.includes(img.id)
+    ).length;
     const totalFinalImages = remainingImagesCount + newImages.length;
 
     if (totalFinalImages < 1) {
       throw new Error("El producto debe tener al menos una imagen.");
     }
 
-    // 2. Actualizar datos básicos
+    // Update basic data
     await client.query(
       `UPDATE products 
        SET name = $1, price = $2, stock = $3, category_id = $4, description = $5 
@@ -194,43 +227,73 @@ exports.update = async (req, res) => {
       [name, price, stock, category_id, description, id]
     );
 
-    // 3. Eliminar imágenes marcadas (de Cloudinary y BD)
+    // Delete marked images (from Cloudinary and DB)
     if (idsToDelete.length > 0) {
-      // Buscar las URLs de las que vamos a borrar para decirle a Cloudinary
-      const imagesToDelete = currentImages.filter(img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id));
+      const imagesToDelete = currentImages.filter(
+        img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id)
+      );
       
       for (const img of imagesToDelete) {
-        // Borrar de Cloudinary
-        const publicId = getPublicIdFromUrl(img.url);
-        if (publicId) {
-          await cloudinary.uploader.destroy(publicId);
-        }
-        // Borrar de BD
+        // Delete from Cloudinary
+        await deleteFromCloudinary(img.url);
+        
+        // Delete from DB
         await client.query("DELETE FROM product_images WHERE id = $1", [img.id]);
       }
     }
 
-    // 4. Subir e insertar nuevas imágenes
+    // Insert new images
     if (newImages.length > 0) {
-      const insertImageQuery = `INSERT INTO product_images (product_id, url, is_main) VALUES ($1, $2, $3)`;
+      const insertImageQuery = `
+        INSERT INTO product_images (product_id, url, is_main, display_order)
+        VALUES ($1, $2, $3, $4)
+      `;
       
-      // Si no quedan imágenes antiguas, la primera nueva es la principal
-      let isFirstNew = remainingImagesCount === 0;
+      const isFirstNew = remainingImagesCount === 0;
+      const startOrder = remainingImagesCount;
 
-      for (const file of newImages) {
-        const imageUrl = file.path || file.secure_url;
-        await client.query(insertImageQuery, [id, imageUrl, isFirstNew]);
-        isFirstNew = false; // Solo la primera puede ser true si no había otras
+      for (let i = 0; i < newImages.length; i++) {
+        const imageUrl = newImages[i].path || newImages[i].secure_url;
+        await client.query(insertImageQuery, [
+          id,
+          imageUrl,
+          isFirstNew && i === 0,
+          startOrder + i
+        ]);
       }
     }
 
-    // 5. Asegurar que haya una imagen principal (si borraron la principal anterior)
-    // Reseteamos todas a false y ponemos la más vieja como true (o lógica que prefieras)
-    await client.query(`UPDATE product_images SET is_main = false WHERE product_id = $1`, [id]);
-    await client.query(`
-      UPDATE product_images SET is_main = true 
-      WHERE id = (SELECT id FROM product_images WHERE product_id = $1 ORDER BY id ASC LIMIT 1)
-    `, [id]);
+    // Update image order if provided
+    if (image_order) {
+      try {
+        const orderArray = JSON.parse(image_order);
+        for (let i = 0; i < orderArray.length; i++) {
+          const imageId = orderArray[i];
+          await client.query(
+            "UPDATE product_images SET display_order = $1 WHERE id = $2 AND product_id = $3",
+            [i, imageId, id]
+          );
+        }
+      } catch (e) {
+        console.log('Error updating image order:', e);
+      }
+    }
+
+    // Ensure there's a main image
+    await client.query(
+      `UPDATE product_images SET is_main = false WHERE product_id = $1`,
+      [id]
+    );
+    await client.query(
+      `UPDATE product_images SET is_main = true 
+       WHERE id = (
+         SELECT id FROM product_images 
+         WHERE product_id = $1 
+         ORDER BY display_order ASC 
+         LIMIT 1
+       )`,
+      [id]
+    );
 
     await client.query("COMMIT");
     res.json({ message: "Producto actualizado correctamente" });
@@ -244,24 +307,44 @@ exports.update = async (req, res) => {
   }
 };
 
-
-// Eliminar producto
+// Delete product
 exports.remove = async (req, res) => {
   const { id } = req.params;
+  const client = await db.connect();
 
   try {
-    const result = await db.query(
+    await client.query("BEGIN");
+
+    // Get all product images before deleting
+    const imagesResult = await client.query(
+      "SELECT url FROM product_images WHERE product_id = $1",
+      [id]
+    );
+
+    // Delete all images from Cloudinary
+    for (const image of imagesResult.rows) {
+      await deleteFromCloudinary(image.url);
+    }
+
+    // Delete product (cascade will delete images from DB)
+    const result = await client.query(
       "DELETE FROM products WHERE id = $1",
       [id]
     );
 
+    await client.query("COMMIT");
     res.json({ deleted: result.rowCount });
+
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("DELETE PRODUCT ERROR:", error);
     res.status(500).json({ message: "Error al eliminar producto" });
+  } finally {
+    client.release();
   }
 };
 
+// Get product by ID
 exports.getById = async (req, res) => {
   const { id } = req.params;
 
@@ -269,7 +352,7 @@ exports.getById = async (req, res) => {
     const result = await db.query(`
       SELECT 
         p.*,
-        c.name AS category_name, -- ✅ Obtenemos nombre de categoría
+        c.name AS category_name,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         d.name AS discount_name,
         d.type AS discount_type,
@@ -280,10 +363,10 @@ exports.getById = async (req, res) => {
           ELSE p.price
         END AS final_price
       FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id -- ✅ Unión con categorías
+      LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN discount_targets dt ON (
         (dt.target_type = 'product' AND dt.target_id = p.id::text) OR 
-        (dt.target_type = 'category' AND dt.target_id = p.category_id::text) -- ✅ Cambio a category_id
+        (dt.target_type = 'category' AND dt.target_id = p.category_id::text)
       )
       LEFT JOIN discounts d ON dt.discount_id = d.id 
         AND NOW() BETWEEN d.starts_at AND d.ends_at
@@ -296,7 +379,10 @@ exports.getById = async (req, res) => {
     }
 
     const imagesResult = await db.query(
-      `SELECT id, url, is_main FROM product_images WHERE product_id = $1`,
+      `SELECT id, url, is_main, display_order 
+       FROM product_images 
+       WHERE product_id = $1 
+       ORDER BY display_order ASC`,
       [id]
     );
 
@@ -310,4 +396,3 @@ exports.getById = async (req, res) => {
     res.status(500).json({ message: "Error al obtener producto" });
   }
 };
-
