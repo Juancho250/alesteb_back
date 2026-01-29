@@ -8,6 +8,7 @@ router.post('/expenses', expenseController.createExpense);
 router.get('/expenses/summary', expenseController.getFinanceSummary);
 
 // ✨ NUEVAS RUTAS - Agregar estas
+// Add these NEW routes to your existing expenses routes file
 router.post('/expenses/purchase-orders', expenseController.createPurchaseOrder);
 router.get('/expenses/purchase-orders', expenseController.getPurchaseOrders);
 router.get('/expenses/purchase-orders/:id', expenseController.getPurchaseOrderDetails);
