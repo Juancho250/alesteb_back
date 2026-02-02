@@ -1,6 +1,6 @@
 const db = require("../config/db");
 
-// 1. INSERTAR VENTAS (Mejorado para manejar ventas online y físicas)
+// 1. INSERTAR VENTAS (Mejorado para aplicar descuentos automáticamente)
 exports.createSale = async (req, res) => {
   const { items, total, sale_type, customer_id } = req.body;
 
@@ -19,8 +19,6 @@ exports.createSale = async (req, res) => {
     await client.query("BEGIN");
 
     // ✅ Estado de pago según tipo de venta
-    // - Venta física (admin): Se marca como pagada inmediatamente
-    // - Venta online (página): Se marca como pendiente hasta confirmar pago
     const pStatus = (sale_type === "online") ? "pending" : "paid";
 
     const saleResult = await client.query(
@@ -33,16 +31,90 @@ exports.createSale = async (req, res) => {
     const saleId = saleResult.rows[0].id;
     const saleDate = saleResult.rows[0].created_at;
 
-    // Insertar items y actualizar stock
+    // 🆕 Calcular y aplicar descuentos
+    let totalWithDiscounts = 0;
+
     for (const item of items) {
+      // Obtener información del producto y descuentos activos
+      const productInfo = await client.query(`
+        SELECT 
+          p.id,
+          p.price,
+          p.stock,
+          p.category_id,
+          
+          -- Buscar descuento activo más ventajoso
+          (SELECT 
+            CASE 
+              WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+              WHEN d.type = 'fixed' THEN p.price - d.value
+              ELSE p.price
+            END
+           FROM discount_targets dt
+           JOIN discounts d ON d.id = dt.discount_id
+           WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+               OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+             AND NOW() BETWEEN d.starts_at AND d.ends_at
+             AND d.active = true
+           ORDER BY CASE 
+             WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+             ELSE p.price - d.value
+           END ASC
+           LIMIT 1
+          ) AS discounted_price,
+          
+          -- Información del descuento aplicado
+          (SELECT d.id
+           FROM discount_targets dt
+           JOIN discounts d ON d.id = dt.discount_id
+           WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+               OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+             AND NOW() BETWEEN d.starts_at AND d.ends_at
+             AND d.active = true
+           ORDER BY CASE 
+             WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+             ELSE p.price - d.value
+           END ASC
+           LIMIT 1
+          ) AS applied_discount_id
+          
+        FROM products p
+        WHERE p.id = $1
+      `, [item.id]);
+
+      if (productInfo.rows.length === 0) {
+        throw new Error(`Producto no encontrado: ${item.id}`);
+      }
+
+      const product = productInfo.rows[0];
+      
+      // Usar precio con descuento si existe, sino precio normal
+      const finalPrice = product.discounted_price || product.price;
+      const subtotal = finalPrice * item.quantity;
+      totalWithDiscounts += subtotal;
+
+      // Insertar item con precio final (ya con descuento aplicado)
       await client.query(
-        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price)
-        VALUES ($1, $2, $3, $4)`,
-        [saleId, item.id, item.quantity, item.price]
+        `INSERT INTO sale_items (
+          sale_id, 
+          product_id, 
+          quantity, 
+          unit_price,
+          discount_id,
+          original_price
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          saleId, 
+          item.id, 
+          item.quantity, 
+          finalPrice,
+          product.applied_discount_id,
+          product.price
+        ]
       );
 
-      // ✅ Solo reducir stock si es venta física (admin)
-      // Para ventas online, el stock se reduce cuando se confirme el pago
+      // Reducir stock si es venta física
       if (sale_type === "fisica") {
         const stockResult = await client.query(
           `UPDATE products 
@@ -57,15 +129,23 @@ exports.createSale = async (req, res) => {
       }
     }
 
-    // ✅ Solo actualizar total_spent si es venta física pagada
+    // 🆕 Actualizar el total de la venta con descuentos aplicados
+    await client.query(
+      `UPDATE sales SET total = $1 WHERE id = $2`,
+      [totalWithDiscounts, saleId]
+    );
+
+    // Actualizar total_spent si es venta física
     if (sale_type === "fisica") {
       await client.query(
         `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
-        [total, customer_id]
+        [totalWithDiscounts, customer_id]
       );
     }
 
     await client.query("COMMIT");
+    
+    const discountApplied = totalWithDiscounts < total;
     
     res.status(201).json({ 
       message: sale_type === "online" 
@@ -73,7 +153,11 @@ exports.createSale = async (req, res) => {
         : "Venta registrada con éxito", 
       saleId,
       orderCode: `AL-${saleId}-${new Date(saleDate).getFullYear()}`,
-      paymentStatus: pStatus
+      paymentStatus: pStatus,
+      originalTotal: total,
+      finalTotal: totalWithDiscounts,
+      discountApplied,
+      savings: discountApplied ? (total - totalWithDiscounts) : 0
     });
 
   } catch (error) {
@@ -157,18 +241,21 @@ exports.getUserStats = async (req, res) => {
   }
 };
 
-// 4. Obtener detalles de venta por ID (FIXED VERSION)
+// 4. Obtener detalles de venta por ID (con info de descuentos)
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // ✅ FIX: Use a subquery to get the first image from product_images table
-    // instead of trying to access non-existent main_image column
     const result = await db.query(
       `SELECT 
         p.name, 
         si.quantity, 
         si.unit_price,
+        si.original_price,
+        si.discount_id,
+        d.name as discount_name,
+        d.type as discount_type,
+        d.value as discount_value,
         (
           SELECT url 
           FROM product_images 
@@ -178,6 +265,7 @@ exports.getSaleById = async (req, res) => {
         ) as main_image
       FROM sale_items si
       JOIN products p ON p.id = si.product_id
+      LEFT JOIN discounts d ON si.discount_id = d.id
       WHERE si.sale_id = $1`,
       [id]
     );
@@ -207,6 +295,7 @@ exports.getSales = async (req, res) => {
         u.email as customer_email,
         u.phone as customer_phone,
         (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id) AS items_count,
+        (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id AND discount_id IS NOT NULL) AS discounted_items,
         CONCAT('AL-', s.id, '-', EXTRACT(YEAR FROM s.created_at)) as order_code
       FROM sales s
       LEFT JOIN users u ON s.customer_id = u.id
@@ -219,7 +308,7 @@ exports.getSales = async (req, res) => {
   }
 };
 
-// 6. ✨ NUEVA FUNCIÓN: Actualizar estado de pago (para cuando confirmen por WhatsApp)
+// 6. Actualizar estado de pago
 exports.updatePaymentStatus = async (req, res) => {
   const { id } = req.params;
   const { payment_status } = req.body;
@@ -229,7 +318,6 @@ exports.updatePaymentStatus = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Obtener info de la venta
     const saleInfo = await client.query(
       `SELECT customer_id, total, sale_type FROM sales WHERE id = $1`,
       [id]
@@ -241,15 +329,12 @@ exports.updatePaymentStatus = async (req, res) => {
 
     const { customer_id, total, sale_type } = saleInfo.rows[0];
 
-    // Actualizar estado de pago
     await client.query(
       `UPDATE sales SET payment_status = $1 WHERE id = $2`,
       [payment_status, id]
     );
 
-    // Si se marca como pagada y era online, reducir stock y actualizar total_spent
     if (payment_status === "paid" && sale_type === "online") {
-      // Reducir stock
       const items = await client.query(
         `SELECT product_id, quantity FROM sale_items WHERE sale_id = $1`,
         [id]
@@ -268,7 +353,6 @@ exports.updatePaymentStatus = async (req, res) => {
         }
       }
 
-      // Actualizar total_spent del cliente
       await client.query(
         `UPDATE users SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2`,
         [total, customer_id]
@@ -286,3 +370,5 @@ exports.updatePaymentStatus = async (req, res) => {
     client.release();
   }
 };
+
+module.exports = exports;
