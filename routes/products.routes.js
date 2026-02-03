@@ -1,21 +1,70 @@
 const express = require("express");
 const router = express.Router();
-// Importamos el controlador
 const ctrl = require("../controllers/products.controller");
-// CORRECCIÓN: Nombre exacto del archivo en la carpeta middleware
 const upload = require("../middleware/upload.middleware");
+const { auth, requireRole, apiLimiter, auditLog, sanitizeParams } = require("../middleware/auth.middleware");
 
-// --- RUTAS DE CATÁLOGO ---
-router.get("/", ctrl.getAll);
-router.get("/:id", ctrl.getById);
+// ===============================
+// RUTAS PÚBLICAS
+// ===============================
 
-// --- RUTAS DE GESTIÓN (Con subida de imágenes) ---
-router.post("/", upload.array("images", 10), ctrl.create);
-router.put("/:id", upload.array("images", 10), ctrl.update);
-router.delete("/:id", ctrl.remove);
+// Obtener todos los productos (catálogo público)
+router.get("/",
+  sanitizeParams,
+  apiLimiter,
+  ctrl.getAll
+);
 
-// --- 🆕 NUEVA RUTA: HISTORIAL DE COMPRAS ---
-// Asegúrate de que esta función 'getPurchaseHistory' esté en tu controller
-router.get("/:id/purchase-history", ctrl.getPurchaseHistory);
+// Obtener producto por ID (detalle público)
+router.get("/:id",
+  sanitizeParams,
+  apiLimiter,
+  ctrl.getById
+);
+
+// ===============================
+// RUTAS PROTEGIDAS (Admin)
+// ===============================
+
+// Historial de compras del producto
+router.get("/:id/purchase-history",
+  sanitizeParams,
+  auth,
+  requireRole(['admin', 'super_admin']),
+  apiLimiter,
+  ctrl.getPurchaseHistory
+);
+
+// Crear producto
+router.post("/",
+  sanitizeParams,
+  auth,
+  requireRole(['admin', 'super_admin']),
+  auditLog,
+  apiLimiter,
+  upload.array("images", 10),
+  ctrl.create
+);
+
+// Actualizar producto
+router.put("/:id",
+  sanitizeParams,
+  auth,
+  requireRole(['admin', 'super_admin']),
+  auditLog,
+  apiLimiter,
+  upload.array("images", 10),
+  ctrl.update
+);
+
+// Eliminar producto
+router.delete("/:id",
+  sanitizeParams,
+  auth,
+  requireRole(['admin', 'super_admin']),
+  auditLog,
+  apiLimiter,
+  ctrl.remove
+);
 
 module.exports = router;
