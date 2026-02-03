@@ -143,44 +143,39 @@ const sanitizeQueryParams = (params) => {
 };
 
 // ===============================
-// GET ALL PRODUCTS (MEJORADO)
+// GET ALL PRODUCTS (VERSIÓN CORREGIDA)
 // ===============================
 
 exports.getAll = async (req, res) => {
   try {
-    const params = sanitizeQueryParams(req.query);
+    // Sanitizar y validar parámetros
+    const categoria = req.query.categoria?.trim().replace(/[<>]/g, '').substring(0, 200);
+    const search = req.query.search?.trim().replace(/[<>]/g, '').substring(0, 200);
+    const status = req.query.status;
+    const min_price = req.query.min_price ? parseFloat(req.query.min_price) : undefined;
+    const max_price = req.query.max_price ? parseFloat(req.query.max_price) : undefined;
     
-    const { 
-      categoria, 
-      page = 1, 
-      limit = 100, 
-      search = "",
-      status,
-      min_price,
-      max_price
-    } = params;
-
     // Validación estricta de paginación
-    const validPage = Math.max(1, Math.min(1000, parseInt(page) || 1));
-    const validLimit = Math.min(100, Math.max(1, parseInt(limit) || 100));
-    const offset = (validPage - 1) * validLimit;
+    const page = Math.max(1, Math.min(1000, parseInt(req.query.page) || 1));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 100));
+    const offset = (page - 1) * limit;
 
     // Construir WHERE clause de forma segura
-    let whereClause = [];
-    let queryParams = [];
+    const whereConditions = [];
+    const queryParams = [];
     let paramIndex = 1;
 
     // Filtro por categoría (SLUG)
     if (categoria) {
-      whereClause.push(`c.slug = $${paramIndex}`);
+      whereConditions.push(`c.slug = $${paramIndex}`);
       queryParams.push(categoria);
       paramIndex++;
     }
 
-    // Búsqueda por texto (con escape de wildcards SQL)
-    if (search && search.trim()) {
-      const sanitizedSearch = search.trim().replace(/[%_\\]/g, '\\$&');
-      whereClause.push(`(
+    // Búsqueda por texto
+    if (search) {
+      const sanitizedSearch = search.replace(/[%_\\]/g, '\\$&');
+      whereConditions.push(`(
         p.name ILIKE $${paramIndex} OR 
         p.description ILIKE $${paramIndex}
       )`);
@@ -190,38 +185,43 @@ exports.getAll = async (req, res) => {
 
     // Filtro por estado de inventario
     if (status) {
-      switch (status) {
-        case 'pending_first_purchase':
-          whereClause.push(`p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0)`);
-          break;
-        case 'out_of_stock':
-          whereClause.push(`p.stock = 0 AND p.purchase_price > 0`);
-          break;
-        case 'low_stock':
-          whereClause.push(`p.stock > 0 AND p.stock <= 5`);
-          break;
-        case 'in_stock':
-          whereClause.push(`p.stock > 5`);
-          break;
+      const validStatuses = ['pending_first_purchase', 'out_of_stock', 'low_stock', 'in_stock'];
+      if (validStatuses.includes(status)) {
+        switch (status) {
+          case 'pending_first_purchase':
+            whereConditions.push(`(p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0))`);
+            break;
+          case 'out_of_stock':
+            whereConditions.push(`(p.stock = 0 AND p.purchase_price > 0)`);
+            break;
+          case 'low_stock':
+            whereConditions.push(`(p.stock > 0 AND p.stock <= 5)`);
+            break;
+          case 'in_stock':
+            whereConditions.push(`(p.stock > 5)`);
+            break;
+        }
       }
     }
 
     // Filtro por rango de precios
-    if (min_price !== undefined) {
-      whereClause.push(`p.price >= $${paramIndex}`);
+    if (min_price !== undefined && !isNaN(min_price) && min_price >= 0) {
+      whereConditions.push(`p.price >= $${paramIndex}`);
       queryParams.push(min_price);
       paramIndex++;
     }
 
-    if (max_price !== undefined) {
-      whereClause.push(`p.price <= $${paramIndex}`);
+    if (max_price !== undefined && !isNaN(max_price) && max_price >= 0) {
+      whereConditions.push(`p.price <= $${paramIndex}`);
       queryParams.push(max_price);
       paramIndex++;
     }
 
-    const whereString = whereClause.length > 0 ? `WHERE ${whereClause.join(" AND ")}` : "";
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}` 
+      : '';
 
-    // Query principal con protección contra SQL injection (parametrized)
+    // Query principal
     const queryText = `
       SELECT 
         p.id, 
@@ -232,6 +232,7 @@ exports.getAll = async (req, res) => {
         p.purchase_price, 
         p.markup_type, 
         p.markup_value,
+        p.description,
         p.created_at,
         c.name AS category_name,
         c.slug AS category_slug,
@@ -253,14 +254,17 @@ exports.getAll = async (req, res) => {
             END
            FROM discount_targets dt
            JOIN discounts d ON d.id = dt.discount_id
-           WHERE ((dt.target_type = 'product' AND dt.target_id = p.id)
-               OR (dt.target_type = 'category' AND dt.target_id = p.category_id))
-             AND NOW() BETWEEN d.starts_at AND d.ends_at
-             AND d.active = true
-           ORDER BY CASE 
-             WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
-             ELSE p.price - d.value
-           END ASC
+           WHERE (
+             (dt.target_type = 'product' AND dt.target_id = p.id::text) OR
+             (dt.target_type = 'category' AND dt.target_id = p.category_id::text)
+           )
+           AND NOW() BETWEEN d.starts_at AND d.ends_at
+           AND d.active = true
+           ORDER BY 
+             CASE 
+               WHEN d.type = 'percentage' THEN p.price - (p.price * (d.value / 100))
+               ELSE p.price - d.value
+             END ASC
            LIMIT 1
           ),
           p.price
@@ -273,10 +277,12 @@ exports.getAll = async (req, res) => {
         )
          FROM discount_targets dt
          JOIN discounts d ON d.id = dt.discount_id
-         WHERE ((dt.target_type = 'product' AND dt.target_id = p.id)
-             OR (dt.target_type = 'category' AND dt.target_id = p.category_id))
-           AND NOW() BETWEEN d.starts_at AND d.ends_at
-           AND d.active = true
+         WHERE (
+           (dt.target_type = 'product' AND dt.target_id = p.id::text) OR
+           (dt.target_type = 'category' AND dt.target_id = p.category_id::text)
+         )
+         AND NOW() BETWEEN d.starts_at AND d.ends_at
+         AND d.active = true
          LIMIT 1
         ) AS active_discount,
         
@@ -289,59 +295,54 @@ exports.getAll = async (req, res) => {
 
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      ${whereString}
+      ${whereClause}
       ORDER BY p.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    queryParams.push(validLimit, offset);
+    // Agregar limit y offset a params
+    queryParams.push(limit, offset);
 
-    // Ejecutar queries en paralelo para mejor performance
+    // Query de conteo
+    const countQuery = `
+      SELECT COUNT(p.id) as count
+      FROM products p 
+      LEFT JOIN categories c ON p.category_id = c.id 
+      ${whereClause}
+    `;
+
+    // Ejecutar queries en paralelo
     const [dataResult, countResult] = await Promise.all([
       db.query(queryText, queryParams),
-      db.query(`
-        SELECT COUNT(p.id) 
-        FROM products p 
-        LEFT JOIN categories c ON p.category_id = c.id 
-        ${whereString}
-      `, queryParams.slice(0, paramIndex - 1))
+      db.query(countQuery, queryParams.slice(0, paramIndex - 1))
     ]);
 
     const totalCount = parseInt(countResult.rows[0].count);
-    const totalPages = Math.ceil(totalCount / validLimit);
+    const totalPages = Math.ceil(totalCount / limit);
 
-    // Respuesta con metadata completa
+    // Respuesta
     res.json({
       products: dataResult.rows,
       pagination: {
         total: totalCount,
-        page: validPage,
-        limit: validLimit,
-        totalPages,
-        hasNext: validPage < totalPages,
-        hasPrev: validPage > 1
-      },
-      // Metadata adicional para debugging (solo en dev)
-      ...(process.env.NODE_ENV === 'development' && {
-        _debug: {
-          appliedFilters: params,
-          queryParams: queryParams.length
-        }
-      })
+        page: page,
+        limit: limit,
+        totalPages: totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
     });
 
   } catch (error) {
-    console.error("GET PRODUCTS ERROR:", {
+    console.error("❌ GET PRODUCTS ERROR:", {
       message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      stack: error.stack,
       query: req.query
     });
     
     res.status(500).json({ 
       message: "Error al obtener productos",
-      ...(process.env.NODE_ENV === 'development' && {
-        error: error.message
-      })
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
