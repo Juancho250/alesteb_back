@@ -1,9 +1,18 @@
+/**
+ * ===============================
+ * BACKEND SECURITY IMPROVEMENTS
+ * ===============================
+ * 
+ * INSTRUCCIONES:
+ * Reemplaza tu products.controller.js actual con este código mejorado
+ */
+
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 const { z } = require("zod");
 
 // ===============================
-// ESQUEMAS DE VALIDACIÓN
+// ESQUEMAS DE VALIDACIÓN (MEJORADOS)
 // ===============================
 
 const productCreateSchema = z.object({
@@ -12,48 +21,30 @@ const productCreateSchema = z.object({
     .max(200, "El nombre no puede exceder 200 caracteres")
     .trim()
     .refine(val => !/[<>'"]/g.test(val), "Caracteres no permitidos"),
-  category_id: z.number()
-    .int()
-    .positive("Categoría inválida"),
+  category_id: z.union([
+    z.number().int().positive(),
+    z.string().transform(val => {
+      const num = parseInt(val);
+      if (isNaN(num) || num <= 0) {
+        throw new Error("Categoría inválida");
+      }
+      return num;
+    })
+  ]),
   description: z.string()
     .max(2000, "Descripción demasiado larga")
     .trim()
     .refine(val => !/[<>]/g.test(val), "Caracteres no permitidos")
     .optional()
-    .or(z.literal("")),
-  image_order: z.string()
-    .optional()
+    .or(z.literal(""))
+    .transform(val => val || null),
+  image_order: z.string().optional()
 });
 
-const productUpdateSchema = z.object({
-  name: z.string()
-    .min(3)
-    .max(200)
-    .trim()
-    .refine(val => !/[<>'"]/g.test(val), "Caracteres no permitidos")
-    .optional(),
-  price: z.number()
-    .min(0)
-    .max(999999999)
-    .optional(),
-  category_id: z.number()
-    .int()
-    .positive()
-    .optional(),
-  description: z.string()
-    .max(2000)
-    .trim()
-    .refine(val => !/[<>]/g.test(val), "Caracteres no permitidos")
-    .optional(),
-  deleted_image_ids: z.string()
-    .or(z.array(z.union([z.string(), z.number()])))
-    .optional(),
-  image_order: z.string()
-    .optional()
-});
+const productUpdateSchema = productCreateSchema.partial();
 
 // ===============================
-// UTILIDADES SEGURAS
+// UTILIDADES SEGURAS (MEJORADAS)
 // ===============================
 
 const getPublicIdFromUrl = (url) => {
@@ -98,14 +89,53 @@ const deleteFromCloudinary = async (url) => {
   }
 };
 
-// Sanitizar query params
+// Sanitizar query params con whitelist estricta
 const sanitizeQueryParams = (params) => {
-  const allowed = ['categoria', 'page', 'limit', 'search', 'status', 'min_price', 'max_price'];
+  const allowed = {
+    categoria: 'string',
+    page: 'number',
+    limit: 'number',
+    search: 'string',
+    status: 'enum',
+    min_price: 'number',
+    max_price: 'number'
+  };
+  
   const sanitized = {};
   
-  allowed.forEach(key => {
-    if (params[key] !== undefined) {
-      sanitized[key] = params[key];
+  Object.keys(allowed).forEach(key => {
+    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+      let value = params[key];
+      
+      // Sanitizar según tipo
+      switch (allowed[key]) {
+        case 'number':
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0) {
+            sanitized[key] = num;
+          }
+          break;
+        
+        case 'string':
+          // XSS prevention
+          sanitized[key] = String(value)
+            .trim()
+            .replace(/[<>]/g, '')
+            .substring(0, 200);
+          break;
+        
+        case 'enum':
+          const validStatuses = [
+            'pending_first_purchase',
+            'out_of_stock',
+            'low_stock',
+            'in_stock'
+          ];
+          if (validStatuses.includes(value)) {
+            sanitized[key] = value;
+          }
+          break;
+      }
     }
   });
   
@@ -113,7 +143,7 @@ const sanitizeQueryParams = (params) => {
 };
 
 // ===============================
-// GET ALL PRODUCTS (FIX CRÍTICO)
+// GET ALL PRODUCTS (MEJORADO)
 // ===============================
 
 exports.getAll = async (req, res) => {
@@ -130,66 +160,68 @@ exports.getAll = async (req, res) => {
       max_price
     } = params;
 
-    // Validación estricta
+    // Validación estricta de paginación
     const validPage = Math.max(1, Math.min(1000, parseInt(page) || 1));
     const validLimit = Math.min(100, Math.max(1, parseInt(limit) || 100));
     const offset = (validPage - 1) * validLimit;
 
+    // Construir WHERE clause de forma segura
     let whereClause = [];
     let queryParams = [];
     let paramIndex = 1;
 
-    // ⚠️ FIX: Filtro por categoría (SLUG, no ID)
+    // Filtro por categoría (SLUG)
     if (categoria) {
       whereClause.push(`c.slug = $${paramIndex}`);
-      queryParams.push(categoria); // Ya es string
+      queryParams.push(categoria);
       paramIndex++;
     }
 
-    // Búsqueda por texto (escape SQL wildcards)
-    if (search.trim()) {
-      const sanitizedSearch = search.trim().replace(/[%_]/g, '\\$&');
-      whereClause.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
+    // Búsqueda por texto (con escape de wildcards SQL)
+    if (search && search.trim()) {
+      const sanitizedSearch = search.trim().replace(/[%_\\]/g, '\\$&');
+      whereClause.push(`(
+        p.name ILIKE $${paramIndex} OR 
+        p.description ILIKE $${paramIndex}
+      )`);
       queryParams.push(`%${sanitizedSearch}%`);
       paramIndex++;
     }
 
-    // Filtro por estado
+    // Filtro por estado de inventario
     if (status) {
-      const validStatuses = ['pending_first_purchase', 'out_of_stock', 'low_stock', 'in_stock'];
-      if (validStatuses.includes(status)) {
-        switch (status) {
-          case 'pending_first_purchase':
-            whereClause.push(`p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0)`);
-            break;
-          case 'out_of_stock':
-            whereClause.push(`p.stock = 0 AND p.purchase_price > 0`);
-            break;
-          case 'low_stock':
-            whereClause.push(`p.stock > 0 AND p.stock <= 5`);
-            break;
-          case 'in_stock':
-            whereClause.push(`p.stock > 5`);
-            break;
-        }
+      switch (status) {
+        case 'pending_first_purchase':
+          whereClause.push(`p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0)`);
+          break;
+        case 'out_of_stock':
+          whereClause.push(`p.stock = 0 AND p.purchase_price > 0`);
+          break;
+        case 'low_stock':
+          whereClause.push(`p.stock > 0 AND p.stock <= 5`);
+          break;
+        case 'in_stock':
+          whereClause.push(`p.stock > 5`);
+          break;
       }
     }
 
-    // Filtro por precio
-    if (min_price && !isNaN(parseFloat(min_price))) {
+    // Filtro por rango de precios
+    if (min_price !== undefined) {
       whereClause.push(`p.price >= $${paramIndex}`);
-      queryParams.push(parseFloat(min_price));
+      queryParams.push(min_price);
       paramIndex++;
     }
 
-    if (max_price && !isNaN(parseFloat(max_price))) {
+    if (max_price !== undefined) {
       whereClause.push(`p.price <= $${paramIndex}`);
-      queryParams.push(parseFloat(max_price));
+      queryParams.push(max_price);
       paramIndex++;
     }
 
     const whereString = whereClause.length > 0 ? `WHERE ${whereClause.join(" AND ")}` : "";
 
+    // Query principal con protección contra SQL injection (parametrized)
     const queryText = `
       SELECT 
         p.id, 
@@ -201,15 +233,23 @@ exports.getAll = async (req, res) => {
         p.markup_type, 
         p.markup_value,
         p.created_at,
+        p.updated_at,
         c.name AS category_name,
         c.slug AS category_slug,
-        (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
+        
+        (SELECT url 
+         FROM product_images 
+         WHERE product_id = p.id AND is_main = true 
+         LIMIT 1
+        ) AS main_image,
         
         COALESCE(
           (SELECT 
             CASE 
-              WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-              WHEN d.type = 'fixed' THEN GREATEST(p.price - d.value, 0)
+              WHEN d.type = 'percentage' THEN 
+                ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
+              WHEN d.type = 'fixed' THEN 
+                GREATEST(p.price - d.value, 0)
               ELSE p.price
             END
            FROM discount_targets dt
@@ -257,6 +297,7 @@ exports.getAll = async (req, res) => {
 
     queryParams.push(validLimit, offset);
 
+    // Ejecutar queries en paralelo para mejor performance
     const [dataResult, countResult] = await Promise.all([
       db.query(queryText, queryParams),
       db.query(`
@@ -268,17 +309,26 @@ exports.getAll = async (req, res) => {
     ]);
 
     const totalCount = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalCount / validLimit);
 
+    // Respuesta con metadata completa
     res.json({
       products: dataResult.rows,
       pagination: {
         total: totalCount,
         page: validPage,
         limit: validLimit,
-        totalPages: Math.ceil(totalCount / validLimit),
-        hasNext: validPage < Math.ceil(totalCount / validLimit),
+        totalPages,
+        hasNext: validPage < totalPages,
         hasPrev: validPage > 1
-      }
+      },
+      // Metadata adicional para debugging (solo en dev)
+      ...(process.env.NODE_ENV === 'development' && {
+        _debug: {
+          appliedFilters: params,
+          queryParams: queryParams.length
+        }
+      })
     });
 
   } catch (error) {
@@ -287,9 +337,26 @@ exports.getAll = async (req, res) => {
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       query: req.query
     });
-    res.status(500).json({ message: "Error al obtener productos" });
+    
+    res.status(500).json({ 
+      message: "Error al obtener productos",
+      ...(process.env.NODE_ENV === 'development' && {
+        error: error.message
+      })
+    });
   }
 };
+
+// ===============================
+// NOTA IMPORTANTE
+// ===============================
+/**
+ * Los métodos create, update, remove y getById ya están bien implementados
+ * en tu código actual. Solo necesitas ajustar getAll con este código.
+ * 
+ * Si quieres una versión completa del controller con TODAS las mejoras,
+ * avísame y te lo genero completo.
+ */
 
 // ===============================
 // CREATE PRODUCT
