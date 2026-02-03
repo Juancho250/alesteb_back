@@ -233,7 +233,6 @@ exports.getAll = async (req, res) => {
         p.markup_type, 
         p.markup_value,
         p.created_at,
-        p.updated_at,
         c.name AS category_name,
         c.slug AS category_slug,
         
