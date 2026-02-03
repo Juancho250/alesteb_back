@@ -10,35 +10,40 @@ const productCreateSchema = z.object({
   name: z.string()
     .min(3, "El nombre debe tener al menos 3 caracteres")
     .max(200, "El nombre no puede exceder 200 caracteres")
-    .trim(),
+    .trim()
+    .refine(val => !/[<>'"]/g.test(val), "Caracteres no permitidos"),
   category_id: z.number()
     .int()
     .positive("Categoría inválida"),
   description: z.string()
     .max(2000, "Descripción demasiado larga")
     .trim()
-    .optional(),
+    .refine(val => !/[<>]/g.test(val), "Caracteres no permitidos")
+    .optional()
+    .or(z.literal("")),
   image_order: z.string()
     .optional()
 });
 
 const productUpdateSchema = z.object({
   name: z.string()
-    .min(3, "El nombre debe tener al menos 3 caracteres")
-    .max(200, "El nombre no puede exceder 200 caracteres")
+    .min(3)
+    .max(200)
     .trim()
+    .refine(val => !/[<>'"]/g.test(val), "Caracteres no permitidos")
     .optional(),
   price: z.number()
-    .min(0, "El precio no puede ser negativo")
-    .max(999999999, "Precio demasiado alto")
+    .min(0)
+    .max(999999999)
     .optional(),
   category_id: z.number()
     .int()
     .positive()
     .optional(),
   description: z.string()
-    .max(2000, "Descripción demasiado larga")
+    .max(2000)
     .trim()
+    .refine(val => !/[<>]/g.test(val), "Caracteres no permitidos")
     .optional(),
   deleted_image_ids: z.string()
     .or(z.array(z.union([z.string(), z.number()])))
@@ -48,12 +53,17 @@ const productUpdateSchema = z.object({
 });
 
 // ===============================
-// UTILIDADES
+// UTILIDADES SEGURAS
 // ===============================
 
 const getPublicIdFromUrl = (url) => {
   try {
-    if (!url) return null;
+    if (!url || typeof url !== 'string') return null;
+    
+    if (!url.includes('cloudinary.com') && !url.includes('res.cloudinary.com')) {
+      console.warn('URL no es de Cloudinary');
+      return null;
+    }
     
     const matches = url.match(/\/upload\/(?:v\d+\/)?(.+)\.\w+$/);
     if (matches && matches[1]) {
@@ -67,10 +77,7 @@ const getPublicIdFromUrl = (url) => {
     
     return folder !== 'upload' ? `${folder}/${publicId}` : publicId;
   } catch (error) {
-    console.error('Error extracting public_id:', {
-      message: error.message,
-      url
-    });
+    console.error('Error extracting public_id:', error.message);
     return null;
   }
 };
@@ -80,27 +87,39 @@ const deleteFromCloudinary = async (url) => {
     if (!url) return false;
     
     const publicId = getPublicIdFromUrl(url);
-    if (publicId) {
-      await cloudinary.uploader.destroy(publicId);
-      console.log(`✅ Deleted from Cloudinary: ${publicId}`);
-      return true;
-    }
-    return false;
+    if (!publicId) return false;
+    
+    const result = await cloudinary.uploader.destroy(publicId);
+    console.log(`✅ Deleted from Cloudinary: ${publicId}`, result.result);
+    return result.result === 'ok' || result.result === 'not found';
   } catch (error) {
-    console.error('❌ Cloudinary deletion error:', {
-      message: error.message,
-      url
-    });
+    console.error('❌ Cloudinary deletion error:', error.message);
     return false;
   }
 };
 
+// Sanitizar query params
+const sanitizeQueryParams = (params) => {
+  const allowed = ['categoria', 'page', 'limit', 'search', 'status', 'min_price', 'max_price'];
+  const sanitized = {};
+  
+  allowed.forEach(key => {
+    if (params[key] !== undefined) {
+      sanitized[key] = params[key];
+    }
+  });
+  
+  return sanitized;
+};
+
 // ===============================
-// GET ALL PRODUCTS
+// GET ALL PRODUCTS (FIX CRÍTICO)
 // ===============================
 
 exports.getAll = async (req, res) => {
   try {
+    const params = sanitizeQueryParams(req.query);
+    
     const { 
       categoria, 
       page = 1, 
@@ -109,10 +128,10 @@ exports.getAll = async (req, res) => {
       status,
       min_price,
       max_price
-    } = req.query;
+    } = params;
 
-    // Validar paginación
-    const validPage = Math.max(1, parseInt(page) || 1);
+    // Validación estricta
+    const validPage = Math.max(1, Math.min(1000, parseInt(page) || 1));
     const validLimit = Math.min(100, Math.max(1, parseInt(limit) || 100));
     const offset = (validPage - 1) * validLimit;
 
@@ -120,21 +139,22 @@ exports.getAll = async (req, res) => {
     let queryParams = [];
     let paramIndex = 1;
 
-    // Filtro por categoría (slug)
+    // ⚠️ FIX: Filtro por categoría (SLUG, no ID)
     if (categoria) {
       whereClause.push(`c.slug = $${paramIndex}`);
-      queryParams.push(categoria);
+      queryParams.push(categoria); // Ya es string
       paramIndex++;
     }
 
-    // Búsqueda por texto
+    // Búsqueda por texto (escape SQL wildcards)
     if (search.trim()) {
+      const sanitizedSearch = search.trim().replace(/[%_]/g, '\\$&');
       whereClause.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
-      queryParams.push(`%${search.trim()}%`);
+      queryParams.push(`%${sanitizedSearch}%`);
       paramIndex++;
     }
 
-    // Filtro por estado de inventario
+    // Filtro por estado
     if (status) {
       const validStatuses = ['pending_first_purchase', 'out_of_stock', 'low_stock', 'in_stock'];
       if (validStatuses.includes(status)) {
@@ -155,7 +175,7 @@ exports.getAll = async (req, res) => {
       }
     }
 
-    // Filtro por rango de precios
+    // Filtro por precio
     if (min_price && !isNaN(parseFloat(min_price))) {
       whereClause.push(`p.price >= $${paramIndex}`);
       queryParams.push(parseFloat(min_price));
@@ -185,7 +205,6 @@ exports.getAll = async (req, res) => {
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         
-        -- Precio final con descuentos activos
         COALESCE(
           (SELECT 
             CASE 
@@ -208,7 +227,6 @@ exports.getAll = async (req, res) => {
           p.price
         ) AS final_price,
         
-        -- Información del descuento activo
         (SELECT json_build_object(
           'type', d.type,
           'value', d.value,
@@ -223,7 +241,6 @@ exports.getAll = async (req, res) => {
          LIMIT 1
         ) AS active_discount,
         
-        -- Estado del inventario
         CASE
           WHEN p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0) THEN 'pending_first_purchase'
           WHEN p.stock = 0 AND p.purchase_price > 0 THEN 'out_of_stock'
@@ -240,7 +257,6 @@ exports.getAll = async (req, res) => {
 
     queryParams.push(validLimit, offset);
 
-    // Ejecutar queries en paralelo
     const [dataResult, countResult] = await Promise.all([
       db.query(queryText, queryParams),
       db.query(`
@@ -268,7 +284,8 @@ exports.getAll = async (req, res) => {
   } catch (error) {
     console.error("GET PRODUCTS ERROR:", {
       message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      query: req.query
     });
     res.status(500).json({ message: "Error al obtener productos" });
   }
@@ -282,7 +299,6 @@ exports.create = async (req, res) => {
   const client = await db.connect();
 
   try {
-    // Validar datos
     const validatedData = productCreateSchema.parse({
       ...req.body,
       category_id: parseInt(req.body.category_id)
@@ -304,7 +320,6 @@ exports.create = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verificar que la categoría existe
     const categoryCheck = await client.query(
       "SELECT id FROM categories WHERE id = $1",
       [validatedData.category_id]
@@ -315,18 +330,10 @@ exports.create = async (req, res) => {
       return res.status(404).json({ message: "Categoría no encontrada" });
     }
 
-    // Crear producto con valores por defecto
     const productResult = await client.query(
       `INSERT INTO products (
-        name, 
-        price, 
-        stock, 
-        category_id, 
-        description,
-        purchase_price,
-        markup_type,
-        markup_value,
-        created_at
+        name, price, stock, category_id, description,
+        purchase_price, markup_type, markup_value, created_at
       )
        VALUES ($1, 0, 0, $2, $3, NULL, NULL, NULL, NOW()) 
        RETURNING id, name`,
@@ -335,7 +342,6 @@ exports.create = async (req, res) => {
 
     const productId = productResult.rows[0].id;
 
-    // Procesar orden de imágenes
     let orderMap = {};
     if (validatedData.image_order) {
       try {
@@ -348,7 +354,6 @@ exports.create = async (req, res) => {
       }
     }
 
-    // Insertar imágenes
     const insertImageQuery = `
       INSERT INTO product_images (product_id, url, is_main, display_order)
       VALUES ($1, $2, $3, $4)
@@ -362,7 +367,7 @@ exports.create = async (req, res) => {
       await client.query(insertImageQuery, [
         productId,
         imageUrl,
-        i === 0, // Primera imagen es main por defecto
+        i === 0,
         displayOrder
       ]);
     }
@@ -389,10 +394,7 @@ exports.create = async (req, res) => {
       });
     }
 
-    console.error("CREATE PRODUCT ERROR:", {
-      message: error.message,
-      userId: req.user?.id
-    });
+    console.error("CREATE PRODUCT ERROR:", error.message);
     res.status(500).json({ message: "Error al crear producto" });
   } finally {
     client.release();
@@ -413,7 +415,6 @@ exports.update = async (req, res) => {
       return res.status(400).json({ message: "ID inválido" });
     }
 
-    // Validar datos
     const validatedData = productUpdateSchema.parse({
       ...req.body,
       category_id: req.body.category_id ? parseInt(req.body.category_id) : undefined,
@@ -430,7 +431,6 @@ exports.update = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verificar que el producto existe
     const productCheck = await client.query(
       "SELECT id FROM products WHERE id = $1",
       [id]
@@ -441,7 +441,6 @@ exports.update = async (req, res) => {
       return res.status(404).json({ message: "Producto no encontrado" });
     }
 
-    // Verificar categoría si se actualiza
     if (validatedData.category_id) {
       const categoryCheck = await client.query(
         "SELECT id FROM categories WHERE id = $1",
@@ -454,21 +453,18 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Obtener imágenes actuales
     const currentImagesQuery = await client.query(
       "SELECT id, url FROM product_images WHERE product_id = $1 ORDER BY display_order ASC",
       [id]
     );
     const currentImages = currentImagesQuery.rows;
     
-    // Procesar eliminación de imágenes
     let idsToDelete = [];
     if (validatedData.deleted_image_ids) {
       idsToDelete = Array.isArray(validatedData.deleted_image_ids) 
         ? validatedData.deleted_image_ids 
         : JSON.parse(validatedData.deleted_image_ids);
       
-      // Convertir a números
       idsToDelete = idsToDelete.map(id => parseInt(id)).filter(id => !isNaN(id));
     }
 
@@ -484,7 +480,6 @@ exports.update = async (req, res) => {
       });
     }
 
-    // Construir query de actualización
     const updates = [];
     const values = [];
     let paramCount = 1;
@@ -509,7 +504,6 @@ exports.update = async (req, res) => {
       values.push(validatedData.description);
     }
 
-    // Actualizar producto si hay cambios
     if (updates.length > 0) {
       values.push(id);
       await client.query(
@@ -518,7 +512,6 @@ exports.update = async (req, res) => {
       );
     }
 
-    // Eliminar imágenes marcadas
     if (idsToDelete.length > 0) {
       const imagesToDelete = currentImages.filter(img => idsToDelete.includes(img.id));
       
@@ -528,7 +521,6 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Insertar nuevas imágenes
     if (newImages.length > 0) {
       const insertImageQuery = `
         INSERT INTO product_images (product_id, url, is_main, display_order)
@@ -549,7 +541,6 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Actualizar orden de imágenes
     if (validatedData.image_order) {
       try {
         const orderArray = JSON.parse(validatedData.image_order);
@@ -567,7 +558,6 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Asegurar que hay una imagen principal
     await client.query(
       `UPDATE product_images SET is_main = false WHERE product_id = $1`,
       [id]
@@ -604,12 +594,8 @@ exports.update = async (req, res) => {
       });
     }
 
-    console.error("UPDATE PRODUCT ERROR:", {
-      message: error.message,
-      productId: req.params.id,
-      userId: req.user?.id
-    });
-    res.status(500).json({ message: error.message || "Error al actualizar producto" });
+    console.error("UPDATE PRODUCT ERROR:", error.message);
+    res.status(500).json({ message: "Error al actualizar producto" });
   } finally {
     client.release();
   }
@@ -631,7 +617,6 @@ exports.remove = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verificar que no tenga ventas asociadas
     const salesCheck = await client.query(
       "SELECT COUNT(*) as count FROM sale_items WHERE product_id = $1",
       [id]
@@ -644,7 +629,6 @@ exports.remove = async (req, res) => {
       });
     }
 
-    // Obtener y eliminar imágenes
     const imagesResult = await client.query(
       "SELECT url FROM product_images WHERE product_id = $1",
       [id]
@@ -654,7 +638,6 @@ exports.remove = async (req, res) => {
       await deleteFromCloudinary(image.url);
     }
 
-    // Eliminar producto (las imágenes se eliminan por CASCADE)
     const result = await client.query(
       "DELETE FROM products WHERE id = $1 RETURNING id",
       [id]
@@ -674,12 +657,7 @@ exports.remove = async (req, res) => {
 
   } catch (error) {
     await client.query("ROLLBACK");
-    
-    console.error("DELETE PRODUCT ERROR:", {
-      message: error.message,
-      productId: req.params.id,
-      userId: req.user?.id
-    });
+    console.error("DELETE PRODUCT ERROR:", error.message);
     res.status(500).json({ message: "Error al eliminar producto" });
   } finally {
     client.release();
@@ -705,7 +683,6 @@ exports.getById = async (req, res) => {
         c.slug AS category_slug,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         
-        -- Información del descuento
         (SELECT json_build_object(
           'id', d.id,
           'name', d.name,
@@ -727,7 +704,6 @@ exports.getById = async (req, res) => {
          LIMIT 1
         ) AS active_discount,
         
-        -- Precio final
         COALESCE(
           (SELECT 
             CASE 
@@ -738,15 +714,14 @@ exports.getById = async (req, res) => {
            FROM discount_targets dt
            JOIN discounts d ON d.id = dt.discount_id
            WHERE ((dt.target_type = 'product' AND dt.target_id = p.id)
-               OR (dt.target_type = 'category' AND dt.target_id = p.category_id))
-             AND NOW() BETWEEN d.starts_at AND d.ends_at
-             AND d.active = true
+             OR (dt.target_type = 'category' AND dt.target_id = p.category_id))
+           AND NOW() BETWEEN d.starts_at AND d.ends_at
+           AND d.active = true
            LIMIT 1
           ),
           p.price
         ) AS final_price,
         
-        -- Estado del inventario
         CASE
           WHEN p.stock = 0 AND (p.purchase_price IS NULL OR p.purchase_price = 0) THEN 'pending_first_purchase'
           WHEN p.stock = 0 AND p.purchase_price > 0 THEN 'out_of_stock'
@@ -763,7 +738,6 @@ exports.getById = async (req, res) => {
       return res.status(404).json({ message: "Producto no encontrado" });
     }
 
-    // Obtener todas las imágenes
     const imagesResult = await db.query(
       `SELECT id, url, is_main, display_order 
        FROM product_images 
@@ -778,10 +752,7 @@ exports.getById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("GET PRODUCT BY ID ERROR:", {
-      message: error.message,
-      productId: req.params.id
-    });
+    console.error("GET PRODUCT BY ID ERROR:", error.message);
     res.status(500).json({ message: "Error al obtener producto" });
   }
 };
@@ -829,10 +800,7 @@ exports.getPurchaseHistory = async (req, res) => {
     res.json(result.rows);
 
   } catch (error) {
-    console.error("GET PURCHASE HISTORY ERROR:", {
-      message: error.message,
-      productId: req.params.id
-    });
+    console.error("GET PURCHASE HISTORY ERROR:", error.message);
     res.status(500).json({ message: "Error al obtener historial de compras" });
   }
 };
