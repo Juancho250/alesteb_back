@@ -25,8 +25,48 @@ const app = express();
 // ===============================
 // TRUST PROXY (CRÍTICO - antes de todo)
 // ===============================
-// Render.com actúa como proxy, esto es necesario para que req.ip funcione
 app.set("trust proxy", 1);
+
+// ===============================
+// CORS
+// ===============================
+// En producción (Render): lees ALLOWED_ORIGINS o FRONTEND_URL desde env vars
+// En desarrollo local: siempre permites localhost:5173
+const getAllowedOrigins = () => {
+  if (process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(",").map(o => o.trim());
+  }
+
+  const origins = ["http://localhost:5173", "http://localhost:3000"];
+
+  // Si hay FRONTEND_URL definida (producción), la agregas
+  if (process.env.FRONTEND_URL) {
+    origins.push(process.env.FRONTEND_URL.trim());
+  }
+
+  return origins;
+};
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const allowed = getAllowedOrigins();
+
+      // Permitir peticiones sin origin (mismo dominio, tools, etc.)
+      if (!origin) return callback(null, true);
+
+      if (allowed.includes(origin)) {
+        callback(null, true);
+      } else {
+        logger.warn(`CORS bloqueado para origin: ${origin}`);
+        callback(null, false);
+      }
+    },
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+  })
+);
 
 // ===============================
 // SEGURIDAD
@@ -53,20 +93,6 @@ app.use(
 // MIDDLEWARES
 // ===============================
 app.use(compression());
-
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",")
-  : [process.env.FRONTEND_URL || "http://localhost:5173"];
-
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"],
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  })
-);
-
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -80,7 +106,7 @@ app.use((req, res, next) => {
 });
 
 // ===============================
-// HEALTH CHECK
+// HEALTH CHECK (antes de las rutas)
 // ===============================
 app.get("/health", (req, res) => {
   res.status(200).json({
@@ -115,8 +141,6 @@ app.use("/api/contact", contactRoutes);
 // ===============================
 // MANEJO DE ERRORES (ÚLTIMO)
 // ===============================
-
-// 404 Handler
 app.use((req, res) => {
   res.status(404).json({
     status: "error",
@@ -125,7 +149,6 @@ app.use((req, res) => {
   });
 });
 
-// Error Handler global
 app.use(errorHandler);
 
 // ===============================
@@ -137,6 +160,7 @@ app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en: http://localhost:${PORT}`);
   console.log(`📦 Entorno: ${process.env.NODE_ENV || "development"}`);
   console.log(`🔒 Trust Proxy: ${app.get("trust proxy")}`);
+  console.log(`🌐 Origins permitidos: ${JSON.stringify(getAllowedOrigins())}`);
 });
 
 module.exports = app;
