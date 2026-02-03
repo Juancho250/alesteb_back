@@ -55,6 +55,7 @@ if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1);
 }
 
+
 // Logging de requests (opcional - comentar si no quieres logs de cada request)
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`, {
