@@ -1,7 +1,18 @@
 const express = require("express");
 const router = express.Router();
-const { login, register, verifyCode } = require("../controllers/auth.controller");
-const { loginLimiter, registerLimiter, sanitizeParams } = require("../middleware/auth.middleware");
+const { 
+  login, 
+  register, 
+  verifyCode, 
+  resendCode,
+  logout 
+} = require("../controllers/auth.controller");
+const { 
+  loginLimiter, 
+  registerLimiter, 
+  sanitizeParams,
+  auth 
+} = require("../middleware/auth.middleware");
 const { z } = require("zod");
 
 // ===============================
@@ -26,6 +37,7 @@ const validateLogin = (req, res, next) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
+        success: false,
         message: "Datos de entrada inválidos",
         errors: error.errors.map(e => ({
           field: e.path.join('.'),
@@ -70,6 +82,7 @@ const validateRegister = (req, res, next) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
+        success: false,
         message: "Datos de entrada inválidos",
         errors: error.errors.map(e => ({
           field: e.path.join('.'),
@@ -98,7 +111,35 @@ const validateVerifyCode = (req, res, next) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
+        success: false,
         message: "Datos de entrada inválidos",
+        errors: error.errors.map(e => ({
+          field: e.path.join('.'),
+          message: e.message
+        }))
+      });
+    }
+    next(error);
+  }
+};
+
+const validateResendCode = (req, res, next) => {
+  const resendSchema = z.object({
+    email: z.string()
+      .email("Email inválido")
+      .max(255, "Email demasiado largo")
+      .trim()
+      .toLowerCase()
+  });
+
+  try {
+    req.body = resendSchema.parse(req.body);
+    next();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        message: "Email inválido",
         errors: error.errors.map(e => ({
           field: e.path.join('.'),
           message: e.message
@@ -135,6 +176,20 @@ router.post("/verify",
   loginLimiter, // Reutilizamos el limiter de login
   validateVerifyCode, 
   verifyCode
+);
+
+// Resend code con rate limiting
+router.post("/resend-code",
+  sanitizeParams,
+  registerLimiter, // Limitar para prevenir spam
+  validateResendCode,
+  resendCode
+);
+
+// Logout (requiere autenticación)
+router.post("/logout",
+  auth,
+  logout
 );
 
 module.exports = router;
