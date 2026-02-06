@@ -5,7 +5,6 @@ const db = require("../config/db");
 // ===============================
 // LOGGING DE EVENTOS DE SEGURIDAD
 // ===============================
-// Ubicado arriba porque otros middlewares lo usan.
 
 const logSecurityEvent = async (eventData) => {
   try {
@@ -26,26 +25,77 @@ const logSecurityEvent = async (eventData) => {
 };
 
 // ===============================
-// AUTENTICACIÓN (único lugar)
+// AUTENTICACIÓN MEJORADA
 // ===============================
 
 const auth = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
+    
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "Token no enviado" });
+      return res.status(401).json({ 
+        success: false,
+        message: "Token no enviado o formato inválido" 
+      });
     }
 
     const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // decoded debe contener { id, role }
-    req.user = decoded;
+    
+    if (!token) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Token no proporcionado" 
+      });
+    }
+
+    // Verificar token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: 'alesteb-system',
+      audience: 'alesteb-client'
+    });
+
+    // Validar estructura del token
+    if (!decoded.id || !decoded.role) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Token inválido: estructura incorrecta" 
+      });
+    }
+
+    // Adjuntar usuario al request
+    req.user = {
+      id: decoded.id,
+      role: decoded.role,
+      role_id: decoded.role_id,
+      email: decoded.email
+    };
+
+    // Adjuntar token al request para posible blacklisting
+    req.token = token;
+
     next();
   } catch (error) {
     if (error.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Token expirado" });
+      return res.status(401).json({ 
+        success: false,
+        message: "Token expirado. Por favor, inicia sesión nuevamente.",
+        code: "TOKEN_EXPIRED"
+      });
     }
-    return res.status(401).json({ message: "Token inválido" });
+    
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({ 
+        success: false,
+        message: "Token inválido",
+        code: "TOKEN_INVALID"
+      });
+    }
+
+    return res.status(401).json({ 
+      success: false,
+      message: "Error de autenticación",
+      code: "AUTH_ERROR"
+    });
   }
 };
 
@@ -56,7 +106,10 @@ const auth = (req, res, next) => {
 const requireRole = (allowedRoles = []) => {
   return (req, res, next) => {
     if (!req.user || !req.user.role) {
-      return res.status(401).json({ message: "No autorizado" });
+      return res.status(401).json({ 
+        success: false,
+        message: "No autorizado" 
+      });
     }
 
     const rolesArray = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
@@ -70,7 +123,12 @@ const requireRole = (allowedRoles = []) => {
         path: req.path,
         ip: req.ip,
       });
-      return res.status(403).json({ message: "No tienes permisos para esta sección" });
+      
+      return res.status(403).json({ 
+        success: false,
+        message: "No tienes permisos para esta sección",
+        code: "INSUFFICIENT_PERMISSIONS"
+      });
     }
 
     next();
@@ -82,8 +140,6 @@ const isAdmin = requireRole(["admin", "super_admin"]);
 // ===============================
 // VERIFICACIÓN DE OWNERSHIP
 // ===============================
-// Middleware reutilizable: checkOwnership('sale') en la ruta
-// Granta acceso automático a admin/super_admin.
 
 const checkOwnership = (resourceType) => {
   return async (req, res, next) => {
@@ -105,6 +161,7 @@ const checkOwnership = (resourceType) => {
           query = "SELECT customer_id AS owner_id FROM sales WHERE id = $1";
           ownerField = "owner_id";
           break;
+          
         case "user":
           // Solo puede ver/editar su propio perfil
           if (parseInt(resourceId, 10) !== userId) {
@@ -115,17 +172,27 @@ const checkOwnership = (resourceType) => {
               resourceId,
               ip: req.ip,
             });
-            return res.status(403).json({ message: "No autorizado" });
+            return res.status(403).json({ 
+              success: false,
+              message: "No autorizado para acceder a este recurso" 
+            });
           }
           return next();
+          
         default:
-          return res.status(400).json({ message: "Tipo de recurso inválido" });
+          return res.status(400).json({ 
+            success: false,
+            message: "Tipo de recurso inválido" 
+          });
       }
 
       const result = await db.query(query, [resourceId]);
 
       if (result.rows.length === 0) {
-        return res.status(404).json({ message: "Recurso no encontrado" });
+        return res.status(404).json({ 
+          success: false,
+          message: "Recurso no encontrado" 
+        });
       }
 
       if (result.rows[0][ownerField] !== userId) {
@@ -136,13 +203,20 @@ const checkOwnership = (resourceType) => {
           resourceId,
           ip: req.ip,
         });
-        return res.status(403).json({ message: "No autorizado" });
+        
+        return res.status(403).json({ 
+          success: false,
+          message: "No autorizado para acceder a este recurso" 
+        });
       }
 
       next();
     } catch (error) {
       console.error("Ownership check error:", error);
-      res.status(500).json({ message: "Error verificando permisos" });
+      res.status(500).json({ 
+        success: false,
+        message: "Error verificando permisos" 
+      });
     }
   };
 };
@@ -157,6 +231,7 @@ const createRateLimiter = (windowMs, max, message) => {
     max,
     standardHeaders: true,
     legacyHeaders: false,
+    skipSuccessfulRequests: false,
     handler: (req, res) => {
       logSecurityEvent({
         type: "rate_limit_exceeded",
@@ -164,32 +239,38 @@ const createRateLimiter = (windowMs, max, message) => {
         ip: req.ip,
         path: req.path,
       });
-      res.status(429).json({ message });
+      
+      res.status(429).json({ 
+        success: false,
+        message,
+        retryAfter: Math.ceil(windowMs / 1000),
+        code: "RATE_LIMIT_EXCEEDED"
+      });
     },
   });
 };
 
 const loginLimiter = createRateLimiter(
-  15 * 60 * 1000,
-  5,
+  15 * 60 * 1000, // 15 minutos
+  5, // 5 intentos
   "Demasiados intentos de login. Intenta en 15 minutos"
 );
 
 const registerLimiter = createRateLimiter(
-  60 * 60 * 1000,
-  3,
+  60 * 60 * 1000, // 1 hora
+  3, // 3 registros
   "Demasiados registros. Intenta en 1 hora"
 );
 
 const apiLimiter = createRateLimiter(
-  15 * 60 * 1000,
-  100,
+  15 * 60 * 1000, // 15 minutos
+  100, // 100 requests
   "Demasiadas peticiones. Intenta en 15 minutos"
 );
 
 const strictApiLimiter = createRateLimiter(
-  60 * 1000,
-  10,
+  60 * 1000, // 1 minuto
+  10, // 10 requests
   "Límite de peticiones excedido. Intenta en 1 minuto"
 );
 
@@ -203,6 +284,7 @@ const auditLog = (req, res, next) => {
   res.on("finish", async () => {
     const auditablePaths = ["/api/sales", "/api/users", "/api/products", "/api/expenses"];
     const shouldAudit = auditablePaths.some((p) => req.path.startsWith(p));
+    
     if (!shouldAudit) return;
 
     try {
@@ -238,10 +320,14 @@ const sanitizeParams = (req, res, next) => {
     if (!obj) return;
     Object.keys(obj).forEach((key) => {
       if (typeof obj[key] === "string") {
-        obj[key] = obj[key].replace(/[<>"']/g, "").trim();
+        // Remover caracteres peligrosos manteniendo caracteres especiales válidos
+        obj[key] = obj[key]
+          .replace(/[<>"']/g, "")
+          .trim();
       }
     });
   };
+  
   sanitize(req.query);
   sanitize(req.params);
   next();
@@ -254,12 +340,14 @@ const sanitizeParams = (req, res, next) => {
 const allowFields = (allowedFields) => {
   return (req, res, next) => {
     if (!req.body) return next();
+    
     const sanitized = {};
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         sanitized[field] = req.body[field];
       }
     });
+    
     req.body = sanitized;
     next();
   };
@@ -274,15 +362,24 @@ const checkActiveSession = async (req, res, next) => {
     if (!req.user?.id) return next();
 
     const result = await db.query(
-      "SELECT is_verified FROM users WHERE id = $1",
+      "SELECT is_verified, id FROM users WHERE id = $1",
       [req.user.id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ message: "Usuario no encontrado" });
+      return res.status(401).json({ 
+        success: false,
+        message: "Usuario no encontrado",
+        code: "USER_NOT_FOUND"
+      });
     }
+    
     if (!result.rows[0].is_verified) {
-      return res.status(403).json({ message: "Usuario no verificado" });
+      return res.status(403).json({ 
+        success: false,
+        message: "Usuario no verificado",
+        code: "USER_NOT_VERIFIED"
+      });
     }
 
     next();
@@ -293,29 +390,42 @@ const checkActiveSession = async (req, res, next) => {
 };
 
 // ===============================
-// MANEJO DE ERRORES SEGURO (Express error handler)
+// MANEJO DE ERRORES SEGURO
 // ===============================
-// Usar como último middleware en app.js:
-//   app.use(secureErrorHandler);
 
 const secureErrorHandler = (err, req, res, _next) => {
+  // Log del error completo
   console.error("Error:", {
     message: err.message,
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
     userId: req.user?.id,
     path: req.path,
+    method: req.method
   });
 
-  const statusCode = err.statusCode || 500;
-  const message =
-    process.env.NODE_ENV === "production"
-      ? "Error procesando la solicitud"
-      : err.message;
+  // Determinar código de estado
+  const statusCode = err.statusCode || err.status || 500;
+  
+  // Mensajes seguros para producción
+  let message = err.message;
+  if (process.env.NODE_ENV === "production" && statusCode === 500) {
+    message = "Error procesando la solicitud";
+  }
 
-  res.status(statusCode).json({
+  // Respuesta estructurada
+  const response = {
+    success: false,
     message,
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
-  });
+    code: err.code || 'INTERNAL_ERROR'
+  };
+
+  // Stack trace solo en desarrollo
+  if (process.env.NODE_ENV === "development") {
+    response.stack = err.stack;
+    response.details = err.details;
+  }
+
+  res.status(statusCode).json(response);
 };
 
 // ===============================

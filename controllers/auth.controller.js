@@ -92,6 +92,21 @@ const timingSafeCompare = (a, b) => {
   );
 };
 
+/**
+ * Normaliza email de forma consistente
+ */
+const normalizeEmail = (email) => {
+  if (!email || typeof email !== 'string') {
+    throw new ValidationError('Email inválido');
+  }
+  return email.toLowerCase().trim();
+};
+
+/**
+ * Dummy hash para prevenir timing attacks
+ */
+const DUMMY_HASH = '$2b$12$dummyhashtopreventtimingattacks123456789012345678901234567890';
+
 // ===============================
 // LOGIN MEJORADO
 // ===============================
@@ -106,31 +121,43 @@ exports.login = async (req, res, next) => {
       throw new ValidationError('Email y contraseña son requeridos');
     }
 
+    const normalizedEmail = normalizeEmail(email);
+
     await client.query('BEGIN');
 
+    // Obtener usuario con roles en una sola query optimizada
     const userRes = await client.query(
-      `SELECT u.id, u.name, u.email, u.password, u.is_verified, 
-              u.failed_login_attempts, u.locked_until, r.name as role 
+      `SELECT 
+        u.id, 
+        u.name, 
+        u.email, 
+        u.password, 
+        u.is_verified, 
+        u.failed_login_attempts, 
+        u.locked_until,
+        COALESCE(r.name, 'customer') as role,
+        COALESCE(r.id, 3) as role_id
        FROM users u
-       JOIN user_roles ur ON u.id = ur.user_id
-       JOIN roles r ON ur.role_id = r.id
-       WHERE u.email = $1`,
-      [email.toLowerCase().trim()]
+       LEFT JOIN user_roles ur ON u.id = ur.user_id
+       LEFT JOIN roles r ON ur.role_id = r.id
+       WHERE u.email = $1
+       LIMIT 1`,
+      [normalizedEmail]
     );
 
-    // Usar mensaje genérico para evitar user enumeration
+    // Mensaje genérico para evitar user enumeration
     const genericError = 'Credenciales inválidas';
 
     if (userRes.rowCount === 0) {
+      // Delay artificial con hash dummy para prevenir timing attacks
+      await bcrypt.compare(password, DUMMY_HASH);
+      
       await logSecurityEvent({
         type: 'failed_login_attempt',
-        email,
+        email: normalizedEmail,
         ip: hashIP(req.ip),
         reason: 'user_not_found'
       });
-      
-      // Delay artificial para prevenir timing attacks
-      await bcrypt.compare(password, '$2b$10$dummyhashtopreventtimingattacks123456789');
       
       throw new UnauthorizedError(genericError);
     }
@@ -148,6 +175,8 @@ exports.login = async (req, res, next) => {
         ip: hashIP(req.ip),
         lockExpiresIn: minutesLeft
       });
+
+      await client.query('COMMIT');
       
       throw new ForbiddenError(
         `Cuenta bloqueada temporalmente. Intenta en ${minutesLeft} minutos.`
@@ -213,7 +242,7 @@ exports.login = async (req, res, next) => {
       );
     }
 
-    // Login exitoso - resetear intentos fallidos
+    // Login exitoso - resetear intentos fallidos y actualizar última conexión
     await client.query(
       `UPDATE users 
        SET failed_login_attempts = 0, 
@@ -223,11 +252,22 @@ exports.login = async (req, res, next) => {
       [user.id]
     );
 
-    // Generar token
+    // Generar token JWT
+    const tokenPayload = {
+      id: user.id,
+      role: user.role,
+      role_id: user.role_id,
+      email: user.email
+    };
+
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      tokenPayload,
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || "8h" }
+      { 
+        expiresIn: process.env.JWT_EXPIRES_IN || "8h",
+        issuer: 'alesteb-system',
+        audience: 'alesteb-client'
+      }
     );
 
     // Log login exitoso
@@ -235,21 +275,28 @@ exports.login = async (req, res, next) => {
       type: 'successful_login',
       userId: user.id,
       email: user.email,
+      role: user.role,
       ip: hashIP(req.ip),
       userAgent: req.get('user-agent')
     });
 
     await client.query('COMMIT');
 
-    res.json({
-      token,
-      user: sanitizeUserResponse({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      })
+    // Preparar respuesta del usuario
+    const userResponse = sanitizeUserResponse({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      role_id: user.role_id
     });
+
+    res.json({
+      success: true,
+      token,
+      user: userResponse
+    });
+
   } catch (error) {
     await client.query('ROLLBACK');
     next(error);
@@ -272,24 +319,13 @@ exports.register = async (req, res, next) => {
       throw new ValidationError('Nombre, email y contraseña son requeridos');
     }
 
-    // Validar formato de email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      throw new ValidationError('Formato de email inválido');
-    }
-
-    // Validar fortaleza de contraseña
-    if (password.length < 8) {
-      throw new ValidationError('La contraseña debe tener al menos 8 caracteres');
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = normalizeEmail(email);
 
     await client.query('BEGIN');
 
     // Verificar si el usuario ya existe
     const existing = await client.query(
-      "SELECT id, email FROM users WHERE email = $1",
+      "SELECT id, email, is_verified FROM users WHERE email = $1",
       [normalizedEmail]
     );
 
@@ -310,7 +346,7 @@ exports.register = async (req, res, next) => {
     const verificationCode = generateVerificationCode();
     const codeExpiry = getExpiryTimestamp(VERIFICATION_CODE_EXPIRY_MINUTES);
     
-    // Hashear contraseña
+    // Hashear contraseña con salt rounds configurables
     const saltRounds = parseInt(process.env.BCRYPT_ROUNDS) || 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
@@ -319,9 +355,9 @@ exports.register = async (req, res, next) => {
       `INSERT INTO users (
         name, email, password, phone, 
         verification_code, verification_code_expires_at,
-        verification_attempts, is_verified
+        verification_attempts, is_verified, created_at
       ) 
-       VALUES ($1, $2, $3, $4, $5, $6, 0, false) 
+       VALUES ($1, $2, $3, $4, $5, $6, 0, false, NOW()) 
        RETURNING id, name, email`,
       [
         name.trim(), 
@@ -335,7 +371,7 @@ exports.register = async (req, res, next) => {
 
     const newUser = userRes.rows[0];
 
-    // Asignar rol de Customer (3)
+    // Asignar rol de Customer (3) por defecto
     await client.query(
       "INSERT INTO user_roles (user_id, role_id) VALUES ($1, 3)",
       [newUser.id]
@@ -403,6 +439,7 @@ exports.register = async (req, res, next) => {
     });
 
     res.status(201).json({
+      success: true,
       message: `Código de verificación enviado a ${normalizedEmail}. Expira en ${VERIFICATION_CODE_EXPIRY_MINUTES} minutos.`,
       email: normalizedEmail
     });
@@ -433,7 +470,7 @@ exports.verifyCode = async (req, res, next) => {
       throw new ValidationError('Código inválido');
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = normalizeEmail(email);
 
     await client.query('BEGIN');
 
@@ -537,6 +574,7 @@ exports.verifyCode = async (req, res, next) => {
     await client.query('COMMIT');
 
     res.json({ 
+      success: true,
       message: "Cuenta verificada con éxito. Ya puedes iniciar sesión.",
       user: sanitizeUserResponse({
         id: user.id,
@@ -565,7 +603,7 @@ exports.resendCode = async (req, res, next) => {
       throw new ValidationError('Email es requerido');
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = normalizeEmail(email);
 
     await client.query('BEGIN');
 
@@ -577,7 +615,11 @@ exports.resendCode = async (req, res, next) => {
     if (userRes.rowCount === 0) {
       await client.query('ROLLBACK');
       // No revelar si el usuario existe
-      throw new ValidationError('Si el email existe, recibirás un nuevo código.');
+      res.json({ 
+        success: true,
+        message: 'Si el email existe, recibirás un nuevo código.' 
+      });
+      return;
     }
 
     const user = userRes.rows[0];
@@ -637,6 +679,7 @@ exports.resendCode = async (req, res, next) => {
     await client.query('COMMIT');
 
     res.json({ 
+      success: true,
       message: `Código reenviado a ${normalizedEmail}. Expira en ${VERIFICATION_CODE_EXPIRY_MINUTES} minutos.`
     });
 
@@ -649,7 +692,7 @@ exports.resendCode = async (req, res, next) => {
 };
 
 // ===============================
-// LOGOUT (Nuevo - para invalidar token)
+// LOGOUT
 // ===============================
 
 exports.logout = async (req, res, next) => {
@@ -663,7 +706,10 @@ exports.logout = async (req, res, next) => {
       ip: hashIP(req.ip)
     });
 
-    res.json({ message: 'Logout exitoso' });
+    res.json({ 
+      success: true,
+      message: 'Logout exitoso' 
+    });
   } catch (error) {
     next(error);
   }
