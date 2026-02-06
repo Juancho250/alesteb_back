@@ -1,6 +1,7 @@
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 const { z } = require("zod");
+const logger = require("../utils/logger");
 
 // ===============================
 // ESQUEMAS DE VALIDACIÓN
@@ -43,7 +44,7 @@ const getPublicIdFromUrl = (url) => {
     if (!url || typeof url !== 'string') return null;
     
     if (!url.includes('cloudinary.com') && !url.includes('res.cloudinary.com')) {
-      console.warn('URL no es de Cloudinary');
+      logger.warn('URL no es de Cloudinary', { url });
       return null;
     }
     
@@ -59,7 +60,7 @@ const getPublicIdFromUrl = (url) => {
     
     return folder !== 'upload' ? `${folder}/${publicId}` : publicId;
   } catch (error) {
-    console.error('Error extracting public_id:', error.message);
+    logger.error('Error extracting public_id', { error: error.message, url });
     return null;
   }
 };
@@ -72,10 +73,10 @@ const deleteFromCloudinary = async (url) => {
     if (!publicId) return false;
     
     const result = await cloudinary.uploader.destroy(publicId);
-    console.log(`✅ Deleted from Cloudinary: ${publicId}`, result.result);
+    logger.info('Cloudinary delete result', { publicId, result: result.result });
     return result.result === 'ok' || result.result === 'not found';
   } catch (error) {
-    console.error('❌ Cloudinary deletion error:', error.message);
+    logger.error('Cloudinary deletion error', { error: error.message, url });
     return false;
   }
 };
@@ -85,6 +86,8 @@ const deleteFromCloudinary = async (url) => {
 // ===============================
 
 exports.getAll = async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     // Sanitizar y validar parámetros
     const categoria = req.query.categoria?.trim().replace(/[<>]/g, '').substring(0, 200);
@@ -258,8 +261,11 @@ exports.getAll = async (req, res) => {
     const totalCount = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalCount / limit);
 
+    logger.logDatabase(queryText, Date.now() - startTime);
+
     // Respuesta
     res.json({
+      success: true,
       products: dataResult.rows,
       pagination: {
         total: totalCount,
@@ -272,13 +278,14 @@ exports.getAll = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ GET PRODUCTS ERROR:", {
+    logger.error("GET PRODUCTS ERROR", {
       message: error.message,
       stack: error.stack,
       query: req.query
     });
     
     res.status(500).json({ 
+      success: false,
       message: "Error al obtener productos",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -294,7 +301,10 @@ exports.getById = async (req, res) => {
     const id = parseInt(req.params.id);
 
     if (isNaN(id) || id <= 0) {
-      return res.status(400).json({ message: "ID inválido" });
+      return res.status(400).json({ 
+        success: false,
+        message: "ID inválido" 
+      });
     }
 
     const result = await db.query(`
@@ -356,7 +366,10 @@ exports.getById = async (req, res) => {
     `, [id]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Producto no encontrado" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Producto no encontrado" 
+      });
     }
 
     const imagesResult = await db.query(
@@ -368,13 +381,17 @@ exports.getById = async (req, res) => {
     );
 
     res.json({
+      success: true,
       ...result.rows[0],
       images: imagesResult.rows
     });
 
   } catch (error) {
-    console.error("GET PRODUCT BY ID ERROR:", error.message);
-    res.status(500).json({ message: "Error al obtener producto" });
+    logger.error("GET PRODUCT BY ID ERROR", { error: error.message, id: req.params.id });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener producto" 
+    });
   }
 };
 
