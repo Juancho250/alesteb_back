@@ -1,69 +1,35 @@
 const express = require("express");
-const router = express.Router();
-const ctrl = require("../controllers/products.controller");
+const { auth, requireRole } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
-const { auth, requireRole, apiLimiter, auditLog, sanitizeParams } = require("../middleware/auth.middleware");
+const ctrl = require("../controllers/products.controller");
 
-// ===============================
-// RUTAS PÚBLICAS
-// ===============================
+const router = express.Router();
 
-// Obtener todos los productos (catálogo público)
-router.get("/",
-  sanitizeParams,
-  apiLimiter,
-  ctrl.getAll
-);
+// 🌐 PÚBLICO
+router.get("/", ctrl.getAll);
+router.get("/:id", ctrl.getById);
 
-// Obtener producto por ID (detalle público)
-router.get("/:id",
-  sanitizeParams,
-  apiLimiter,
-  ctrl.getById
-);
-
-// ===============================
-// RUTAS PROTEGIDAS (Admin)
-// ===============================
-
-// Historial de compras del producto
-router.get("/:id/purchase-history",
-  sanitizeParams,
+// 🔐 SOLO ADMIN
+router.post(
+  "/",
   auth,
-  requireRole(['admin', 'super_admin']),
-  apiLimiter,
-  ctrl.getPurchaseHistory
-);
-
-// Crear producto
-router.post("/",
-  sanitizeParams,
-  auth,
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  upload.array("images", 10),
+  requireRole(["admin"]),
+  upload.array("images", 6),
   ctrl.create
 );
 
-// Actualizar producto
-router.put("/:id",
-  sanitizeParams,
+router.put(
+  "/:id",
   auth,
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  upload.array("images", 10),
+  requireRole(["admin"]),
+  upload.array("images", 6), // <--- AGREGAR ESTO AQUÍ
   ctrl.update
 );
 
-// Eliminar producto
-router.delete("/:id",
-  sanitizeParams,
+router.delete(
+  "/:id",
   auth,
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
+  requireRole(["admin"]),
   ctrl.remove
 );
 

@@ -2,70 +2,37 @@ const express = require("express");
 const router = express.Router();
 const bannerController = require("../controllers/banners.controller");
 const upload = require("../middleware/upload.middleware");
-const { auth, requireRole, apiLimiter, auditLog, sanitizeParams } = require("../middleware/auth.middleware");
+const { auth, requirePermission } = require("../middleware/auth.middleware");
 
-// ===============================
-// RUTAS PÚBLICAS
-// ===============================
+// --- RUTAS PÚBLICAS ---
+// Quitamos 'auth' y 'requirePermission' para que el carrusel de la web principal funcione
+router.get("/", bannerController.getAll);
 
-// Obtener todos los banners (público)
-router.get("/", 
-  sanitizeParams,
-  apiLimiter,
-  bannerController.getAll
+// --- RUTAS PRIVADAS (Panel de Administración) ---
+// Crear: Requiere estar logueado y tener permiso 'banner.create'
+router.post(
+    "/", 
+    auth, 
+    requirePermission("banner.create"), 
+    upload.single("image"), 
+    bannerController.create
 );
 
-// Obtener banner por ID (público)
-router.get("/:id", 
-  sanitizeParams,
-  apiLimiter,
-  bannerController.getById
+// Editar: Requiere estar logueado y tener permiso 'banner.update'
+router.put(
+    "/:id", 
+    auth, 
+    requirePermission("banner.update"), 
+    upload.single("image"), 
+    bannerController.update
 );
 
-// ===============================
-// RUTAS PROTEGIDAS (Solo Admin)
-// ===============================
-
-// Crear banner (solo admin)
-router.post("/", 
-  sanitizeParams,
-  auth, 
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  upload.single("image"), 
-  bannerController.create
-);
-
-// Actualizar banner (solo admin)
-router.put("/:id", 
-  sanitizeParams,
-  auth, 
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  upload.single("image"), 
-  bannerController.update
-);
-
-// Activar/Desactivar banner (solo admin)
-router.patch("/:id/toggle", 
-  sanitizeParams,
-  auth, 
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  bannerController.toggleActive
-);
-
-// Eliminar banner (solo admin)
-router.delete("/:id", 
-  sanitizeParams,
-  auth, 
-  requireRole(['admin', 'super_admin']),
-  auditLog,
-  apiLimiter,
-  bannerController.delete
+// Eliminar: Requiere estar logueado y tener permiso 'banner.delete'
+router.delete(
+    "/:id", 
+    auth, 
+    requirePermission("banner.delete"), 
+    bannerController.delete
 );
 
 module.exports = router;
