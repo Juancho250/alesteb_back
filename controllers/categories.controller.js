@@ -1,133 +1,159 @@
 const db = require("../config/db");
 
-const buildTree = (items, parentId = null) => {
-  return items
-    .filter(item => item.parent_id === parentId)
-    .map(item => ({
-      ...item,
-      children: buildTree(items, item.id)
-    }));
-};
-
-exports.getTree = async (req, res) => {
-  try {
-    const result = await db.query(
-      "SELECT id, name, parent_id, slug, description FROM categories ORDER BY name ASC"
-    );
-
-    const tree = buildTree(result.rows);
-    res.json(tree);
-  } catch (error) {
-    console.error("GET CATEGORIES TREE ERROR:", error);
-    res.status(500).json({ message: "Error al obtener el árbol de categorías" });
-  }
-};
-
-exports.getFlatList = async (req, res) => {
+// Obtener categorías con estructura jerárquica
+exports.getAll = async (req, res) => {
   try {
     const result = await db.query(`
-      WITH RECURSIVE category_path AS (
+      WITH RECURSIVE category_tree AS (
+        -- Categorías raíz (sin padre)
         SELECT 
           id, 
           name, 
-          parent_id, 
-          name::text AS full_path, 
-          0 AS level
-        FROM categories
-        WHERE parent_id IS NULL
-
+          slug, 
+          description, 
+          image_url, 
+          parent_id,
+          name as full_path,
+          1 as level
+        FROM categories 
+        WHERE parent_id IS NULL AND is_active = true
+        
         UNION ALL
-
+        
+        -- Subcategorías recursivas
         SELECT 
           c.id, 
           c.name, 
-          c.parent_id, 
-          cp.full_path || ' > ' || c.name, 
-          cp.level + 1
+          c.slug, 
+          c.description, 
+          c.image_url, 
+          c.parent_id,
+          ct.full_path || ' > ' || c.name as full_path,
+          ct.level + 1
         FROM categories c
-        JOIN category_path cp ON c.parent_id = cp.id
+        INNER JOIN category_tree ct ON c.parent_id = ct.id
+        WHERE c.is_active = true
       )
-      SELECT * FROM category_path ORDER BY full_path;
+      SELECT * FROM category_tree ORDER BY full_path
     `);
-
+    
     res.json(result.rows);
   } catch (error) {
-    console.error("GET FLAT CATEGORIES ERROR:", error);
-    res.status(500).json({ message: "Error al obtener lista de categorías" });
+    console.error("GET CATEGORIES ERROR:", error);
+    res.status(500).json({ message: "Error al obtener categorías" });
   }
 };
 
-exports.create = async (req, res) => {
-  const { name, parent_id, description } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ message: "El nombre es obligatorio" });
+// 🆕 ENDPOINT FLAT - Lista plana para selects
+exports.getFlat = async (req, res) => {
+  try {
+    const result = await db.query(`
+      WITH RECURSIVE category_paths AS (
+        -- Nivel raíz
+        SELECT 
+          id, 
+          name, 
+          slug, 
+          parent_id,
+          name as full_path,
+          1 as level
+        FROM categories 
+        WHERE parent_id IS NULL AND is_active = true
+        
+        UNION ALL
+        
+        -- Niveles descendientes
+        SELECT 
+          c.id, 
+          c.name, 
+          c.slug, 
+          c.parent_id,
+          cp.full_path || ' > ' || c.name,
+          cp.level + 1
+        FROM categories c
+        INNER JOIN category_paths cp ON c.parent_id = cp.id
+        WHERE c.is_active = true
+      )
+      SELECT 
+        id, 
+        name, 
+        slug, 
+        parent_id,
+        full_path,
+        level
+      FROM category_paths 
+      ORDER BY full_path
+    `);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET FLAT CATEGORIES ERROR:", error);
+    res.status(500).json({ message: "Error al obtener categorías planas" });
   }
+};
 
-  const slug = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+// Crear categoría
+exports.create = async (req, res) => {
+  const { name, slug, description, image_url, parent_id } = req.body;
 
   try {
     const result = await db.query(
-      `INSERT INTO categories (name, slug, parent_id, description)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO categories (name, slug, description, image_url, parent_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name, slug, parent_id || null, description || null]
+      [name, slug, description, image_url, parent_id]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    if (error.code === "23505") {
-      return res.status(400).json({ message: "Ya existe esa categoría" });
-    }
-
     console.error("CREATE CATEGORY ERROR:", error);
+    if (error.code === '23505') {
+      return res.status(400).json({ message: "El slug ya existe" });
+    }
     res.status(500).json({ message: "Error al crear categoría" });
   }
 };
 
+// Actualizar categoría
+exports.update = async (req, res) => {
+  const { id } = req.params;
+  const { name, slug, description, image_url, parent_id, is_active } = req.body;
+
+  try {
+    const result = await db.query(
+      `UPDATE categories 
+       SET name = $1, slug = $2, description = $3, image_url = $4, 
+           parent_id = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $7
+       RETURNING *`,
+      [name, slug, description, image_url, parent_id, is_active, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Categoría no encontrada" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("UPDATE CATEGORY ERROR:", error);
+    res.status(500).json({ message: "Error al actualizar categoría" });
+  }
+};
+
+// Eliminar categoría
 exports.remove = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const subCats = await db.query(
-      "SELECT 1 FROM categories WHERE parent_id = $1 LIMIT 1",
-      [id]
-    );
+    const result = await db.query("DELETE FROM categories WHERE id = $1", [id]);
 
-    if (subCats.rows.length > 0) {
-      return res.status(400).json({ message: "Tiene subcategorías" });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Categoría no encontrada" });
     }
 
-    const products = await db.query(
-      "SELECT 1 FROM products WHERE category_id = $1 LIMIT 1",
-      [id]
-    );
-
-    if (products.rows.length > 0) {
-      return res.status(400).json({ message: "Tiene productos asociados" });
-    }
-
-    await db.query("DELETE FROM categories WHERE id = $1", [id]);
-    res.json({ message: "Categoría eliminada" });
+    res.json({ message: "Categoría eliminada correctamente" });
   } catch (error) {
     console.error("DELETE CATEGORY ERROR:", error);
     res.status(500).json({ message: "Error al eliminar categoría" });
-  }
-};
-
-
-exports.getBySlug = async (req, res) => {
-  const { slug } = req.params;
-  try {
-    const result = await db.query("SELECT * FROM categories WHERE slug = $1", [slug]);
-    if (result.rows.length === 0) return res.status(404).json({ message: "No existe" });
-    res.json(result.rows[0]);
-  } catch (error) {
-    res.status(500).json({ message: "Error" });
   }
 };
