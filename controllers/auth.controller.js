@@ -54,6 +54,7 @@ exports.login = async (req, res) => {
       { 
         id: user.id, 
         email: user.email,
+        name: user.name, // ✅ Incluir el nombre en el token también
         roles, 
         permissions 
       },
@@ -61,13 +62,13 @@ exports.login = async (req, res) => {
       { expiresIn: "8h" }
     );
 
-    // 7. Devolver respuesta
+    // 7. Devolver respuesta (ASEGURAR que name esté presente)
     res.json({
       token,
       user: {
         id: user.id,
         email: user.email,
-        name: user.name,
+        name: user.name || "Usuario", // ✅ Fallback si name es null
         roles,
         permissions
       }
@@ -79,7 +80,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// Registro de nuevos usuarios (si lo necesitas)
+// Registro de nuevos usuarios
 exports.register = async (req, res) => {
   const { email, password, name, cedula, phone } = req.body;
 
@@ -91,6 +92,7 @@ exports.register = async (req, res) => {
     // Verificar si el email ya existe
     const existing = await client.query("SELECT id FROM users WHERE email = $1", [email]);
     if (existing.rowCount > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: "El email ya está registrado" });
     }
 
