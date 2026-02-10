@@ -8,6 +8,7 @@ const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
 const rolesRoutes = require("./routes/roles.routes");
 const providersRoutes = require("./routes/providers.routes");
+const accountingRoutes = require("./routes/accounting.routes");
 // Si este archivo no existe físicamente en /routes, dará error. 
 // Pruébalo comentando la siguiente línea si sigue fallando:
 // const purchaseOrdersRoutes = require("./routes/purchase_orders.routes"); 
@@ -33,6 +34,7 @@ app.use("/api/roles", rolesRoutes);
 app.use("/api/providers", providersRoutes);
 app.use("/api/products", productsRoutes);
 app.use("/api/categories", categoriesRoutes);
+app.use("/api/accounting", accountingRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/expenses", expensesRoutes);
 app.use("/api/discounts", discountsRoutes);
