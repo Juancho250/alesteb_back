@@ -1,11 +1,82 @@
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 
-// Obtener todos los productos con filtros
-exports.getAll = async (req, res) => {
-  const { categoria } = req.query;
+// ============================================
+// 🛠️ FUNCIONES AUXILIARES
+// ============================================
 
+/**
+ * Extraer public_id de una URL de Cloudinary
+ */
+const getPublicIdFromUrl = (url) => {
   try {
+    if (!url || typeof url !== 'string') return null;
+    
+    // Ejemplo: https://res.cloudinary.com/demo/image/upload/v1234567890/folder/image.jpg
+    const parts = url.split('/upload/');
+    if (parts.length < 2) return null;
+    
+    const pathWithVersion = parts[1];
+    const pathParts = pathWithVersion.split('/');
+    
+    // Remover versión (v1234567890) si existe
+    const relevantParts = pathParts.filter(part => !part.startsWith('v'));
+    
+    // Unir path y remover extensión
+    const fullPath = relevantParts.join('/');
+    return fullPath.replace(/\.[^/.]+$/, '');
+  } catch (error) {
+    console.error("Error al extraer public_id:", error);
+    return null;
+  }
+};
+
+/**
+ * Validar datos de producto
+ */
+const validateProductData = (data, isUpdate = false) => {
+  const errors = [];
+
+  if (!isUpdate || data.name !== undefined) {
+    if (!data.name || typeof data.name !== 'string' || !data.name.trim()) {
+      errors.push('Nombre del producto es requerido');
+    } else if (data.name.length > 200) {
+      errors.push('Nombre demasiado largo (máximo 200 caracteres)');
+    }
+  }
+
+  if (!isUpdate || data.price !== undefined) {
+    const price = Number(data.price);
+    if (isNaN(price) || price < 0) {
+      errors.push('Precio debe ser un número positivo');
+    }
+  }
+
+  if (!isUpdate || data.stock !== undefined) {
+    const stock = Number(data.stock);
+    if (isNaN(stock) || stock < 0 || !Number.isInteger(stock)) {
+      errors.push('Stock debe ser un número entero positivo');
+    }
+  }
+
+  if (!isUpdate && !data.category_id) {
+    errors.push('Categoría es requerida');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+};
+
+// ============================================
+// 📋 OBTENER TODOS LOS PRODUCTOS
+// ============================================
+
+exports.getAll = async (req, res) => {
+  try {
+    const { categoria, search, min_price, max_price, limit = 100, offset = 0 } = req.query;
+
     let queryText = `
       SELECT 
         p.*,
@@ -31,30 +102,91 @@ exports.getAll = async (req, res) => {
           AND NOW() BETWEEN d.starts_at AND d.ends_at
         ORDER BY final_price ASC LIMIT 1
       ) best_discount ON true
+      WHERE 1=1
     `;
 
     const queryParams = [];
-    
+    let paramIndex = 1;
+
+    // Filtro por categoría
     if (categoria) {
-      queryText += ` WHERE c.slug = $1`;
+      queryText += ` AND c.slug = $${paramIndex}`;
       queryParams.push(categoria);
+      paramIndex++;
+    }
+
+    // Filtro por búsqueda
+    if (search) {
+      queryText += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Filtro por precio mínimo
+    if (min_price) {
+      queryText += ` AND p.price >= $${paramIndex}`;
+      queryParams.push(Number(min_price));
+      paramIndex++;
+    }
+
+    // Filtro por precio máximo
+    if (max_price) {
+      queryText += ` AND p.price <= $${paramIndex}`;
+      queryParams.push(Number(max_price));
+      paramIndex++;
     }
 
     queryText += ` ORDER BY p.created_at DESC`;
 
+    // Paginación
+    queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    queryParams.push(Number(limit), Number(offset));
+
     const result = await db.query(queryText, queryParams);
-    res.json(result.rows);
+    
+    // Obtener total de productos (para paginación)
+    const countResult = await db.query(
+      `SELECT COUNT(*) FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE 1=1 ${
+        categoria ? 'AND c.slug = $1' : ''
+      }`,
+      categoria ? [categoria] : []
+    );
+
+    res.json({
+      success: true,
+      data: result.rows,
+      pagination: {
+        total: Number(countResult.rows[0].count),
+        limit: Number(limit),
+        offset: Number(offset),
+        hasMore: Number(offset) + result.rows.length < Number(countResult.rows[0].count)
+      }
+    });
   } catch (error) {
-    console.error("GET PRODUCTS ERROR:", error);
-    res.status(500).json({ message: "Error al obtener productos" });
+    console.error("[GET PRODUCTS ERROR]", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener productos" 
+    });
   }
 };
 
-// Obtener producto por ID
-exports.getById = async (req, res) => {
-  const { id } = req.params;
+// ============================================
+// 🔍 OBTENER PRODUCTO POR ID
+// ============================================
 
+exports.getById = async (req, res) => {
   try {
+    const { id } = req.params;
+
+    // Validar que el ID sea un número válido
+    if (!id || isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID de producto inválido"
+      });
+    }
+
     const result = await db.query(`
       SELECT 
         p.*,
@@ -81,45 +213,80 @@ exports.getById = async (req, res) => {
       LIMIT 1
     `, [id]);
 
-    if (!result.rows.length) {
-      return res.status(404).json({ message: "Producto no encontrado" });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Producto no encontrado" 
+      });
     }
 
+    // Obtener todas las imágenes del producto
     const imagesResult = await db.query(
-      `SELECT id, url, is_main FROM product_images WHERE product_id = $1 ORDER BY is_main DESC, display_order ASC`,
+      `SELECT id, url, is_main FROM product_images 
+       WHERE product_id = $1 
+       ORDER BY is_main DESC, display_order ASC`,
       [id]
     );
 
     res.json({
-      ...result.rows[0],
-      images: imagesResult.rows
+      success: true,
+      data: {
+        ...result.rows[0],
+        images: imagesResult.rows
+      }
     });
 
   } catch (error) {
-    console.error("GET PRODUCT BY ID ERROR:", error);
-    res.status(500).json({ message: "Error al obtener producto" });
+    console.error("[GET PRODUCT BY ID ERROR]", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener producto" 
+    });
   }
 };
 
-// Crear producto
+// ============================================
+// ➕ CREAR PRODUCTO
+// ============================================
+
 exports.create = async (req, res) => {
-  const { name, price, stock, category_id, description } = req.body;
-  const images = Array.isArray(req.files) ? req.files : [];
-
-  if (images.length === 0) {
-    return res.status(400).json({ message: "Debe subir al menos una imagen" });
-  }
-
   const client = await db.connect();
 
   try {
+    const { name, price, stock, category_id, description } = req.body;
+    const images = Array.isArray(req.files) ? req.files : [];
+
+    // Validar datos del producto
+    const validation = validateProductData(req.body);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: validation.errors.join(', ')
+      });
+    }
+
+    // Validar que haya al menos una imagen
+    if (images.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Debe subir al menos una imagen" 
+      });
+    }
+
     await client.query("BEGIN");
 
+    // Crear el producto
     const productResult = await client.query(
       `INSERT INTO products (name, price, stock, category_id, description)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [name, price, stock, category_id, description]
+      [
+        name.trim(), 
+        Number(price), 
+        Number(stock), 
+        category_id, 
+        description?.trim() || null
+      ]
     );
 
     const productId = productResult.rows[0].id;
@@ -135,53 +302,84 @@ exports.create = async (req, res) => {
       await client.query(insertImageQuery, [
         productId,
         imageUrl,
-        i === 0, // Primera imagen = principal
+        i === 0, // Primera imagen es la principal
         i
       ]);
     }
 
     await client.query("COMMIT");
-    res.status(201).json({ id: productId, message: "Producto creado correctamente" });
+
+    res.status(201).json({ 
+      success: true,
+      message: "Producto creado correctamente",
+      data: { id: productId }
+    });
+
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("CREATE PRODUCT ERROR:", error);
-    res.status(500).json({ message: "Error al crear producto" });
+    console.error("[CREATE PRODUCT ERROR]", error);
+    
+    // Si el error es de foreign key (categoría no existe)
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        message: "La categoría especificada no existe"
+      });
+    }
+
+    res.status(500).json({ 
+      success: false,
+      message: "Error al crear producto" 
+    });
   } finally {
     client.release();
   }
 };
 
-// Función auxiliar para extraer public_id de Cloudinary
-const getPublicIdFromUrl = (url) => {
-  try {
-    // Ejemplo: https://res.cloudinary.com/demo/image/upload/v1234567890/folder/image.jpg
-    const parts = url.split('/upload/');
-    if (parts.length < 2) return null;
-    
-    const pathWithVersion = parts[1];
-    const pathParts = pathWithVersion.split('/');
-    
-    // Remover versión (v1234567890) si existe
-    const relevantParts = pathParts.filter(part => !part.startsWith('v'));
-    
-    // Unir path y remover extensión
-    const fullPath = relevantParts.join('/');
-    return fullPath.replace(/\.[^/.]+$/, '');
-  } catch (error) {
-    return null;
-  }
-};
+// ============================================
+// ✏️ ACTUALIZAR PRODUCTO
+// ============================================
 
-// Actualizar producto
 exports.update = async (req, res) => {
-  const { id } = req.params;
-  const { name, price, stock, category_id, description, deleted_image_ids } = req.body;
-  const newImages = req.files || [];
-
   const client = await db.connect();
 
   try {
+    const { id } = req.params;
+    const { name, price, stock, category_id, description, deleted_image_ids } = req.body;
+    const newImages = req.files || [];
+
+    // Validar ID
+    if (!id || isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID de producto inválido"
+      });
+    }
+
+    // Validar datos del producto
+    const validation = validateProductData(req.body, true);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: validation.errors.join(', ')
+      });
+    }
+
     await client.query("BEGIN");
+
+    // Verificar que el producto existe
+    const productExists = await client.query(
+      "SELECT id FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (productExists.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Producto no encontrado"
+      });
+    }
 
     // 1. Validar mínimo de imágenes
     const currentImagesQuery = await client.query(
@@ -192,9 +390,16 @@ exports.update = async (req, res) => {
     
     let idsToDelete = [];
     if (deleted_image_ids) {
-      idsToDelete = Array.isArray(deleted_image_ids) 
-        ? deleted_image_ids 
-        : JSON.parse(deleted_image_ids);
+      try {
+        idsToDelete = Array.isArray(deleted_image_ids) 
+          ? deleted_image_ids 
+          : JSON.parse(deleted_image_ids);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Formato inválido de deleted_image_ids"
+        });
+      }
     }
 
     const remainingImagesCount = currentImages.filter(
@@ -204,15 +409,26 @@ exports.update = async (req, res) => {
     const totalFinalImages = remainingImagesCount + newImages.length;
 
     if (totalFinalImages < 1) {
-      throw new Error("El producto debe tener al menos una imagen.");
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "El producto debe tener al menos una imagen"
+      });
     }
 
     // 2. Actualizar datos básicos
     await client.query(
       `UPDATE products 
-       SET name = $1, price = $2, stock = $3, category_id = $4, description = $5 
+       SET name = $1, price = $2, stock = $3, category_id = $4, description = $5, updated_at = NOW()
        WHERE id = $6`,
-      [name, price, stock, category_id, description, id]
+      [
+        name?.trim() || null, 
+        price ? Number(price) : null, 
+        stock !== undefined ? Number(stock) : null, 
+        category_id || null, 
+        description?.trim() || null, 
+        id
+      ]
     );
 
     // 3. Eliminar imágenes marcadas
@@ -229,8 +445,10 @@ exports.update = async (req, res) => {
             await cloudinary.uploader.destroy(publicId);
           } catch (cloudinaryError) {
             console.error("Error al eliminar de Cloudinary:", cloudinaryError);
+            // No fallar la transacción por esto
           }
         }
+        
         // Borrar de BD
         await client.query("DELETE FROM product_images WHERE id = $1", [img.id]);
       }
@@ -281,25 +499,65 @@ exports.update = async (req, res) => {
     }
 
     await client.query("COMMIT");
-    res.json({ message: "Producto actualizado correctamente" });
+    
+    res.json({ 
+      success: true,
+      message: "Producto actualizado correctamente" 
+    });
 
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("UPDATE PRODUCT ERROR:", error);
-    res.status(500).json({ message: error.message || "Error al actualizar producto" });
+    console.error("[UPDATE PRODUCT ERROR]", error);
+    
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        message: "La categoría especificada no existe"
+      });
+    }
+
+    res.status(500).json({ 
+      success: false,
+      message: error.message || "Error al actualizar producto" 
+    });
   } finally {
     client.release();
   }
 };
 
-// Eliminar producto
-exports.remove = async (req, res) => {
-  const { id } = req.params;
+// ============================================
+// 🗑️ ELIMINAR PRODUCTO
+// ============================================
 
+exports.remove = async (req, res) => {
   const client = await db.connect();
 
   try {
+    const { id } = req.params;
+
+    // Validar ID
+    if (!id || isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID de producto inválido"
+      });
+    }
+
     await client.query("BEGIN");
+
+    // Verificar que el producto existe
+    const productExists = await client.query(
+      "SELECT id FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (productExists.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Producto no encontrado"
+      });
+    }
 
     // Obtener imágenes antes de borrar
     const imagesResult = await client.query(
@@ -315,6 +573,7 @@ exports.remove = async (req, res) => {
           await cloudinary.uploader.destroy(publicId);
         } catch (cloudinaryError) {
           console.error("Error al eliminar de Cloudinary:", cloudinaryError);
+          // No fallar la transacción por esto
         }
       }
     }
@@ -323,11 +582,29 @@ exports.remove = async (req, res) => {
     const result = await client.query("DELETE FROM products WHERE id = $1", [id]);
 
     await client.query("COMMIT");
-    res.json({ deleted: result.rowCount, message: "Producto eliminado correctamente" });
+    
+    res.json({ 
+      success: true,
+      message: "Producto eliminado correctamente",
+      data: { deleted: result.rowCount }
+    });
+
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("DELETE PRODUCT ERROR:", error);
-    res.status(500).json({ message: "Error al eliminar producto" });
+    console.error("[DELETE PRODUCT ERROR]", error);
+    
+    // Si hay restricción de foreign key (hay ventas con este producto)
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        message: "No se puede eliminar el producto porque tiene ventas asociadas"
+      });
+    }
+
+    res.status(500).json({ 
+      success: false,
+      message: "Error al eliminar producto" 
+    });
   } finally {
     client.release();
   }
