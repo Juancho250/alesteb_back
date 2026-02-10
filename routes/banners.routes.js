@@ -2,36 +2,58 @@ const express = require("express");
 const router = express.Router();
 const bannerController = require("../controllers/banners.controller");
 const upload = require("../middleware/upload.middleware");
-const { auth, requirePermission } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../middleware/auth.middleware");
 
-// --- RUTAS PÚBLICAS ---
-// Quitamos 'auth' y 'requirePermission' para que el carrusel de la web principal funcione
+// ============================================
+// 🌐 RUTAS PÚBLICAS
+// ============================================
+
+/**
+ * @route   GET /api/banners
+ * @desc    Obtener todos los banners (para carrusel público)
+ * @access  Public
+ */
 router.get("/", bannerController.getAll);
 
-// --- RUTAS PRIVADAS (Panel de Administración) ---
-// Crear: Requiere estar logueado y tener permiso 'banner.create'
+// ============================================
+// 🔐 RUTAS PRIVADAS (Panel de Administración)
+// ============================================
+
+/**
+ * @route   POST /api/banners
+ * @desc    Crear nuevo banner
+ * @access  Private (Admin y Gerente)
+ */
 router.post(
     "/", 
     auth, 
-    requirePermission("banner.create"), 
+    requireManager,
     upload.single("image"), 
     bannerController.create
 );
 
-// Editar: Requiere estar logueado y tener permiso 'banner.update'
+/**
+ * @route   PUT /api/banners/:id
+ * @desc    Actualizar banner
+ * @access  Private (Admin y Gerente)
+ */
 router.put(
     "/:id", 
     auth, 
-    requirePermission("banner.update"), 
+    requireManager,
     upload.single("image"), 
     bannerController.update
 );
 
-// Eliminar: Requiere estar logueado y tener permiso 'banner.delete'
+/**
+ * @route   DELETE /api/banners/:id
+ * @desc    Eliminar banner
+ * @access  Private (Admin y Gerente)
+ */
 router.delete(
     "/:id", 
     auth, 
-    requirePermission("banner.delete"), 
+    requireManager,
     bannerController.delete
 );
 

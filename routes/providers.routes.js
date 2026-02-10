@@ -1,67 +1,89 @@
-const express = require("express");
-const { auth, requirePermission } = require("../middleware/auth.middleware");
+const express = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../middleware/auth.middleware");
 const ctrl = require("../controllers/providers.controller");
 
 const router = express.Router();
 
-// Todas las rutas requieren autenticación
-router.use(auth);
+// ============================================
+// 📦 RUTAS DE PROVEEDORES
+// ============================================
 
-// Obtener todos los proveedores
-router.get("/", 
-  requirePermission("providers.view"), 
-  ctrl.getAll
-);
+/**
+ * @route   GET /api/providers
+ * @desc    Obtener todos los proveedores
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/", auth, requireManager, ctrl.getAll);
 
-// Obtener proveedor específico
-router.get("/:id", 
-  requirePermission("providers.view"), 
-  ctrl.getById
-);
+/**
+ * @route   GET /api/providers/:id
+ * @desc    Obtener proveedor específico
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/:id", auth, requireManager, ctrl.getById);
 
-// Crear proveedor
-router.post("/", 
-  requirePermission("providers.create"), 
-  ctrl.create
-);
+/**
+ * @route   POST /api/providers
+ * @desc    Crear nuevo proveedor
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/", auth, requireManager, ctrl.create);
 
-// Actualizar proveedor
-router.put("/:id", 
-  requirePermission("providers.edit"), 
-  ctrl.update
-);
+/**
+ * @route   PUT /api/providers/:id
+ * @desc    Actualizar proveedor
+ * @access  Private (Admin y Gerente)
+ */
+router.put("/:id", auth, requireManager, ctrl.update);
 
-// Eliminar proveedor
-router.delete("/:id", 
-  requirePermission("providers.delete"), 
-  ctrl.remove
-);
+/**
+ * @route   DELETE /api/providers/:id
+ * @desc    Eliminar proveedor
+ * @access  Private (Admin y Gerente)
+ */
+router.delete("/:id", auth, requireManager, ctrl.remove);
 
-// === PAGOS ===
-router.post("/payments", 
-  requirePermission("providers.payments"), 
-  ctrl.registerPayment
-);
+// ============================================
+// 💰 PAGOS
+// ============================================
 
-router.get("/:id/payments", 
-  requirePermission("providers.view"), 
-  ctrl.getPaymentHistory
-);
+/**
+ * @route   POST /api/providers/payments
+ * @desc    Registrar pago a proveedor
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/payments", auth, requireManager, ctrl.registerPayment);
 
-// === HISTORIAL Y REPORTES ===
-router.get("/:id/purchases", 
-  requirePermission("providers.view"), 
-  ctrl.getPurchaseHistory
-);
+/**
+ * @route   GET /api/providers/:id/payments
+ * @desc    Obtener historial de pagos
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/:id/payments", auth, requireManager, ctrl.getPaymentHistory);
 
-router.get("/price-comparison", 
-  requirePermission("providers.view"), 
-  ctrl.getPriceComparison
-);
+// ============================================
+// 📊 HISTORIAL Y REPORTES
+// ============================================
 
-router.get("/:id/stats", 
-  requirePermission("providers.view"), 
-  ctrl.getStats
-);
+/**
+ * @route   GET /api/providers/:id/purchases
+ * @desc    Obtener historial de compras
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/:id/purchases", auth, requireManager, ctrl.getPurchaseHistory);
+
+/**
+ * @route   GET /api/providers/price-comparison
+ * @desc    Comparar precios entre proveedores
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/price-comparison", auth, requireManager, ctrl.getPriceComparison);
+
+/**
+ * @route   GET /api/providers/:id/stats
+ * @desc    Obtener estadísticas del proveedor
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/:id/stats", auth, requireManager, ctrl.getStats);
 
 module.exports = router;
