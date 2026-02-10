@@ -9,10 +9,10 @@ async function createAdmin() {
   const hash = await bcrypt.hash(password, 10);
 
   const userRes = await pool.query(
-    `INSERT INTO users (email, password, name)
-     VALUES ($1, $2, $3)
+    `INSERT INTO users (email, password, cedula, name)
+     VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [email, hash, name]
+    [email, hash, "00000000", name]
   );
 
   const userId = userRes.rows[0].id;
