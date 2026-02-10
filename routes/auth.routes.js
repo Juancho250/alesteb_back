@@ -1,7 +1,76 @@
 const express = require("express");
 const router = express.Router();
-const { login } = require("../controllers/auth.controller");
+const authController = require("../controllers/auth.controller");
+const { auth, checkRateLimit } = require("../middleware/auth.middleware");
 
-router.post("/login", login);
+// ============================================
+// 🔓 RUTAS PÚBLICAS (No requieren autenticación)
+// ============================================
+
+/**
+ * @route   POST /api/auth/login
+ * @desc    Iniciar sesión y obtener tokens
+ * @access  Public
+ * @body    { email, password, deviceInfo? }
+ */
+router.post(
+  "/login", 
+  checkRateLimit('email', 5, 15 * 60 * 1000), // 5 intentos por 15 minutos
+  authController.login
+);
+
+/**
+ * @route   POST /api/auth/register
+ * @desc    Registrar nuevo usuario
+ * @access  Public
+ * @body    { email, password, name, cedula, phone? }
+ */
+router.post(
+  "/register",
+  checkRateLimit('ip', 3, 60 * 60 * 1000), // 3 registros por IP por hora
+  authController.register
+);
+
+/**
+ * @route   POST /api/auth/refresh
+ * @desc    Renovar access token usando refresh token
+ * @access  Public
+ * @body    { refreshToken }
+ */
+router.post("/refresh", authController.refreshToken);
+
+// ============================================
+// 🔐 RUTAS PROTEGIDAS (Requieren autenticación)
+// ============================================
+
+/**
+ * @route   POST /api/auth/logout
+ * @desc    Cerrar sesión y revocar tokens
+ * @access  Private
+ * @body    { refreshToken? }
+ */
+router.post("/logout", auth, authController.logout);
+
+/**
+ * @route   GET /api/auth/profile
+ * @desc    Obtener perfil del usuario autenticado
+ * @access  Private
+ */
+router.get("/profile", auth, authController.getProfile);
+
+/**
+ * @route   GET /api/auth/verify
+ * @desc    Verificar si el token actual es válido
+ * @access  Private
+ */
+router.get("/verify", auth, (req, res) => {
+  res.json({
+    success: true,
+    message: "Token válido",
+    data: {
+      user: req.user
+    }
+  });
+});
 
 module.exports = router;
