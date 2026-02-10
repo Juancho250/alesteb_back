@@ -21,7 +21,7 @@ router.post(
 
 /**
  * @route   POST /api/auth/register
- * @desc    Registrar nuevo usuario
+ * @desc    Registrar nuevo usuario (requiere verificación de email)
  * @access  Public
  * @body    { email, password, name, cedula, phone? }
  */
@@ -29,6 +29,26 @@ router.post(
   "/register",
   checkRateLimit('ip', 3, 60 * 60 * 1000), // 3 registros por IP por hora
   authController.register
+);
+
+/**
+ * @route   POST /api/auth/verify
+ * @desc    Verificar email con código de 6 dígitos
+ * @access  Public
+ * @body    { email, code }
+ */
+router.post("/verify", authController.verifyEmail);
+
+/**
+ * @route   POST /api/auth/resend-code
+ * @desc    Reenviar código de verificación
+ * @access  Public
+ * @body    { email }
+ */
+router.post(
+  "/resend-code", 
+  checkRateLimit('email', 3, 60 * 60 * 1000), // Máx 3 reenvíos por hora
+  authController.resendVerificationCode
 );
 
 /**
@@ -59,11 +79,11 @@ router.post("/logout", auth, authController.logout);
 router.get("/profile", auth, authController.getProfile);
 
 /**
- * @route   GET /api/auth/verify
+ * @route   GET /api/auth/verify-token
  * @desc    Verificar si el token actual es válido
  * @access  Private
  */
-router.get("/verify", auth, (req, res) => {
+router.get("/verify-token", auth, (req, res) => {
   res.json({
     success: true,
     message: "Token válido",
