@@ -79,13 +79,12 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // 4️⃣ Adjuntar información del usuario al request
+    // 4️⃣ Adjuntar información del usuario al request (SIN permisos)
     req.user = {
       id: decoded.id,
       email: decoded.email,
       name: decoded.name,
-      roles: decoded.roles || [],
-      permissions: decoded.permissions || []
+      roles: decoded.roles || []
     };
 
     next();
@@ -123,8 +122,8 @@ const requireRole = (allowedRoles = []) => {
       });
     }
 
-    // Super admin tiene acceso a todo
-    if (req.user.roles.includes('super_admin')) {
+    // Admin tiene acceso a todo
+    if (req.user.roles.includes('admin')) {
       return next();
     }
 
@@ -136,48 +135,10 @@ const requireRole = (allowedRoles = []) => {
     if (!hasRole) {
       return res.status(403).json({ 
         success: false,
-        message: `Acceso denegado. Roles requeridos: ${allowedRoles.join(', ')}`,
+        message: "No tienes permisos para realizar esta acción",
         code: "INSUFFICIENT_ROLE",
         required: allowedRoles,
         current: req.user.roles
-      });
-    }
-
-    next();
-  };
-};
-
-// ============================================
-// 🔑 MIDDLEWARE DE VERIFICACIÓN DE PERMISOS
-// ============================================
-
-const requirePermission = (requiredPermission) => {
-  return (req, res, next) => {
-    // Verificar que el usuario esté autenticado
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false,
-        message: "No autenticado",
-        code: "NOT_AUTHENTICATED"
-      });
-    }
-
-    const userPermissions = req.user.permissions || [];
-    const userRoles = req.user.roles || [];
-
-    // Super admin tiene acceso a todo
-    if (userRoles.includes('super_admin')) {
-      return next();
-    }
-
-    // Verificar si tiene el permiso específico
-    if (!userPermissions.includes(requiredPermission)) {
-      return res.status(403).json({ 
-        success: false,
-        message: "No tienes permisos para realizar esta acción",
-        code: "INSUFFICIENT_PERMISSION",
-        required: requiredPermission,
-        current: userPermissions
       });
     }
 
@@ -218,8 +179,7 @@ const optionalAuth = async (req, res, next) => {
         id: decoded.id,
         email: decoded.email,
         name: decoded.name,
-        roles: decoded.roles || [],
-        permissions: decoded.permissions || []
+        roles: decoded.roles || []
       };
     } catch (error) {
       req.user = null;
@@ -286,10 +246,18 @@ setInterval(() => {
   });
 }, 60 * 60 * 1000);
 
+// ============================================
+// 🎯 ATAJOS PARA ROLES COMUNES
+// ============================================
+
+const requireAdmin = requireRole(['admin']);
+const requireManager = requireRole(['admin', 'gerente']);
+
 module.exports = { 
   auth, 
-  requirePermission, 
   requireRole,
+  requireAdmin,
+  requireManager,
   optionalAuth,
   checkRateLimit
 };
