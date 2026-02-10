@@ -3,13 +3,11 @@ const db = require("../config/db");
 // ============================================
 // 🛒 CREAR NUEVA VENTA
 // ============================================
-
 exports.createSale = async (req, res) => {
   const { items, subtotal, total, customer_id, sale_type, payment_method } = req.body;
   const client = await db.connect();
 
   try {
-    // Validar que haya items
     if (!items || items.length === 0) {
       return res.status(400).json({ 
         success: false,
@@ -17,7 +15,6 @@ exports.createSale = async (req, res) => {
       });
     }
 
-    // Validar total
     if (!total || total <= 0) {
       return res.status(400).json({
         success: false,
@@ -27,9 +24,17 @@ exports.createSale = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 1. Crear la venta
+    // 1. Generar número de venta
+    const saleNumberResult = await client.query(
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 2) AS INTEGER)), 0) + 1 as next_num FROM sales WHERE sale_number LIKE 'V%'"
+    );
+    const nextNumber = saleNumberResult.rows[0].next_num;
+    const saleNumber = `V${String(nextNumber).padStart(6, '0')}`;
+
+    // 2. Crear la venta
     const saleResult = await client.query(
       `INSERT INTO sales (
+        sale_number,
         subtotal, 
         total, 
         customer_id, 
@@ -38,32 +43,33 @@ exports.createSale = async (req, res) => {
         payment_status,
         created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id, sale_number`,
       [
+        saleNumber,
         subtotal || total,
         total,
         customer_id || null,
         sale_type || "fisica",
         payment_method || "cash",
         "paid",
-        req.user?.id || null // ID del usuario que crea la venta
+        req.user?.id || null
       ]
     );
 
     const saleId = saleResult.rows[0].id;
-    const saleNumber = saleResult.rows[0].sale_number;
 
-    // 2. Insertar items y actualizar stock
+    // 3. Insertar items y actualizar stock
     for (const item of items) {
-      // Validar que el producto exista y tenga stock suficiente
+      const productId = item.id || item.product_id;
+      
       const productCheck = await client.query(
-        "SELECT id, name, sale_price, stock FROM products WHERE id = $1",
-        [item.id || item.product_id]
+        "SELECT id, name, sale_price, stock, purchase_price FROM products WHERE id = $1",
+        [productId]
       );
 
       if (productCheck.rowCount === 0) {
-        throw new Error(`Producto con ID ${item.id || item.product_id} no encontrado`);
+        throw new Error(`Producto con ID ${productId} no encontrado`);
       }
 
       const product = productCheck.rows[0];
@@ -74,6 +80,12 @@ exports.createSale = async (req, res) => {
         );
       }
 
+      const unitPrice = item.price || item.unit_price || product.sale_price;
+      const unitCost = product.purchase_price || 0;
+      const subtotal = unitPrice * item.quantity;
+      const profitPerUnit = unitPrice - unitCost;
+      const totalProfit = profitPerUnit * item.quantity;
+
       // Insertar item de venta
       await client.query(
         `INSERT INTO sale_items (
@@ -81,48 +93,32 @@ exports.createSale = async (req, res) => {
           product_id, 
           quantity, 
           unit_price,
-          subtotal
+          unit_cost,
+          subtotal,
+          profit_per_unit,
+          total_profit
         )
-        VALUES ($1, $2, $3, $4, $5)`,
-        [
-          saleId,
-          item.id || item.product_id,
-          item.quantity,
-          item.price || item.unit_price || product.sale_price,
-          (item.price || item.unit_price || product.sale_price) * item.quantity
-        ]
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [saleId, productId, item.quantity, unitPrice, unitCost, subtotal, profitPerUnit, totalProfit]
       );
 
-      // Actualizar stock del producto
+      // Actualizar stock
       const stockResult = await client.query(
         `UPDATE products 
          SET stock = stock - $1, updated_at = NOW()
          WHERE id = $2 AND stock >= $1
          RETURNING stock`,
-        [item.quantity, item.id || item.product_id]
+        [item.quantity, productId]
       );
 
       if (stockResult.rowCount === 0) {
-        throw new Error(
-          `No se pudo actualizar el stock de "${product.name}". Posible condición de carrera.`
-        );
-      }
-    }
-
-    // 3. Verificar que el cliente existe (si se proporcionó)
-    if (customer_id) {
-      const userCheck = await client.query(
-        "SELECT id, name FROM users WHERE id = $1",
-        [customer_id]
-      );
-
-      if (userCheck.rowCount === 0) {
-        throw new Error("El cliente especificado no existe");
+        throw new Error(`No se pudo actualizar el stock de "${product.name}"`);
       }
     }
 
     await client.query("COMMIT");
 
+    // ✅ Devolver objeto directo
     res.status(201).json({
       success: true,
       message: "Venta registrada con éxito",
@@ -149,7 +145,6 @@ exports.createSale = async (req, res) => {
 // ============================================
 // 📋 OBTENER TODAS LAS VENTAS
 // ============================================
-
 exports.getSales = async (req, res) => {
   try {
     const result = await db.query(`
@@ -165,18 +160,21 @@ exports.getSales = async (req, res) => {
         s.created_at,
         u.name as customer_name,
         u.email as customer_email,
+        u.cedula as customer_cedula,
         seller.name as seller_name,
-        (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id) AS items_count
+        COUNT(si.id) as items_count,
+        COALESCE(SUM(si.total_profit), 0) as total_profit
       FROM sales s
       LEFT JOIN users u ON s.customer_id = u.id
       LEFT JOIN users seller ON s.created_by = seller.id
+      LEFT JOIN sale_items si ON si.sale_id = s.id
+      GROUP BY s.id, u.name, u.email, u.cedula, seller.name
       ORDER BY s.created_at DESC
     `);
 
-    res.json({
-      success: true,
-      data: result.rows
-    });
+    // ✅ Devolver array directo
+    res.json(result.rows);
+    
   } catch (error) {
     console.error("[GET SALES ERROR]", error);
     res.status(500).json({
@@ -189,52 +187,32 @@ exports.getSales = async (req, res) => {
 // ============================================
 // 🔍 OBTENER DETALLE DE UNA VENTA
 // ============================================
-
 exports.getSaleById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // 1. Obtener información de la venta
-    const saleResult = await db.query(
-      `SELECT 
-        s.*,
-        u.name as customer_name,
-        u.email as customer_email,
-        u.phone as customer_phone,
-        seller.name as seller_name
-      FROM sales s
-      LEFT JOIN users u ON s.customer_id = u.id
-      LEFT JOIN users seller ON s.created_by = seller.id
-      WHERE s.id = $1`,
-      [id]
-    );
-
-    if (saleResult.rowCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Venta no encontrada"
-      });
-    }
-
-    // 2. Obtener items de la venta
+    // Obtener items de la venta
     const itemsResult = await db.query(
       `SELECT 
-        si.*,
-        p.name as product_name,
-        p.sku as product_sku
+        si.id,
+        si.quantity,
+        si.unit_price,
+        si.unit_cost,
+        si.subtotal,
+        si.profit_per_unit,
+        si.total_profit,
+        p.name,
+        p.sku
       FROM sale_items si
       JOIN products p ON p.id = si.product_id
-      WHERE si.sale_id = $1`,
+      WHERE si.sale_id = $1
+      ORDER BY si.id`,
       [id]
     );
 
-    const sale = saleResult.rows[0];
-    sale.items = itemsResult.rows;
-
-    res.json({
-      success: true,
-      data: sale
-    });
+    // ✅ Devolver array directo
+    res.json(itemsResult.rows);
+    
   } catch (error) {
     console.error("[GET SALE BY ID ERROR]", error);
     res.status(500).json({
@@ -247,7 +225,6 @@ exports.getSaleById = async (req, res) => {
 // ============================================
 // 📊 OBTENER RESUMEN DE VENTAS
 // ============================================
-
 exports.getSalesSummary = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
@@ -273,10 +250,9 @@ exports.getSalesSummary = async (req, res) => {
       params
     );
 
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
+    // ✅ Devolver objeto directo
+    res.json(result.rows[0]);
+    
   } catch (error) {
     console.error("[GET SALES SUMMARY ERROR]", error);
     res.status(500).json({
