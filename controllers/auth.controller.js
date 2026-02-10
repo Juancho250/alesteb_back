@@ -52,10 +52,10 @@ const generateRefreshToken = (payload) => {
 // 📊 OBTENCIÓN DE DATOS DE USUARIO
 // ============================================
 
-const getUserPermissionsAndRoles = async (userId) => {
+const getUserRoles = async (userId) => {
   const client = await db.connect();
   try {
-    // Obtener roles
+    // Obtener solo roles (sin permisos)
     const rolesRes = await client.query(
       `SELECT r.name, r.id
        FROM roles r 
@@ -66,19 +66,7 @@ const getUserPermissionsAndRoles = async (userId) => {
     const roles = rolesRes.rows.map(r => r.name);
     const roleIds = rolesRes.rows.map(r => r.id);
 
-    // Obtener permisos (de roles + individuales)
-    const permissionsRes = await client.query(
-      `SELECT DISTINCT p.slug, p.name
-       FROM permissions p
-       LEFT JOIN role_permissions rp ON rp.permission_id = p.id
-       LEFT JOIN user_roles ur ON ur.role_id = rp.role_id
-       LEFT JOIN user_permissions up ON up.permission_id = p.id
-       WHERE ur.user_id = $1 OR up.user_id = $1`,
-      [userId]
-    );
-    const permissions = permissionsRes.rows.map(p => p.slug);
-
-    return { roles, roleIds, permissions };
+    return { roles, roleIds };
   } finally {
     client.release();
   }
@@ -196,16 +184,15 @@ exports.login = async (req, res) => {
       [user.id]
     );
 
-    // 6️⃣ Obtener roles y permisos
-    const { roles, roleIds, permissions } = await getUserPermissionsAndRoles(user.id);
+    // 6️⃣ Obtener roles (sin permisos)
+    const { roles, roleIds } = await getUserRoles(user.id);
 
     // 7️⃣ Generar tokens
     const tokenPayload = { 
       id: user.id, 
       email: user.email,
       name: user.name,
-      roles, 
-      permissions 
+      roles
     };
 
     const accessToken = generateAccessToken(tokenPayload);
@@ -239,8 +226,7 @@ exports.login = async (req, res) => {
           cedula: user.cedula,
           city: user.city,
           address: user.address,
-          roles,
-          permissions
+          roles
         }
       }
     });
@@ -318,15 +304,14 @@ exports.refreshToken = async (req, res) => {
     }
 
     const user = userRes.rows[0];
-    const { roles, permissions } = await getUserPermissionsAndRoles(user.id);
+    const { roles } = await getUserRoles(user.id);
 
     // Generar nuevo access token
     const newAccessToken = generateAccessToken({ 
       id: user.id, 
       email: user.email,
       name: user.name,
-      roles, 
-      permissions 
+      roles
     });
 
     res.json({
@@ -525,14 +510,13 @@ exports.getProfile = async (req, res) => {
     }
 
     const user = userRes.rows[0];
-    const { roles, permissions } = await getUserPermissionsAndRoles(userId);
+    const { roles } = await getUserRoles(userId);
 
     res.json({
       success: true,
       data: {
         ...user,
-        roles,
-        permissions
+        roles
       }
     });
 
