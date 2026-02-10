@@ -1,16 +1,50 @@
 const express = require("express");
-const { auth, requireRole } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../middleware/auth.middleware");
 const ctrl = require("../controllers/categories.controller");
 
 const router = express.Router();
 
-// 🌐 PÚBLICAS
-router.get("/", ctrl.getAll);
-router.get("/flat", ctrl.getFlat); // 🆕 LISTA PLANA PARA SELECTS
+// ============================================
+// 🌐 RUTAS PÚBLICAS
+// ============================================
 
-// 🔐 ADMIN
-router.post("/", auth, requireRole(["admin"]), ctrl.create);
-router.put("/:id", auth, requireRole(["admin"]), ctrl.update);
-router.delete("/:id", auth, requireRole(["admin"]), ctrl.remove);
+/**
+ * @route   GET /api/categories
+ * @desc    Obtener categorías con estructura jerárquica
+ * @access  Public
+ */
+router.get("/", ctrl.getAll);
+
+/**
+ * @route   GET /api/categories/flat
+ * @desc    Obtener lista plana de categorías (para selects)
+ * @access  Public
+ */
+router.get("/flat", ctrl.getFlat);
+
+// ============================================
+// 🔐 RUTAS PRIVADAS
+// ============================================
+
+/**
+ * @route   POST /api/categories
+ * @desc    Crear nueva categoría
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/", auth, requireManager, ctrl.create);
+
+/**
+ * @route   PUT /api/categories/:id
+ * @desc    Actualizar categoría
+ * @access  Private (Admin y Gerente)
+ */
+router.put("/:id", auth, requireManager, ctrl.update);
+
+/**
+ * @route   DELETE /api/categories/:id
+ * @desc    Eliminar categoría
+ * @access  Private (Admin y Gerente)
+ */
+router.delete("/:id", auth, requireManager, ctrl.remove);
 
 module.exports = router;

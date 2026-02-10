@@ -1,74 +1,92 @@
 const express = require("express");
-const { auth, requirePermission } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../middleware/auth.middleware");
 const ctrl = require("../controllers/purchase_orders.controller");
 
 const router = express.Router();
 
-// Todas las rutas requieren autenticación
-router.use(auth);
+// ============================================
+// 📋 ÓRDENES DE COMPRA
+// ============================================
 
-// Ver órdenes de compra
-router.get("/", 
-  requirePermission("purchase_orders.view"), 
-  ctrl.getAll
-);
+/**
+ * @route   GET /api/purchase-orders
+ * @desc    Ver todas las órdenes de compra
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/", auth, requireManager, ctrl.getAll);
 
-// Obtener orden específica
-router.get("/:id", 
-  requirePermission("purchase_orders.view"), 
-  ctrl.getById
-);
+/**
+ * @route   GET /api/purchase-orders/:id
+ * @desc    Obtener orden específica
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/:id", auth, requireManager, ctrl.getById);
 
-// Crear orden de compra
-router.post("/", 
-  requirePermission("purchase_orders.create"), 
-  ctrl.create
-);
+/**
+ * @route   POST /api/purchase-orders
+ * @desc    Crear orden de compra
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/", auth, requireManager, ctrl.create);
 
-// Actualizar orden (solo borradores y pendientes)
-router.put("/:id", 
-  requirePermission("purchase_orders.edit"), 
-  ctrl.update
-);
+/**
+ * @route   PUT /api/purchase-orders/:id
+ * @desc    Actualizar orden (solo borradores y pendientes)
+ * @access  Private (Admin y Gerente)
+ */
+router.put("/:id", auth, requireManager, ctrl.update);
 
-// Aprobar orden
-router.post("/:id/approve", 
-  requirePermission("purchase_orders.approve"), 
-  ctrl.approve
-);
+/**
+ * @route   POST /api/purchase-orders/:id/approve
+ * @desc    Aprobar orden
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/:id/approve", auth, requireManager, ctrl.approve);
 
-// Recibir orden (actualiza inventario)
-router.post("/:id/receive", 
-  requirePermission("purchase_orders.receive"), 
-  ctrl.receive
-);
+/**
+ * @route   POST /api/purchase-orders/:id/receive
+ * @desc    Recibir orden (actualiza inventario)
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/:id/receive", auth, requireManager, ctrl.receive);
 
-// Cancelar orden
-router.post("/:id/cancel", 
-  requirePermission("purchase_orders.edit"), 
-  ctrl.cancel
-);
+/**
+ * @route   POST /api/purchase-orders/:id/cancel
+ * @desc    Cancelar orden
+ * @access  Private (Admin y Gerente)
+ */
+router.post("/:id/cancel", auth, requireManager, ctrl.cancel);
 
-// Eliminar orden (solo borradores)
-router.delete("/:id", 
-  requirePermission("purchase_orders.delete"), 
-  ctrl.remove
-);
+/**
+ * @route   DELETE /api/purchase-orders/:id
+ * @desc    Eliminar orden (solo borradores)
+ * @access  Private (Admin y Gerente)
+ */
+router.delete("/:id", auth, requireManager, ctrl.remove);
 
-// === REPORTES ===
-router.get("/reports/profit-analysis", 
-  requirePermission("purchase_orders.view"), 
-  ctrl.getProfitAnalysis
-);
+// ============================================
+// 📊 REPORTES
+// ============================================
 
-router.get("/reports/top-products", 
-  requirePermission("purchase_orders.view"), 
-  ctrl.getTopProducts
-);
+/**
+ * @route   GET /api/purchase-orders/reports/profit-analysis
+ * @desc    Análisis de utilidades esperadas
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/reports/profit-analysis", auth, requireManager, ctrl.getProfitAnalysis);
 
-router.get("/products/:product_id/price-comparison", 
-  requirePermission("purchase_orders.view"), 
-  ctrl.getPriceComparison
-);
+/**
+ * @route   GET /api/purchase-orders/reports/top-products
+ * @desc    Productos más comprados
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/reports/top-products", auth, requireManager, ctrl.getTopProducts);
+
+/**
+ * @route   GET /api/purchase-orders/products/:product_id/price-comparison
+ * @desc    Comparación de precios por producto
+ * @access  Private (Admin y Gerente)
+ */
+router.get("/products/:product_id/price-comparison", auth, requireManager, ctrl.getPriceComparison);
 
 module.exports = router;
