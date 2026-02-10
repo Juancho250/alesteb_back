@@ -7,7 +7,6 @@ const morgan = require("morgan");
 const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
 const rolesRoutes = require("./routes/roles.routes");
-const permissionsRoutes = require("./routes/permissions.routes");
 const providersRoutes = require("./routes/providers.routes");
 // Si este archivo no existe físicamente en /routes, dará error. 
 // Pruébalo comentando la siguiente línea si sigue fallando:
@@ -31,7 +30,6 @@ app.use(morgan("dev"));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
-app.use("/api/permissions", permissionsRoutes);
 app.use("/api/providers", providersRoutes);
 app.use("/api/products", productsRoutes);
 app.use("/api/categories", categoriesRoutes);
