@@ -1,5 +1,5 @@
 const express = require("express");
-const { auth, requireRole, optionalAuth } = require("../middleware/auth.middleware");
+const { auth, requireRole } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");
 
@@ -27,20 +27,20 @@ router.get("/", ctrl.getAll);
 router.get("/:id", ctrl.getById);
 
 // ============================================
-// 🔐 RUTAS PROTEGIDAS (Requieren autenticación ADMIN)
+// 🔐 RUTAS PROTEGIDAS (Requieren autenticación)
 // ============================================
 
 /**
  * @route   POST /api/products
  * @desc    Crear un nuevo producto
- * @access  Private (Solo Admin)
+ * @access  Private (Admin y Gerente)
  * @body    { name, price, stock, category_id, description }
  * @files   images[] - Máximo 6 imágenes
  */
 router.post(
   "/",
   auth,
-  requireRole(["admin", "super_admin"]),
+  requireRole(["admin", "gerente"]), // ✅ Cambiado de super_admin a gerente
   upload.array("images", 6),
   ctrl.create
 );
@@ -48,7 +48,7 @@ router.post(
 /**
  * @route   PUT /api/products/:id
  * @desc    Actualizar un producto existente
- * @access  Private (Solo Admin)
+ * @access  Private (Admin y Gerente)
  * @params  id - ID del producto a actualizar
  * @body    { name, price, stock, category_id, description, deleted_image_ids }
  * @files   images[] - Nuevas imágenes (opcional, máximo 6)
@@ -56,7 +56,7 @@ router.post(
 router.put(
   "/:id",
   auth,
-  requireRole(["admin", "super_admin"]),
+  requireRole(["admin", "gerente"]), // ✅ Cambiado
   upload.array("images", 6),
   ctrl.update
 );
@@ -64,31 +64,31 @@ router.put(
 /**
  * @route   DELETE /api/products/:id
  * @desc    Eliminar un producto
- * @access  Private (Solo Admin)
+ * @access  Private (Admin y Gerente)
  * @params  id - ID del producto a eliminar
  */
 router.delete(
   "/:id",
   auth,
-  requireRole(["admin", "super_admin"]),
+  requireRole(["admin", "gerente"]), // ✅ Cambiado
   ctrl.remove
 );
 
 // ============================================
-// 📊 RUTAS ADICIONALES (Opcionales - para futuro)
+// 📊 RUTAS ADICIONALES
 // ============================================
 
 /**
  * @route   PATCH /api/products/:id/stock
  * @desc    Actualizar solo el stock de un producto
- * @access  Private (Solo Admin)
+ * @access  Private (Admin y Gerente)
  * @params  id - ID del producto
  * @body    { stock }
  */
 router.patch(
   "/:id/stock",
   auth,
-  requireRole(["admin", "super_admin"]),
+  requireRole(["admin", "gerente"]), // ✅ Cambiado
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -121,14 +121,14 @@ router.patch(
 /**
  * @route   PATCH /api/products/:id/main-image
  * @desc    Cambiar la imagen principal de un producto
- * @access  Private (Solo Admin)
+ * @access  Private (Admin y Gerente)
  * @params  id - ID del producto
  * @body    { image_id } - ID de la imagen a marcar como principal
  */
 router.patch(
   "/:id/main-image",
   auth,
-  requireRole(["admin", "super_admin"]),
+  requireRole(["admin", "gerente"]), // ✅ Cambiado
   async (req, res) => {
     try {
       const { id } = req.params;
