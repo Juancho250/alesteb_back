@@ -45,8 +45,8 @@ const validateProductData = (data, isUpdate = false) => {
     }
   }
 
-  if (!isUpdate || data.price !== undefined) {
-    const price = Number(data.price);
+  if (!isUpdate || data.cost_price !== undefined) {
+    const price = Number(data.cost_price);
     if (isNaN(price) || price < 0) {
       errors.push('Precio debe ser un número positivo');
     }
@@ -85,15 +85,15 @@ exports.getAll = async (req, res) => {
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         best_discount.type AS discount_type,
         best_discount.value AS discount_value,
-        COALESCE(best_discount.final_price, p.price) AS final_price
+        COALESCE(best_discount.final_price, p.cost_price) AS final_price
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN LATERAL (
         SELECT d.type, d.value,
           CASE 
-            WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-            WHEN d.type = 'fixed' THEN p.price - d.value
-            ELSE p.price
+            WHEN d.type = 'percentage' THEN ROUND((p.cost_price - (p.cost_price * (d.value / 100)))::numeric, 2)
+            WHEN d.type = 'fixed' THEN p.cost_price - d.value
+            ELSE p.cost_price
           END AS final_price
         FROM discount_targets dt
         JOIN discounts d ON d.id = dt.discount_id
@@ -124,14 +124,14 @@ exports.getAll = async (req, res) => {
 
     // Filtro por precio mínimo
     if (min_price) {
-      queryText += ` AND p.price >= $${paramIndex}`;
+      queryText += ` AND p.cost_price >= $${paramIndex}`;
       queryParams.push(Number(min_price));
       paramIndex++;
     }
 
     // Filtro por precio máximo
     if (max_price) {
-      queryText += ` AND p.price <= $${paramIndex}`;
+      queryText += ` AND p.cost_price <= $${paramIndex}`;
       queryParams.push(Number(max_price));
       paramIndex++;
     }
@@ -197,9 +197,9 @@ exports.getById = async (req, res) => {
         d.type AS discount_type,
         d.value AS discount_value,
         CASE 
-          WHEN d.type = 'percentage' THEN ROUND((p.price - (p.price * (d.value / 100)))::numeric, 2)
-          WHEN d.type = 'fixed' THEN p.price - d.value
-          ELSE p.price
+          WHEN d.type = 'percentage' THEN ROUND((p.cost_price - (p.cost_price * (d.value / 100)))::numeric, 2)
+          WHEN d.type = 'fixed' THEN p.cost_price - d.value
+          ELSE p.cost_price
         END AS final_price
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -253,7 +253,7 @@ exports.create = async (req, res) => {
   const client = await db.connect();
 
   try {
-    const { name, price, stock, category_id, description } = req.body;
+    const { name, cost_price, stock, category_id, description } = req.body;
     const images = Array.isArray(req.files) ? req.files : [];
 
     // Validar datos del producto
@@ -277,12 +277,12 @@ exports.create = async (req, res) => {
 
     // Crear el producto
     const productResult = await client.query(
-      `INSERT INTO products (name, price, stock, category_id, description)
+      `INSERT INTO products (name, cost_price, stock, category_id, description)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
       [
         name.trim(), 
-        Number(price), 
+        Number(cost_price), 
         Number(stock), 
         category_id, 
         description?.trim() || null
@@ -345,7 +345,7 @@ exports.update = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { name, price, stock, category_id, description, deleted_image_ids } = req.body;
+    const { name, cost_price, stock, category_id, description, deleted_image_ids } = req.body;
     const newImages = req.files || [];
 
     // Validar ID
@@ -419,11 +419,11 @@ exports.update = async (req, res) => {
     // 2. Actualizar datos básicos
     await client.query(
       `UPDATE products 
-       SET name = $1, price = $2, stock = $3, category_id = $4, description = $5, updated_at = NOW()
+       SET name = $1, cost_price = $2, stock = $3, category_id = $4, description = $5, updated_at = NOW()
        WHERE id = $6`,
       [
         name?.trim() || null, 
-        price ? Number(price) : null, 
+        cost_price ? Number(cost_price) : null, 
         stock !== undefined ? Number(stock) : null, 
         category_id || null, 
         description?.trim() || null, 

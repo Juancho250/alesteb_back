@@ -37,14 +37,20 @@ exports.getAll = async (req, res) => {
       SELECT * FROM category_tree ORDER BY full_path
     `);
     
-    res.json(result.rows);
+    res.json({
+      success: true,
+      data: result.rows
+    });
   } catch (error) {
     console.error("GET CATEGORIES ERROR:", error);
-    res.status(500).json({ message: "Error al obtener categorías" });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener categorías" 
+    });
   }
 };
 
-// 🆕 ENDPOINT FLAT - Lista plana para selects
+// 🆕 ENDPOINT FLAT - Lista plana para selects (CORREGIDO)
 exports.getFlat = async (req, res) => {
   try {
     const result = await db.query(`
@@ -55,7 +61,7 @@ exports.getFlat = async (req, res) => {
           name, 
           slug, 
           parent_id,
-          name as full_path,
+          CAST(name AS TEXT) as full_path,
           1 as level
         FROM categories 
         WHERE parent_id IS NULL AND is_active = true
@@ -68,7 +74,7 @@ exports.getFlat = async (req, res) => {
           c.name, 
           c.slug, 
           c.parent_id,
-          cp.full_path || ' > ' || c.name,
+          CAST(cp.full_path || ' > ' || c.name AS TEXT),
           cp.level + 1
         FROM categories c
         INNER JOIN category_paths cp ON c.parent_id = cp.id
@@ -85,10 +91,16 @@ exports.getFlat = async (req, res) => {
       ORDER BY full_path
     `);
     
-    res.json(result.rows);
+    res.json({
+      success: true,
+      data: result.rows
+    });
   } catch (error) {
     console.error("GET FLAT CATEGORIES ERROR:", error);
-    res.status(500).json({ message: "Error al obtener categorías planas" });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener categorías planas" 
+    });
   }
 };
 
@@ -104,13 +116,23 @@ exports.create = async (req, res) => {
       [name, slug, description, image_url, parent_id]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({
+      success: true,
+      data: result.rows[0],
+      message: "Categoría creada correctamente"
+    });
   } catch (error) {
     console.error("CREATE CATEGORY ERROR:", error);
     if (error.code === '23505') {
-      return res.status(400).json({ message: "El slug ya existe" });
+      return res.status(400).json({ 
+        success: false,
+        message: "El slug ya existe" 
+      });
     }
-    res.status(500).json({ message: "Error al crear categoría" });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al crear categoría" 
+    });
   }
 };
 
@@ -130,13 +152,23 @@ exports.update = async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Categoría no encontrada" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Categoría no encontrada" 
+      });
     }
 
-    res.json(result.rows[0]);
+    res.json({
+      success: true,
+      data: result.rows[0],
+      message: "Categoría actualizada correctamente"
+    });
   } catch (error) {
     console.error("UPDATE CATEGORY ERROR:", error);
-    res.status(500).json({ message: "Error al actualizar categoría" });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al actualizar categoría" 
+    });
   }
 };
 
@@ -148,12 +180,21 @@ exports.remove = async (req, res) => {
     const result = await db.query("DELETE FROM categories WHERE id = $1", [id]);
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Categoría no encontrada" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Categoría no encontrada" 
+      });
     }
 
-    res.json({ message: "Categoría eliminada correctamente" });
+    res.json({ 
+      success: true,
+      message: "Categoría eliminada correctamente" 
+    });
   } catch (error) {
     console.error("DELETE CATEGORY ERROR:", error);
-    res.status(500).json({ message: "Error al eliminar categoría" });
+    res.status(500).json({ 
+      success: false,
+      message: "Error al eliminar categoría" 
+    });
   }
 };
