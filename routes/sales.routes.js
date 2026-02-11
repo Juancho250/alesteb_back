@@ -1,6 +1,11 @@
 const express = require("express");
-const router = express.Router();
-const salesController = require("../controllers/sales.controller");
+const router  = express.Router();
+
+// ⚠️  Ajusta el nombre del archivo a como lo tengas en disco:
+//     salesController.js  →  require("../controllers/salesController")
+//     sales.controller.js →  require("../controllers/sales.controller")
+const salesController = require("../controllers/salesController");
+
 const { auth, requireManager } = require("../middleware/auth.middleware");
 
 // ============================================
@@ -23,26 +28,20 @@ router.get("/user/history", auth, salesController.getUserOrderHistory);
  */
 router.get("/user/stats", auth, salesController.getUserStats);
 
-/**
- * @route   GET /api/sales/:id
- * @desc    Obtener detalle de un pedido específico (con items)
- * @params  id - ID del pedido
- * @access  Private (Cliente autenticado)
- */
-router.get("/:id", auth, salesController.getOrderDetail);
-
 // ============================================
 // 🛒 CREAR PEDIDO (CHECKOUT)
 // ============================================
 
 /**
- * @route   POST /api/sales/checkout
- * @desc    Crear nuevo pedido (cliente hace checkout)
- * @body    { customer_id, items, payment_method, discount_amount, tax_amount }
+ * @route   POST /api/sales          ← ruta que llama CartFloating
+ * @route   POST /api/sales/checkout ← alias legacy
+ * @desc    Crear nuevo pedido online
+ * @body    { customer_id, items, payment_method, shipping_address, shipping_city, shipping_notes }
  * @access  Private (Cliente autenticado)
- * @note    ✅ Genera asientos automáticos: reduce inventario, calcula COGS
+ * @note    Reduce inventario, envía email de confirmación
  */
-router.post("/checkout", auth, salesController.createOrder);
+router.post("/",        auth, salesController.createOrder);   // ← CartFloating usa esta
+router.post("/checkout", auth, salesController.createOrder);  // ← alias por compatibilidad
 
 // ============================================
 // ❌ CANCELAR PEDIDO
@@ -50,11 +49,11 @@ router.post("/checkout", auth, salesController.createOrder);
 
 /**
  * @route   POST /api/sales/:id/cancel
- * @desc    Cancelar pedido (solo si está pending)
+ * @desc    Cancelar pedido pendiente
  * @params  id - ID del pedido
  * @body    { user_id }
  * @access  Private (Cliente autenticado)
- * @note    ✅ Restaura inventario automáticamente
+ * @note    Restaura inventario automáticamente
  */
 router.post("/:id/cancel", auth, salesController.cancelOrder);
 
@@ -64,12 +63,24 @@ router.post("/:id/cancel", auth, salesController.cancelOrder);
 
 /**
  * @route   POST /api/sales/:id/confirm-payment
- * @desc    Confirmar pago de un pedido
+ * @desc    Confirmar pago de un pedido pendiente
  * @params  id - ID del pedido
  * @body    { payment_method }
  * @access  Private (Admin, Gerente)
- * @note    ✅ Genera asientos: Ingresos ↑, Impuestos ↑, AR ↓, Banco ↑
  */
 router.post("/:id/confirm-payment", auth, requireManager, salesController.confirmPayment);
+
+// ============================================
+// 📄 DETALLE DE PEDIDO
+// ============================================
+
+/**
+ * @route   GET /api/sales/:id
+ * @desc    Obtener items de un pedido específico
+ * @params  id - ID del pedido
+ * @access  Private (Cliente autenticado)
+ * @note    Esta ruta debe ir AL FINAL para no capturar /user/history, /user/stats, /checkout
+ */
+router.get("/:id", auth, salesController.getOrderDetail);
 
 module.exports = router;
