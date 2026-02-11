@@ -4,7 +4,7 @@ const router  = express.Router();
 // ⚠️  Ajusta el nombre del archivo a como lo tengas en disco:
 //     salesController.js  →  require("../controllers/salesController")
 //     sales.controller.js →  require("../controllers/sales.controller")
-const salesController = require("../controllers/salesController");
+const salesController = require("../controllers/sales.controller");
 
 const { auth, requireManager } = require("../middleware/auth.middleware");
 
