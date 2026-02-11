@@ -1,78 +1,86 @@
 const express = require("express");
-const router = express.Router();
+const router  = express.Router();
 
+// ⚠️  Ajusta el nombre del archivo a como lo tengas en disco:
+//     salesController.js  →  require("../controllers/salesController")
+//     sales.controller.js →  require("../controllers/sales.controller")
 const salesController = require("../controllers/sales.controller");
-const { auth, requireManager } = require("../middleware/auth");
 
-/*
-|--------------------------------------------------------------------------
-| RUTAS DE VENTAS
-|--------------------------------------------------------------------------
-| Prefijo usado en app.js:
-| app.use("/api/sales", salesRoutes);
-|--------------------------------------------------------------------------
-*/
+const { auth, requireManager } = require("../middleware/auth.middleware");
+
+// ============================================
+// 📦 RUTAS PARA CLIENTES (sus propios pedidos)
+// ============================================
 
 /**
- * 🔹 LISTADO GENERAL DE VENTAS
- * 👉 ESTA ES LA RUTA QUE FALTABA
- * GET /api/sales
+ * @route   GET /api/sales/user/history
+ * @desc    Obtener historial de pedidos del usuario
+ * @query   userId - ID del usuario
+ * @access  Private (Cliente autenticado)
  */
-router.get(
-  "/",
-  auth,
-  requireManager,
-  salesController.getAllSales
-);
+router.get("/user/history", auth, salesController.getUserOrderHistory);
 
 /**
- * 🔹 CREAR VENTA
- * POST /api/sales
+ * @route   GET /api/sales/user/stats
+ * @desc    Obtener estadísticas del usuario
+ * @query   userId - ID del usuario
+ * @access  Private (Cliente autenticado)
  */
-router.post(
-  "/",
-  auth,
-  salesController.createSale
-);
+router.get("/user/stats", auth, salesController.getUserStats);
+
+// ============================================
+// 🛒 CREAR PEDIDO (CHECKOUT)
+// ============================================
 
 /**
- * 🔹 CHECKOUT (e-commerce)
- * POST /api/sales/checkout
+ * @route   POST /api/sales          ← ruta que llama CartFloating
+ * @route   POST /api/sales/checkout ← alias legacy
+ * @desc    Crear nuevo pedido online
+ * @body    { customer_id, items, payment_method, shipping_address, shipping_city, shipping_notes }
+ * @access  Private (Cliente autenticado)
+ * @note    Reduce inventario, envía email de confirmación
  */
-router.post(
-  "/checkout",
-  auth,
-  salesController.checkout
-);
+router.post("/",        auth, salesController.createOrder);   // ← CartFloating usa esta
+router.post("/checkout", auth, salesController.createOrder);  // ← alias por compatibilidad
+
+// ============================================
+// ❌ CANCELAR PEDIDO
+// ============================================
 
 /**
- * 🔹 HISTORIAL DE VENTAS DEL USUARIO
- * GET /api/sales/user/history
+ * @route   POST /api/sales/:id/cancel
+ * @desc    Cancelar pedido pendiente
+ * @params  id - ID del pedido
+ * @body    { user_id }
+ * @access  Private (Cliente autenticado)
+ * @note    Restaura inventario automáticamente
  */
-router.get(
-  "/user/history",
-  auth,
-  salesController.getUserSalesHistory
-);
+router.post("/:id/cancel", auth, salesController.cancelOrder);
+
+// ============================================
+// 💰 CONFIRMAR PAGO (Admin/Gerente)
+// ============================================
 
 /**
- * 🔹 ESTADÍSTICAS DEL USUARIO
- * GET /api/sales/user/stats
+ * @route   POST /api/sales/:id/confirm-payment
+ * @desc    Confirmar pago de un pedido pendiente
+ * @params  id - ID del pedido
+ * @body    { payment_method }
+ * @access  Private (Admin, Gerente)
  */
-router.get(
-  "/user/stats",
-  auth,
-  salesController.getUserSalesStats
-);
+router.post("/:id/confirm-payment", auth, requireManager, salesController.confirmPayment);
+
+// ============================================
+// 📄 DETALLE DE PEDIDO
+// ============================================
 
 /**
- * 🔹 DETALLE DE UNA VENTA
- * GET /api/sales/:id
+ * @route   GET /api/sales/:id
+ * @desc    Obtener items de un pedido específico
+ * @params  id - ID del pedido
+ * @access  Private (Cliente autenticado)
+ * @note    Esta ruta debe ir AL FINAL para no capturar /user/history, /user/stats, /checkout
  */
-router.get(
-  "/:id",
-  auth,
-  salesController.getSaleById
-);
+router.get("/:id", auth, salesController.getOrderDetail);
 
 module.exports = router;
