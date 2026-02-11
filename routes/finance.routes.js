@@ -5,16 +5,53 @@ const ctrl = require("../controllers/finance.controller");
 const router = express.Router();
 
 // ============================================
-// 💰 FINANZAS - RUTAS UNIFICADAS
+// 📚 LIBRO MAYOR GENERAL (GL)
 // ============================================
 
 /**
- * @route   GET /api/finance/summary
- * @desc    Dashboard principal - Resumen P&L completo
+ * @route   GET /api/finance/general-ledger
+ * @desc    Libro Mayor General - Vista completa del ERP
+ * @query   ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+ * @access  Admin, Gerente
+ * @returns Balance General + Estado de Resultados + Métricas
+ */
+router.get("/general-ledger", auth, requireManager, ctrl.getGeneralLedger);
+
+/**
+ * @route   GET /api/finance/profit-and-loss
+ * @desc    Estado de Resultados detallado (P&L)
  * @query   ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
  * @access  Admin, Gerente
  */
-router.get("/summary", auth, requireManager, ctrl.getSummary);
+router.get("/profit-and-loss", auth, requireManager, ctrl.getProfitAndLoss);
+
+// ============================================
+// 💰 CUENTAS POR COBRAR (AR)
+// ============================================
+
+/**
+ * @route   GET /api/finance/accounts-receivable
+ * @desc    Cuentas por cobrar - Facturas pendientes de clientes
+ * @access  Admin, Gerente
+ * @returns Lista de ventas pending + resumen de aging
+ */
+router.get("/accounts-receivable", auth, requireManager, ctrl.getAccountsReceivable);
+
+// ============================================
+// 🏦 CUENTAS POR PAGAR (AP)
+// ============================================
+
+/**
+ * @route   GET /api/finance/accounts-payable
+ * @desc    Cuentas por pagar - Deudas con proveedores
+ * @access  Admin, Gerente
+ * @returns Lista de proveedores con balance + resumen
+ */
+router.get("/accounts-payable", auth, requireManager, ctrl.getAccountsPayable);
+
+// ============================================
+// 📈 FLUJO DE CAJA
+// ============================================
 
 /**
  * @route   GET /api/finance/cashflow
@@ -22,6 +59,10 @@ router.get("/summary", auth, requireManager, ctrl.getSummary);
  * @access  Admin, Gerente
  */
 router.get("/cashflow", auth, requireManager, ctrl.getCashflow);
+
+// ============================================
+// 💸 GASTOS Y COMPRAS
+// ============================================
 
 /**
  * @route   GET /api/finance/expenses
@@ -44,8 +85,13 @@ router.get("/expenses/by-category", auth, requireManager, ctrl.getExpensesByCate
  * @desc    Registrar un nuevo gasto o compra
  * @body    { expense_type, category, amount, description, product_id, quantity, provider_id, utility_type, utility_value, payment_method }
  * @access  Admin, Gerente
+ * @note    ✅ Genera asientos automáticos en GL, actualiza inventario y AP
  */
 router.post("/expenses", auth, requireManager, ctrl.createExpense);
+
+// ============================================
+// 📊 ANÁLISIS Y REPORTES
+// ============================================
 
 /**
  * @route   GET /api/finance/profit-by-product
@@ -54,13 +100,6 @@ router.post("/expenses", auth, requireManager, ctrl.createExpense);
  * @access  Admin, Gerente
  */
 router.get("/profit-by-product", auth, requireManager, ctrl.getProfitByProduct);
-
-/**
- * @route   GET /api/finance/provider-debts
- * @desc    Estado de deuda con proveedores activos
- * @access  Admin, Gerente
- */
-router.get("/provider-debts", auth, requireManager, ctrl.getProviderDebts);
 
 /**
  * @route   GET /api/finance/provider-analysis
