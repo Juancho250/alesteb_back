@@ -251,7 +251,7 @@ exports.createExpense = async (req, res) => {
         await client.query(
           `UPDATE products SET 
             purchase_price = $1,
-            price = $2,
+            sale_price = $2,
             stock = stock + $3,
             updated_at = NOW()
            WHERE id = $4`,
@@ -297,12 +297,12 @@ exports.getProfitByProduct = async (req, res) => {
     const result = await db.query(
       `SELECT
          p.id, p.name, p.sku, p.stock,
-         COALESCE(p.purchase_price,0)                                             AS cost_price,
-         COALESCE(p.price,0)                                                       AS sale_price,
-         COALESCE(p.price - p.purchase_price,0)                                   AS unit_profit,
-         CASE WHEN COALESCE(p.price,0)>0
-              THEN ROUND(((p.price - p.purchase_price)/p.price*100)::numeric,2)
-              ELSE 0 END                                                            AS margin_pct,
+         COALESCE(p.purchase_price,0)                                                   AS cost_price,
+         COALESCE(p.sale_price,0)                                                       AS sale_price,
+         COALESCE(p.sale_price - p.purchase_price,0)                                   AS unit_profit,
+         CASE WHEN COALESCE(p.sale_price,0)>0
+              THEN ROUND(((p.sale_price - p.purchase_price)/p.sale_price*100)::numeric,2)
+              ELSE 0 END                                                                 AS margin_pct,
          COALESCE(s.units_sold,0)     AS units_sold,
          COALESCE(s.total_revenue,0)  AS total_revenue,
          COALESCE(s.total_profit,0)   AS realized_profit,
