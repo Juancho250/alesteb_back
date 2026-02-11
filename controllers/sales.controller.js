@@ -2,6 +2,85 @@ const db = require("../config/db");
 const { sendOrderConfirmationEmail } = require("../config/emailConfig");
 
 // ============================================
+// 📋 OBTENER TODAS LAS VENTAS (PARA HISTORIAL)
+// ============================================
+exports.getAllSales = async (req, res) => {
+  try {
+    // Si el usuario es admin o gerente, puede ver todas las ventas
+    // Si no, solo ve sus propias ventas
+    let query;
+    let params = [];
+
+    if (req.user?.roles?.includes('admin') || req.user?.roles?.includes('gerente')) {
+      // Admin/Gerente ve todas las ventas
+      query = `
+        SELECT 
+          s.id,
+          s.sale_number,
+          s.customer_id,
+          s.sale_date AS created_at,
+          s.total,
+          s.payment_status,
+          s.payment_method,
+          s.sale_type,
+          s.subtotal,
+          s.tax_amount,
+          s.discount_amount,
+          s.shipping_address,
+          s.shipping_city,
+          s.shipping_notes,
+          u.name AS customer_name,
+          u.email AS customer_email
+        FROM sales s
+        LEFT JOIN users u ON s.customer_id = u.id
+        ORDER BY s.sale_date DESC
+      `;
+    } else if (req.user?.id) {
+      // Usuario normal solo ve sus ventas
+      query = `
+        SELECT 
+          s.id,
+          s.sale_number,
+          s.customer_id,
+          s.sale_date AS created_at,
+          s.total,
+          s.payment_status,
+          s.payment_method,
+          s.sale_type,
+          s.subtotal,
+          s.tax_amount,
+          s.discount_amount,
+          s.shipping_address,
+          s.shipping_city,
+          s.shipping_notes,
+          u.name AS customer_name,
+          u.email AS customer_email
+        FROM sales s
+        LEFT JOIN users u ON s.customer_id = u.id
+        WHERE s.customer_id = $1
+        ORDER BY s.sale_date DESC
+      `;
+      params = [req.user.id];
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: "No autorizado para ver ventas"
+      });
+    }
+
+    const result = await db.query(query, params);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET ALL SALES ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error al obtener ventas",
+    });
+  }
+};
+
+// ============================================
 // 📦 OBTENER HISTORIAL DE PEDIDOS DEL USUARIO
 // ============================================
 exports.getUserOrderHistory = async (req, res) => {
