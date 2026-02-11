@@ -1,149 +1,276 @@
 const db = require("../config/db");
 
 // ============================================
-// 🛒 CREAR NUEVA VENTA
-// Funciona para: panel admin (fisica) y web cliente (online)
+// 📦 OBTENER HISTORIAL DE PEDIDOS DEL USUARIO
 // ============================================
-exports.createSale = async (req, res) => {
-  const { items, subtotal, total, customer_id, sale_type, payment_method } = req.body;
+exports.getUserOrderHistory = async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "userId es requerido" 
+    });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT 
+        s.id,
+        s.sale_number as order_code,
+        s.sale_date as created_at,
+        s.total,
+        s.payment_status,
+        s.payment_method,
+        s.sale_type,
+        s.subtotal,
+        s.tax_amount,
+        s.discount_amount
+      FROM sales s
+      WHERE s.customer_id = $1
+      ORDER BY s.sale_date DESC`,
+      [userId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET USER ORDER HISTORY ERROR:", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener historial de pedidos" 
+    });
+  }
+};
+
+// ============================================
+// 📊 OBTENER ESTADÍSTICAS DEL USUARIO
+// ============================================
+exports.getUserStats = async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "userId es requerido" 
+    });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT 
+        COUNT(DISTINCT s.id) as total_orders,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'paid' THEN s.total ELSE 0 END), 0) as total_invested,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) as pending_amount,
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'paid' THEN s.id END) as completed_orders,
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END) as pending_orders
+      FROM sales s
+      WHERE s.customer_id = $1`,
+      [userId]
+    );
+
+    res.json({
+      summary: result.rows[0]
+    });
+  } catch (error) {
+    console.error("GET USER STATS ERROR:", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener estadísticas" 
+    });
+  }
+};
+
+// ============================================
+// 📄 OBTENER DETALLE DE UN PEDIDO (CON ITEMS)
+// ============================================
+exports.getOrderDetail = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Obtener items del pedido con información de productos
+    const result = await db.query(
+      `SELECT 
+        si.id,
+        si.product_id,
+        si.quantity,
+        si.unit_price,
+        si.subtotal,
+        si.discount_amount,
+        p.name,
+        p.sku,
+        (
+          SELECT pi.url 
+          FROM product_images pi 
+          WHERE pi.product_id = p.id 
+            AND pi.is_main = true 
+          LIMIT 1
+        ) as main_image
+      FROM sale_items si
+      INNER JOIN products p ON si.product_id = p.id
+      WHERE si.sale_id = $1
+      ORDER BY si.id`,
+      [id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET ORDER DETAIL ERROR:", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error al obtener detalle del pedido" 
+    });
+  }
+};
+
+// ============================================
+// 🛒 CREAR PEDIDO (CHECKOUT)
+// ============================================
+exports.createOrder = async (req, res) => {
+  const { 
+    customer_id, 
+    items, 
+    payment_method, 
+    discount_amount = 0,
+    tax_amount = 0 
+  } = req.body;
+
+  // Validaciones
+  if (!customer_id || !items || items.length === 0) {
+    return res.status(400).json({ 
+      success: false,
+      message: "Datos incompletos para crear el pedido" 
+    });
+  }
+
   const client = await db.connect();
 
   try {
-    if (!items || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "La venta debe contener al menos un producto",
+    await client.query('BEGIN');
+
+    // 1. Calcular totales
+    let subtotal = 0;
+    const validatedItems = [];
+
+    for (const item of items) {
+      const productResult = await client.query(
+        'SELECT id, name, sale_price, stock, purchase_price FROM products WHERE id = $1 AND is_active = true',
+        [item.product_id]
+      );
+
+      if (productResult.rows.length === 0) {
+        throw new Error(`Producto ${item.product_id} no encontrado o inactivo`);
+      }
+
+      const product = productResult.rows[0];
+
+      if (product.stock < item.quantity) {
+        throw new Error(`Stock insuficiente para ${product.name}. Disponible: ${product.stock}`);
+      }
+
+      const itemSubtotal = product.sale_price * item.quantity;
+      subtotal += itemSubtotal;
+
+      validatedItems.push({
+        product_id: product.id,
+        quantity: item.quantity,
+        unit_price: product.sale_price,
+        unit_cost: product.purchase_price,
+        subtotal: itemSubtotal,
+        profit_per_unit: product.sale_price - product.purchase_price,
+        total_profit: (product.sale_price - product.purchase_price) * item.quantity
       });
     }
 
-    if (!total || total <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "El total de la venta debe ser mayor a 0",
-      });
-    }
+    const total = subtotal - discount_amount + tax_amount;
 
-    // Para ventas online el cliente_id viene del body,
-    // para ventas físicas lo puede poner el admin manualmente.
-    // Si no viene ninguno, se deja nulo (venta sin cliente registrado).
-    const resolvedCustomerId = customer_id || null;
-
-    await client.query("BEGIN");
-
-    // 1. Generar número de venta correlativo
+    // 2. Generar número de pedido
     const saleNumberResult = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 2) AS INTEGER)), 0) + 1 AS next_num
-       FROM sales WHERE sale_number LIKE 'V%'`
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 6) AS INTEGER)), 0) + 1 as next_num FROM sales WHERE sale_number LIKE 'VEN-%'"
     );
-    const nextNumber = saleNumberResult.rows[0].next_num;
-    const saleNumber = `V${String(nextNumber).padStart(6, "0")}`;
+    const saleNumber = `VEN-${String(saleNumberResult.rows[0].next_num).padStart(6, '0')}`;
 
-    // 2. Crear la venta
-    // payment_status: online → 'pending' (se confirmará por WhatsApp)
-    //                 fisica → 'paid' (cobro en mano)
-    const paymentStatus =
-      sale_type === "online" ? "pending" : "paid";
-
+    // 3. Crear venta (pedido)
     const saleResult = await client.query(
       `INSERT INTO sales (
-        sale_number,
-        subtotal,
-        total,
-        customer_id,
+        sale_number, 
+        customer_id, 
+        subtotal, 
+        tax_amount, 
+        discount_amount, 
+        total, 
+        payment_method, 
+        payment_status, 
         sale_type,
-        payment_method,
-        payment_status,
         created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, sale_number`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+      RETURNING id`,
       [
         saleNumber,
-        subtotal || total,
+        customer_id,
+        subtotal,
+        tax_amount,
+        discount_amount,
         total,
-        resolvedCustomerId,
-        sale_type || "fisica",
-        payment_method || "cash",
-        paymentStatus,
-        req.user?.id || null,
+        payment_method || 'transfer',
+        'pending', // Los pedidos online empiezan como pendientes
+        'online',  // Marcar como venta online
+        customer_id // El cliente es quien crea su propio pedido
       ]
     );
 
     const saleId = saleResult.rows[0].id;
 
-    // 3. Insertar items y descontar stock
-    for (const item of items) {
-      const productId = item.id || item.product_id;
-
-      const productCheck = await client.query(
-        "SELECT id, name, sale_price, stock, purchase_price FROM products WHERE id = $1",
-        [productId]
-      );
-
-      if (productCheck.rowCount === 0) {
-        throw new Error(`Producto con ID ${productId} no encontrado`);
-      }
-
-      const product = productCheck.rows[0];
-
-      if (product.stock < item.quantity) {
-        throw new Error(
-          `Stock insuficiente para "${product.name}". Disponible: ${product.stock}, Solicitado: ${item.quantity}`
-        );
-      }
-
-      const unitPrice = item.price || item.unit_price || product.sale_price;
-      const unitCost = product.purchase_price || 0;
-      const itemSubtotal = unitPrice * item.quantity;
-      const profitPerUnit = unitPrice - unitCost;
-      const totalProfit = profitPerUnit * item.quantity;
-
+    // 4. Insertar items y actualizar stock
+    for (const item of validatedItems) {
       await client.query(
         `INSERT INTO sale_items (
-          sale_id,
-          product_id,
-          quantity,
-          unit_price,
-          unit_cost,
+          sale_id, 
+          product_id, 
+          quantity, 
+          unit_price, 
+          unit_cost, 
           subtotal,
           profit_per_unit,
           total_profit
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [saleId, productId, item.quantity, unitPrice, unitCost, itemSubtotal, profitPerUnit, totalProfit]
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          saleId,
+          item.product_id,
+          item.quantity,
+          item.unit_price,
+          item.unit_cost,
+          item.subtotal,
+          item.profit_per_unit,
+          item.total_profit
+        ]
       );
 
-      // Descontar stock
-      const stockResult = await client.query(
-        `UPDATE products
-         SET stock = stock - $1, updated_at = NOW()
-         WHERE id = $2 AND stock >= $1
-         RETURNING stock`,
-        [item.quantity, productId]
+      // Reducir stock
+      await client.query(
+        'UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2',
+        [item.quantity, item.product_id]
       );
-
-      if (stockResult.rowCount === 0) {
-        throw new Error(`No se pudo actualizar el stock de "${product.name}"`);
-      }
     }
 
-    await client.query("COMMIT");
+    await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
-      message: "Venta registrada con éxito",
+      message: "Pedido creado exitosamente",
       data: {
-        id: saleId,
+        sale_id: saleId,
         sale_number: saleNumber,
-        total,
-      },
+        total: total
+      }
     });
+
   } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("[CREATE SALE ERROR]", error);
+    await client.query('ROLLBACK');
+    console.error("CREATE ORDER ERROR:", error);
+    
     res.status(500).json({
       success: false,
-      message: error.message || "Error al registrar la venta",
+      message: error.message || "Error al crear el pedido"
     });
   } finally {
     client.release();
@@ -151,156 +278,86 @@ exports.createSale = async (req, res) => {
 };
 
 // ============================================
-// 📋 OBTENER TODAS LAS VENTAS (Admin / Gerente)
+// ❌ CANCELAR PEDIDO (SOLO SI ESTÁ PENDING)
 // ============================================
-exports.getSales = async (req, res) => {
-  try {
-    const result = await db.query(`
-      SELECT
-        s.id,
-        s.sale_number,
-        s.subtotal,
-        s.total,
-        s.sale_type,
-        s.payment_method,
-        s.payment_status,
-        s.sale_date,
-        s.created_at,
-        u.name  AS customer_name,
-        u.email AS customer_email,
-        u.cedula AS customer_cedula,
-        seller.name AS seller_name,
-        COUNT(si.id) AS items_count,
-        COALESCE(SUM(si.total_profit), 0) AS total_profit
-      FROM sales s
-      LEFT JOIN users u      ON s.customer_id = u.id
-      LEFT JOIN users seller ON s.created_by  = seller.id
-      LEFT JOIN sale_items si ON si.sale_id   = s.id
-      GROUP BY s.id, u.name, u.email, u.cedula, seller.name
-      ORDER BY s.created_at DESC
-    `);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("[GET SALES ERROR]", error);
-    res.status(500).json({ success: false, message: "Error al obtener ventas" });
-  }
-};
-
-// ============================================
-// 👤 MIS ÓRDENES (Cliente autenticado)
-// Solo devuelve las órdenes del usuario que hace la petición
-// ============================================
-exports.getMyOrders = async (req, res) => {
-  try {
-    const customerId = req.user.id;
-
-    const result = await db.query(
-      `SELECT
-        s.id,
-        s.sale_number,
-        s.total,
-        s.sale_type,
-        s.payment_status,
-        s.sale_date,
-        s.created_at,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'name',       p.name,
-              'quantity',   si.quantity,
-              'unit_price', si.unit_price,
-              'subtotal',   si.subtotal,
-              'image',      p.main_image
-            )
-          ) FILTER (WHERE si.id IS NOT NULL),
-          '[]'
-        ) AS items
-      FROM sales s
-      LEFT JOIN sale_items si ON si.sale_id  = s.id
-      LEFT JOIN products   p  ON p.id        = si.product_id
-      WHERE s.customer_id = $1
-        AND s.sale_type   = 'online'
-      GROUP BY s.id
-      ORDER BY s.created_at DESC`,
-      [customerId]
-    );
-
-    res.json({
-      success: true,
-      data: result.rows,
-    });
-  } catch (error) {
-    console.error("[GET MY ORDERS ERROR]", error);
-    res.status(500).json({ success: false, message: "Error al obtener tus órdenes" });
-  }
-};
-
-// ============================================
-// 🔍 DETALLE DE UNA VENTA (Admin / Gerente)
-// ============================================
-exports.getSaleById = async (req, res) => {
+exports.cancelOrder = async (req, res) => {
   const { id } = req.params;
+  const { user_id } = req.body; // ID del usuario que intenta cancelar
+
+  const client = await db.connect();
 
   try {
-    const itemsResult = await db.query(
-      `SELECT
-        si.id,
-        si.quantity,
-        si.unit_price,
-        si.unit_cost,
-        si.subtotal,
-        si.profit_per_unit,
-        si.total_profit,
-        p.name,
-        p.sku
-      FROM sale_items si
-      JOIN products p ON p.id = si.product_id
-      WHERE si.sale_id = $1
-      ORDER BY si.id`,
+    await client.query('BEGIN');
+
+    // Verificar que el pedido existe y pertenece al usuario
+    const orderCheck = await client.query(
+      'SELECT id, customer_id, payment_status FROM sales WHERE id = $1',
       [id]
     );
 
-    res.json(itemsResult.rows);
-  } catch (error) {
-    console.error("[GET SALE BY ID ERROR]", error);
-    res.status(500).json({ success: false, message: "Error al obtener el detalle de la venta" });
-  }
-};
-
-// ============================================
-// 📊 RESUMEN DE VENTAS (Admin / Gerente)
-// ============================================
-exports.getSalesSummary = async (req, res) => {
-  try {
-    const { start_date, end_date } = req.query;
-
-    let dateFilter = "";
-    const params = [];
-
-    if (start_date && end_date) {
-      dateFilter = "WHERE s.sale_date BETWEEN $1 AND $2";
-      params.push(start_date, end_date);
+    if (orderCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false,
+        message: "Pedido no encontrado" 
+      });
     }
 
-    const result = await db.query(
-      `SELECT
-        COUNT(*)                                                        AS total_sales,
-        COALESCE(SUM(total), 0)                                         AS total_revenue,
-        COALESCE(AVG(total), 0)                                         AS average_sale,
-        COUNT(DISTINCT customer_id)                                     AS unique_customers,
-        COUNT(CASE WHEN payment_status = 'paid'    THEN 1 END)          AS paid_sales,
-        COUNT(CASE WHEN payment_status = 'pending' THEN 1 END)          AS pending_sales,
-        COUNT(CASE WHEN sale_type = 'online'       THEN 1 END)          AS online_sales,
-        COUNT(CASE WHEN sale_type = 'fisica'       THEN 1 END)          AS physical_sales
-      FROM sales s
-      ${dateFilter}`,
-      params
+    const order = orderCheck.rows[0];
+
+    // Validar que el pedido pertenece al usuario (a menos que sea admin)
+    if (order.customer_id !== user_id && !req.user?.roles?.includes('admin')) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ 
+        success: false,
+        message: "No tienes permiso para cancelar este pedido" 
+      });
+    }
+
+    // Solo se pueden cancelar pedidos pendientes
+    if (order.payment_status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false,
+        message: "Solo se pueden cancelar pedidos pendientes" 
+      });
+    }
+
+    // Restaurar stock
+    const items = await client.query(
+      'SELECT product_id, quantity FROM sale_items WHERE sale_id = $1',
+      [id]
     );
 
-    res.json(result.rows[0]);
+    for (const item of items.rows) {
+      await client.query(
+        'UPDATE products SET stock = stock + $1 WHERE id = $2',
+        [item.quantity, item.product_id]
+      );
+    }
+
+    // Actualizar estado a cancelado
+    await client.query(
+      "UPDATE sales SET payment_status = 'cancelled' WHERE id = $1",
+      [id]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: "Pedido cancelado exitosamente"
+    });
+
   } catch (error) {
-    console.error("[GET SALES SUMMARY ERROR]", error);
-    res.status(500).json({ success: false, message: "Error al obtener resumen de ventas" });
+    await client.query('ROLLBACK');
+    console.error("CANCEL ORDER ERROR:", error);
+    
+    res.status(500).json({
+      success: false,
+      message: "Error al cancelar el pedido"
+    });
+  } finally {
+    client.release();
   }
 };
