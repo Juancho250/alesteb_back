@@ -124,20 +124,20 @@ exports.getOrderDetail = async (req, res) => {
 };
 
 // ============================================
-// 🛒 CREAR PEDIDO (CHECKOUT)
-// Ahora acepta: shipping_address, shipping_city, shipping_notes
-// Envía email de confirmación al cliente automáticamente
+// 🛒 CREAR PEDIDO/VENTA (VENTAS FÍSICAS Y ONLINE)
+// ✅ CORREGIDO: Ahora acepta tanto ventas físicas como online
 // ============================================
 exports.createOrder = async (req, res) => {
   const {
     customer_id,
     items,
-    payment_method,
+    payment_method = "cash",
     discount_amount  = 0,
     tax_amount       = 0,
-    shipping_address,          // ← NUEVO
-    shipping_city,             // ← NUEVO
-    shipping_notes,            // ← NUEVO
+    sale_type        = "online",  // "fisica" o "online"
+    shipping_address,
+    shipping_city,
+    shipping_notes,
   } = req.body;
 
   // Validaciones
@@ -153,7 +153,7 @@ exports.createOrder = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Obtener datos del cliente para el email
+    // 1. Obtener datos del cliente
     const customerResult = await client.query(
       "SELECT id, name, email FROM users WHERE id = $1",
       [customer_id]
@@ -185,6 +185,7 @@ exports.createOrder = async (req, res) => {
         );
       }
 
+      // ✅ CORREGIDO: Usar el precio del producto de la DB, no el enviado por el frontend
       const itemSubtotal = product.sale_price * item.quantity;
       subtotal += itemSubtotal;
 
@@ -203,13 +204,16 @@ exports.createOrder = async (req, res) => {
 
     const total = subtotal - discount_amount + tax_amount;
 
-    // 3. Generar número de pedido
+    // 3. Generar número de venta
     const saleNumberResult = await client.query(
       "SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 5) AS INTEGER)), 0) + 1 AS next_num FROM sales WHERE sale_number LIKE 'VEN-%'"
     );
     const saleNumber = `VEN-${String(saleNumberResult.rows[0].next_num).padStart(6, "0")}`;
 
-    // 4. Crear venta con campos de envío
+    // 4. Crear venta
+    // ✅ CORREGIDO: Para ventas físicas, el pago es inmediato (paid), para online es pending
+    const payment_status = sale_type === "fisica" ? "paid" : "pending";
+
     const saleResult = await client.query(
       `INSERT INTO sales (
         sale_number,
@@ -234,9 +238,9 @@ exports.createOrder = async (req, res) => {
         tax_amount,
         discount_amount,
         total,
-        payment_method || "transfer",
-        "pending",    // Los pedidos online empiezan como pendientes
-        "online",
+        payment_method,
+        payment_status,
+        sale_type,
         customer_id,
         shipping_address || null,
         shipping_city    || null,
@@ -277,8 +281,8 @@ exports.createOrder = async (req, res) => {
     // 6. Código público de orden (AL-XXXXXX)
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
-    // 7. Enviar email de confirmación (best-effort: no bloquea la respuesta)
-    if (customer.email) {
+    // 7. Enviar email de confirmación solo para pedidos online (best-effort)
+    if (sale_type === "online" && customer.email) {
       sendOrderConfirmationEmail(customer.email, customer.name, {
         orderCode,
         total,
@@ -292,12 +296,13 @@ exports.createOrder = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Pedido creado exitosamente",
+      message: sale_type === "fisica" ? "Venta realizada exitosamente" : "Pedido creado exitosamente",
       data: {
         sale_id:     saleId,
         sale_number: saleNumber,
         order_code:  orderCode,
         total,
+        payment_status
       },
     });
 
@@ -316,7 +321,6 @@ exports.createOrder = async (req, res) => {
 
 // ============================================
 // ❌ CANCELAR PEDIDO (SOLO SI ESTÁ PENDING)
-// Restaura inventario automáticamente
 // ============================================
 exports.cancelOrder = async (req, res) => {
   const { id }      = req.params;
