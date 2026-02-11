@@ -1,53 +1,38 @@
 const express = require("express");
 const router = express.Router();
-const { auth, requireManager } = require("../middleware/auth.middleware");
-const {
-  createSale,
-  getSales,
-  getSaleById,
-  getMyOrders,
-  getSalesSummary,
-} = require("../controllers/sales.controller");
+const salesController = require("../controllers/salesController");
+const { verifyToken } = require("../middleware/authMiddleware");
 
 // ============================================
-// 🛒 RUTAS DE VENTAS
+// 📦 RUTAS PARA CLIENTES (sus propios pedidos)
 // ============================================
 
-/**
- * @route   POST /api/sales
- * @desc    Crear nueva venta (física desde panel admin u online desde la web)
- *          sale_type: "fisica" | "online"
- * @access  Private (todos los autenticados — admin, gerente, cliente)
- */
-router.post("/", auth, createSale);
+// Obtener historial de pedidos del usuario
+// GET /api/sales/user/history?userId=123
+router.get("/user/history", verifyToken, salesController.getUserOrderHistory);
 
-/**
- * @route   GET /api/sales/my-orders
- * @desc    El cliente autenticado consulta SUS propias órdenes online
- *          ⚠️ Debe ir ANTES de /:id para que Express no lo interprete como ID
- * @access  Private (cualquier usuario autenticado)
- */
-router.get("/my-orders", auth, getMyOrders);
+// Obtener estadísticas del usuario
+// GET /api/sales/user/stats?userId=123
+router.get("/user/stats", verifyToken, salesController.getUserStats);
 
-/**
- * @route   GET /api/sales/summary
- * @desc    Resumen estadístico de ventas
- * @access  Private (Admin y Gerente)
- */
-router.get("/summary", auth, requireManager, getSalesSummary);
+// Obtener detalle de un pedido específico (con items)
+// GET /api/sales/123
+router.get("/:id", verifyToken, salesController.getOrderDetail);
 
-/**
- * @route   GET /api/sales
- * @desc    Todas las ventas (historial completo del panel admin)
- * @access  Private (Admin y Gerente)
- */
-router.get("/", auth, requireManager, getSales);
+// ============================================
+// 🛒 CREAR PEDIDO (CHECKOUT)
+// ============================================
 
-/**
- * @route   GET /api/sales/:id
- * @desc    Detalle de una venta específica
- * @access  Private (Admin y Gerente)
- */
-router.get("/:id", auth, requireManager, getSaleById);
+// Crear nuevo pedido (cliente hace checkout)
+// POST /api/sales/checkout
+router.post("/checkout", verifyToken, salesController.createOrder);
+
+// ============================================
+// ❌ CANCELAR PEDIDO
+// ============================================
+
+// Cancelar pedido (solo si está pending)
+// POST /api/sales/123/cancel
+router.post("/:id/cancel", verifyToken, salesController.cancelOrder);
 
 module.exports = router;
