@@ -1,4 +1,4 @@
-const bcrypt = require("bcrypt");
+const bcrypt = require('bcryptjs');
 const pool = require("./config/db"); // pg pool
 
 async function createAdmin() {
