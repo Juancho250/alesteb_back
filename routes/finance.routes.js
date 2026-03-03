@@ -3,83 +3,93 @@ const router = express.Router();
 const fc = require("../controllers/finance.controller");
 const { auth, requireManager } = require("../middleware/auth.middleware");
 
+// ── Middleware global ────────────────────────────────────────────
+router.use(auth, requireManager);
+
 // ============================================
 // 📊 RESUMEN Y REPORTES
 // ============================================
-
-/**
- * @route   GET /api/finance/summary
- * @desc    Obtener resumen financiero (KPIs del dashboard)
- * @query   start_date, end_date - Opcional para filtrar por período
- * @access  Private (Admin, Gerente)
- */
-router.get("/summary", auth, requireManager, fc.getSummary);
-
-/**
- * @route   GET /api/finance/cashflow
- * @desc    Obtener flujo de caja mensual (últimos 6 meses)
- * @access  Private (Admin, Gerente)
- */
-router.get("/cashflow", auth, requireManager, fc.getCashflow);
-
-/**
- * @route   GET /api/finance/profit-by-product
- * @desc    Obtener rentabilidad por producto
- * @access  Private (Admin, Gerente)
- */
-router.get("/profit-by-product", auth, requireManager, fc.getProfitByProduct);
+router.get("/summary",           fc.getSummary);
+router.get("/cashflow",          fc.getCashflow);
+router.get("/profit-by-product", fc.getProfitByProduct);
+router.get("/provider-debts",    fc.getProviderDebts);
+router.get("/provider-analysis", fc.getProviderAnalysis);
 
 // ============================================
 // 📄 FACTURAS
 // ============================================
 
 /**
- * @route   GET /api/finance/invoices
- * @desc    Listar facturas
- * @query   type - 'service' o 'purchase' (opcional)
- * @query   status - 'paid', 'pending', 'partial' (opcional)
- * @query   start_date, end_date - Rango de fechas (opcional)
- * @query   limit, offset - Paginación
- * @access  Private (Admin, Gerente)
+ * GET  /api/finance/invoices
+ * @query type       'service' | 'purchase'
+ * @query status     'paid' | 'pending' | 'partial'
+ * @query start_date, end_date
+ * @query limit, offset
  */
-router.get("/invoices", auth, requireManager, fc.getInvoices);
+router.get("/invoices",      fc.getInvoices);
 
 /**
- * @route   POST /api/finance/invoices
- * @desc    Crear factura (servicio o compra)
- * @body    {
- *   invoice_type: 'service' | 'purchase',
- *   provider_id: number (requerido para compras),
- *   invoice_number: string (opcional),
- *   invoice_date: date,
- *   due_date: date (opcional),
- *   description: string,
- *   total_amount: number,
- *   payment_method: 'cash' | 'credit' | 'transfer' | 'check',
- *   items: [{ product_id, quantity, unit_price }] (solo para compras),
- *   notes: string (opcional)
- * }
- * @access  Private (Admin, Gerente)
- * 
- * IMPORTANTE:
- * - Para SERVICIOS: solo llenar campos básicos (luz, internet, etc.)
- * - Para COMPRAS: incluir items[] con productos
- * - Si payment_method='credit', se crea deuda pendiente
+ * POST /api/finance/invoices
+ * @body invoice_type   'service' | 'purchase'
+ * @body provider_id    number  (requerido para compras)
+ * @body invoice_number string  (opcional)
+ * @body invoice_date   date
+ * @body due_date       date    (opcional)
+ * @body description    string
+ * @body total_amount   number
+ * @body payment_method 'cash' | 'credit' | 'transfer' | 'check'
+ * @body items          [{ product_id, quantity, unit_price }]  (solo compras)
+ * @body notes          string  (opcional)
+ *
+ * - payment_method='credit' queda como deuda pendiente
+ * - Compras actualizan stock y purchase_price del producto
+ * - Compras registran historial de precios si el precio cambia
  */
-router.post("/invoices", auth, requireManager, fc.createInvoice);
+router.post("/invoices",     fc.createInvoice);
 
 /**
- * @route   POST /api/finance/invoices/pay
- * @desc    Registrar pago de factura (pago total o parcial)
- * @body    {
- *   invoice_id: number,
- *   amount: number,
- *   payment_method: string,
- *   payment_date: date (opcional),
- *   notes: string (opcional)
- * }
- * @access  Private (Admin, Gerente)
+ * POST /api/finance/invoices/pay
+ * @body invoice_id     number
+ * @body amount         number
+ * @body payment_method string
+ * @body payment_date   date    (opcional)
+ * @body notes          string  (opcional)
  */
-router.post("/invoices/pay", auth, requireManager, fc.payInvoice);
+router.post("/invoices/pay", fc.payInvoice);
+
+// ============================================
+// 💸 GASTOS DIRECTOS
+// ============================================
+
+/**
+ * GET  /api/finance/expenses
+ * @query type       expense_type enum
+ * @query start_date, end_date
+ * @query limit, offset
+ */
+router.get("/expenses",             fc.getExpenses);
+
+/**
+ * GET  /api/finance/expenses/by-category
+ * Agrupa gastos de los últimos 3 meses por categoría
+ */
+router.get("/expenses/by-category", fc.getExpensesByCategory);
+
+/**
+ * POST /api/finance/expenses
+ * @body expense_type   'purchase'|'service'|'utility'|'tax'|'salary'|'other'
+ * @body category       string  (opcional)
+ * @body description    string
+ * @body amount         number
+ * @body payment_method 'cash' | 'credit' | 'transfer' | 'check'
+ * @body provider_id    number  (opcional)
+ * @body product_id     number  (opcional, si expense_type='purchase')
+ * @body quantity       number  (opcional, default 1)
+ * @body notes          string  (opcional)
+ * @body expense_date   date    (opcional, default hoy)
+ *
+ * - Si expense_type='purchase' y product_id existe, actualiza stock y precio
+ */
+router.post("/expenses",            fc.createExpense);
 
 module.exports = router;
