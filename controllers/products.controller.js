@@ -99,6 +99,7 @@ exports.getAll = async (req, res) => {
         JOIN discounts d ON d.id = dt.discount_id
         WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
            OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+          AND d.active = true
           AND NOW() BETWEEN d.starts_at AND d.ends_at
         ORDER BY final_price ASC LIMIT 1
       ) best_discount ON true
@@ -208,6 +209,7 @@ exports.getById = async (req, res) => {
         (dt.target_type = 'category' AND dt.target_id = p.category_id::text)
       )
       LEFT JOIN discounts d ON dt.discount_id = d.id 
+        AND d.active = true
         AND NOW() BETWEEN d.starts_at AND d.ends_at
       WHERE p.id = $1
       LIMIT 1
