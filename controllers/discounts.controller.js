@@ -97,3 +97,29 @@ exports.update = async (req, res) => {
     client.release();
   }
 };
+
+// Toggle activo/inactivo
+exports.toggleActive = async (req, res) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+
+  if (typeof is_active !== "boolean") {
+    return res.status(400).json({ message: "is_active debe ser un booleano" });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE discounts SET active = $1, updated_at = NOW() WHERE id = $2 RETURNING id, active`,
+      [is_active, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Descuento no encontrado" });
+    }
+
+    res.json({ id: result.rows[0].id, active: result.rows[0].active });
+  } catch (error) {
+    console.error("DISCOUNT TOGGLE ERROR:", error);
+    res.status(500).json({ message: "Error al actualizar el estado" });
+  }
+};
