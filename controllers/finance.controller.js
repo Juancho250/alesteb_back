@@ -207,7 +207,6 @@ exports.createInvoice = async (req, res) => {
           [invoiceId, product_id, quantity, unit_price, quantity * unit_price]
         );
 
-        // Actualizar precio de compra y stock
         const oldProductResult = await client.query(
           `SELECT purchase_price, sale_price FROM products WHERE id = $1`, [product_id]
         );
@@ -218,7 +217,6 @@ exports.createInvoice = async (req, res) => {
           [unit_price, quantity, product_id]
         );
 
-        // Registrar historial de precio si cambió
         if (oldProduct && fmtNum(oldProduct.purchase_price) !== fmtNum(unit_price)) {
           await client.query(
             `INSERT INTO product_price_history
@@ -307,6 +305,58 @@ exports.payInvoice = async (req, res) => {
 };
 
 // ============================================
+// 💳 PAGO DIRECTO A PROVEEDOR  ← NUEVO
+// ============================================
+exports.payProvider = async (req, res) => {
+  const { provider_id, amount, payment_method, notes } = req.body;
+
+  if (!provider_id || !amount || amount <= 0)
+    return res.status(400).json({ message: "Datos de pago incompletos" });
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const provResult = await client.query(
+      `SELECT id, name, balance FROM providers WHERE id = $1 AND is_active = true`,
+      [provider_id]
+    );
+    if (provResult.rows.length === 0) throw new Error("Proveedor no encontrado");
+
+    const provider = provResult.rows[0];
+    if (fmtNum(amount) > fmtNum(provider.balance))
+      throw new Error("El monto supera la deuda actual del proveedor");
+
+    // Registrar en provider_payments
+    await client.query(
+      `INSERT INTO provider_payments (provider_id, amount, payment_method, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [provider_id, amount, payment_method || "transfer", notes || null, req.user?.id || null]
+    );
+
+    // Reducir balance del proveedor
+    await client.query(
+      `UPDATE providers SET balance = GREATEST(0, balance - $1), updated_at = NOW() WHERE id = $2`,
+      [amount, provider_id]
+    );
+
+    await client.query("COMMIT");
+
+    const newBalance = Math.max(0, fmtNum(provider.balance) - fmtNum(amount));
+    res.json({
+      message: `Pago de ${payment_method || "transferencia"} registrado para ${provider.name}`,
+      new_balance: newBalance,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[PAY PROVIDER ERROR]", err);
+    res.status(500).json({ error: err.message || "Error al registrar pago al proveedor" });
+  } finally {
+    client.release();
+  }
+};
+
+// ============================================
 // 💸 REGISTRAR GASTO DIRECTO
 // ============================================
 exports.createExpense = async (req, res) => {
@@ -334,7 +384,6 @@ exports.createExpense = async (req, res) => {
       ]
     );
 
-    // Si es compra de producto, actualizar stock y precio
     if (expense_type === "purchase" && product_id && quantity > 0) {
       await db.query(
         `UPDATE products SET purchase_price = $1, stock = stock + $2, updated_at = NOW() WHERE id = $3`,

@@ -36,4 +36,5 @@ router.put("/:id", auth, requireManager, ctrl.update);
  */
 router.delete("/:id", auth, requireManager, ctrl.remove);
 
+router.patch("/:id", auth, requireManager, ctrl.toggleActive);
 module.exports = router;

@@ -18,78 +18,31 @@ router.get("/provider-analysis", fc.getProviderAnalysis);
 // ============================================
 // 📄 FACTURAS
 // ============================================
+router.get("/invoices",           fc.getInvoices);
+router.post("/invoices",          fc.createInvoice);
+router.post("/invoices/pay",      fc.payInvoice);
 
+// ============================================
+// 💳 PAGO DIRECTO A PROVEEDOR  ← NUEVO
+// ============================================
 /**
- * GET  /api/finance/invoices
- * @query type       'service' | 'purchase'
- * @query status     'paid' | 'pending' | 'partial'
- * @query start_date, end_date
- * @query limit, offset
- */
-router.get("/invoices",      fc.getInvoices);
-
-/**
- * POST /api/finance/invoices
- * @body invoice_type   'service' | 'purchase'
- * @body provider_id    number  (requerido para compras)
- * @body invoice_number string  (opcional)
- * @body invoice_date   date
- * @body due_date       date    (opcional)
- * @body description    string
- * @body total_amount   number
- * @body payment_method 'cash' | 'credit' | 'transfer' | 'check'
- * @body items          [{ product_id, quantity, unit_price }]  (solo compras)
- * @body notes          string  (opcional)
+ * POST /api/finance/provider-payment
+ * @body provider_id     number
+ * @body amount          number
+ * @body payment_method  'transfer' | 'cash' | 'check'
+ * @body notes           string (opcional)
  *
- * - payment_method='credit' queda como deuda pendiente
- * - Compras actualizan stock y purchase_price del producto
- * - Compras registran historial de precios si el precio cambia
+ * - Valida que el monto no supere el balance actual
+ * - Registra en provider_payments
+ * - Reduce el balance del proveedor
  */
-router.post("/invoices",     fc.createInvoice);
-
-/**
- * POST /api/finance/invoices/pay
- * @body invoice_id     number
- * @body amount         number
- * @body payment_method string
- * @body payment_date   date    (opcional)
- * @body notes          string  (opcional)
- */
-router.post("/invoices/pay", fc.payInvoice);
+router.post("/provider-payment",  fc.payProvider);
 
 // ============================================
 // 💸 GASTOS DIRECTOS
 // ============================================
-
-/**
- * GET  /api/finance/expenses
- * @query type       expense_type enum
- * @query start_date, end_date
- * @query limit, offset
- */
 router.get("/expenses",             fc.getExpenses);
-
-/**
- * GET  /api/finance/expenses/by-category
- * Agrupa gastos de los últimos 3 meses por categoría
- */
 router.get("/expenses/by-category", fc.getExpensesByCategory);
-
-/**
- * POST /api/finance/expenses
- * @body expense_type   'purchase'|'service'|'utility'|'tax'|'salary'|'other'
- * @body category       string  (opcional)
- * @body description    string
- * @body amount         number
- * @body payment_method 'cash' | 'credit' | 'transfer' | 'check'
- * @body provider_id    number  (opcional)
- * @body product_id     number  (opcional, si expense_type='purchase')
- * @body quantity       number  (opcional, default 1)
- * @body notes          string  (opcional)
- * @body expense_date   date    (opcional, default hoy)
- *
- * - Si expense_type='purchase' y product_id existe, actualiza stock y precio
- */
 router.post("/expenses",            fc.createExpense);
 
 module.exports = router;
