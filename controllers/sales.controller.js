@@ -83,6 +83,7 @@ exports.getAllSales = async (req, res) => {
 // ============================================
 // 📦 OBTENER HISTORIAL DE PEDIDOS DEL USUARIO
 // ============================================
+
 exports.getUserOrderHistory = async (req, res) => {
   const { userId } = req.query;
 
@@ -97,8 +98,8 @@ exports.getUserOrderHistory = async (req, res) => {
     const result = await db.query(
       `SELECT 
         s.id,
-        s.sale_number         AS order_code,
-        s.sale_date           AS created_at,
+        s.sale_number            AS order_code,
+        s.sale_date              AS created_at,
         s.total,
         s.payment_status,
         s.payment_method,
@@ -108,7 +109,9 @@ exports.getUserOrderHistory = async (req, res) => {
         s.discount_amount,
         s.shipping_address,
         s.shipping_city,
-        s.shipping_notes
+        s.shipping_notes,
+        s.payment_proof_url,
+        s.payment_proof_uploaded_at
       FROM sales s
       WHERE s.customer_id = $1
       ORDER BY s.sale_date DESC`,
