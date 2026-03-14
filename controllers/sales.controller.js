@@ -503,4 +503,88 @@ exports.confirmPayment = async (req, res) => {
   }
 };
 
+// ============================================
+// 📎 SUBIR COMPROBANTE DE PAGO (Cliente)
+// ============================================
+exports.uploadPaymentProof = async (req, res) => {
+  const { id } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: "Debes subir una imagen del comprobante" });
+  }
+
+  try {
+    // Verificar que la venta existe y pertenece al usuario
+    const saleCheck = await db.query(
+      "SELECT id, customer_id, payment_status FROM sales WHERE id = $1",
+      [id]
+    );
+
+    if (saleCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Pedido no encontrado" });
+    }
+
+    const sale = saleCheck.rows[0];
+
+    // Solo el dueño del pedido puede subir el comprobante
+    if (sale.customer_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: "No tienes permiso para modificar este pedido" });
+    }
+
+    if (sale.payment_status === "paid") {
+      return res.status(400).json({ success: false, message: "Este pedido ya fue pagado" });
+    }
+
+    if (sale.payment_status === "cancelled") {
+      return res.status(400).json({ success: false, message: "Este pedido fue cancelado" });
+    }
+
+    // Guardar URL del comprobante
+    const proofUrl = req.file.path || req.file.secure_url;
+
+    await db.query(
+      `UPDATE sales 
+       SET payment_proof_url = $1, payment_proof_uploaded_at = NOW()
+       WHERE id = $2`,
+      [proofUrl, id]
+    );
+
+    res.json({
+      success: true,
+      message: "Comprobante subido exitosamente. El administrador verificará tu pago.",
+      proof_url: proofUrl,
+    });
+
+  } catch (error) {
+    console.error("UPLOAD PROOF ERROR:", error);
+    res.status(500).json({ success: false, message: "Error al subir el comprobante" });
+  }
+};
+
+// ============================================
+// 🖼️ OBTENER COMPROBANTE (Admin)
+// ============================================
+exports.getPaymentProof = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await db.query(
+      `SELECT id, sale_number, payment_proof_url, payment_proof_uploaded_at, 
+              payment_status, total, customer_id
+       FROM sales WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Pedido no encontrado" });
+    }
+
+    res.json({ success: true, data: result.rows[0] });
+
+  } catch (error) {
+    console.error("GET PROOF ERROR:", error);
+    res.status(500).json({ success: false, message: "Error al obtener el comprobante" });
+  }
+};
+
 module.exports = exports;
