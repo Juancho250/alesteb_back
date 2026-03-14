@@ -1,5 +1,5 @@
 const db = require("../config/db");
-const { sendOrderConfirmationEmail } = require("../config/emailConfig");
+const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 
 // ============================================
 // 📋 OBTENER TODAS LAS VENTAS (PARA HISTORIAL)
@@ -477,7 +477,12 @@ exports.confirmPayment = async (req, res) => {
     await client.query("BEGIN");
 
     const orderCheck = await client.query(
-      "SELECT id, payment_status, total FROM sales WHERE id = $1",
+      `SELECT s.id, s.payment_status, s.total, s.sale_number,
+              u.email AS customer_email, u.name AS customer_name,
+              s.shipping_address, s.shipping_city, s.shipping_notes
+       FROM sales s
+       LEFT JOIN users u ON s.customer_id = u.id
+       WHERE s.id = $1`,
       [id]
     );
 
@@ -486,7 +491,9 @@ exports.confirmPayment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Pedido no encontrado" });
     }
 
-    if (orderCheck.rows[0].payment_status !== "pending") {
+    const order = orderCheck.rows[0];
+
+    if (order.payment_status !== "pending") {
       await client.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "El pedido ya fue procesado" });
     }
@@ -496,7 +503,34 @@ exports.confirmPayment = async (req, res) => {
       [payment_method || "cash", id]
     );
 
+    // Obtener items del pedido para el email
+    const itemsResult = await client.query(
+      `SELECT si.quantity, si.unit_price, si.subtotal, p.name, p.sku
+       FROM sale_items si
+       INNER JOIN products p ON si.product_id = p.id
+       WHERE si.sale_id = $1`,
+      [id]
+    );
+
     await client.query("COMMIT");
+
+    // Enviar email de confirmación al cliente (best-effort)
+    if (order.customer_email) {
+      const orderCode = `AL-${order.sale_number?.slice(4) || id}`;
+      sendPaymentConfirmedEmail(
+        order.customer_email,
+        order.customer_name,
+        {
+          orderCode,
+          total:           order.total,
+          items:           itemsResult.rows,
+          shippingAddress: order.shipping_address,
+          shippingCity:    order.shipping_city,
+          shippingNotes:   order.shipping_notes,
+          paymentMethod:   payment_method || "transfer",
+        }
+      ).catch(err => console.error("Email confirmación pago falló:", err));
+    }
 
     res.json({ success: true, message: "Pago confirmado exitosamente" });
 
