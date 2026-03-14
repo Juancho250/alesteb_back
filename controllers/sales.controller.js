@@ -29,6 +29,8 @@ exports.getAllSales = async (req, res) => {
           s.shipping_address,
           s.shipping_city,
           s.shipping_notes,
+          s.payment_proof_url,
+          s.payment_proof_uploaded_at,
           u.name AS customer_name,
           u.email AS customer_email
         FROM sales s
@@ -53,11 +55,12 @@ exports.getAllSales = async (req, res) => {
           s.shipping_address,
           s.shipping_city,
           s.shipping_notes,
+          s.payment_proof_url,
+          s.payment_proof_uploaded_at,
           u.name AS customer_name,
           u.email AS customer_email
         FROM sales s
         LEFT JOIN users u ON s.customer_id = u.id
-        WHERE s.customer_id = $1
         ORDER BY s.sale_date DESC
       `;
       params = [req.user.id];
