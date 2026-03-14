@@ -326,6 +326,175 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
 };
 
 // ============================================
+// ✅ EMAIL DE PAGO CONFIRMADO (Admin → Cliente)
+// ============================================
+const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
+  const {
+    orderCode,
+    total,
+    items = [],
+    shippingAddress,
+    shippingCity,
+    shippingNotes,
+    paymentMethod,
+  } = orderData;
+
+  const paymentLabels = {
+    transfer: "Transferencia bancaria",
+    cash:     "Efectivo",
+    credit:   "Tarjeta",
+    check:    "Cheque",
+  };
+  const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || "Confirmado";
+
+  const itemsRows = items.map(item => `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#0f172a;font-size:14px;font-family:Arial,sans-serif;">${item.name}</div>
+        ${item.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px;">SKU: ${item.sku}</div>` : ""}
+      </td>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#475569;font-weight:600;font-size:14px;font-family:Arial,sans-serif;">×${item.quantity}</td>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:800;color:#0f172a;font-size:14px;font-family:Arial,sans-serif;">$${Number(item.unit_price * item.quantity).toLocaleString("es-CO")}</td>
+    </tr>
+  `).join("");
+
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  sendSmtpEmail.subject = `🎉 ¡Pago confirmado! Pedido ${orderCode} - Alesteb`;
+  sendSmtpEmail.to      = [{ email, name: userName }];
+  sendSmtpEmail.sender  = SENDER;
+
+  sendSmtpEmail.htmlContent = `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+    <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+        <tr><td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+
+            <!-- HEADER VERDE -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#064e3b 0%,#065f46 100%);padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
+                <div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:50px;display:inline-block;padding:6px 20px;margin-bottom:20px;">
+                  <span style="color:#a7f3d0;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;">Boutique Premium</span>
+                </div>
+                <div style="color:white;font-size:38px;font-weight:900;letter-spacing:-2px;margin:0;text-transform:uppercase;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:#34d399;margin:16px auto 20px;border-radius:2px;"></div>
+                <!-- Badge confirmado -->
+                <div style="background:rgba(52,211,153,0.2);border:2px solid rgba(52,211,153,0.5);border-radius:50px;display:inline-block;padding:12px 32px;">
+                  <span style="color:#6ee7b7;font-size:16px;font-weight:800;letter-spacing:1px;">✅ &nbsp;PAGO CONFIRMADO</span>
+                </div>
+              </td>
+            </tr>
+
+            <!-- BODY -->
+            <tr>
+              <td style="background:white;padding:40px;">
+
+                <p style="font-size:22px;color:#0f172a;font-weight:700;margin:0 0 8px;">¡Hola, ${userName}! 🎉</p>
+                <p style="font-size:15px;color:#64748b;line-height:1.7;margin:0 0 32px;">
+                  Tu pago fue <strong style="color:#059669;">verificado y confirmado</strong> por nuestro equipo.
+                  Tu pedido está listo para ser procesado y enviado. Pronto nos pondremos en contacto contigo
+                  para coordinar la entrega.
+                </p>
+
+                <!-- CÓDIGO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:2px solid #a7f3d0;border-radius:16px;margin-bottom:32px;">
+                  <tr>
+                    <td style="padding:20px 24px;">
+                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Código de pedido</div>
+                      <div style="font-size:28px;font-weight:900;color:#064e3b;letter-spacing:1px;font-family:'Courier New',monospace;">${orderCode}</div>
+                    </td>
+                    <td style="padding:20px 24px;text-align:right;border-left:1px solid #a7f3d0;">
+                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Estado</div>
+                      <div style="font-size:15px;font-weight:800;color:#065f46;">✅ Pagado</div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- PRODUCTOS -->
+                <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Resumen del pedido</div>
+                <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:32px;">
+                  <thead>
+                    <tr style="background:#f8fafc;">
+                      <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Producto</th>
+                      <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Cant.</th>
+                      <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>${itemsRows}</tbody>
+                  <tfoot>
+                    <tr style="background:#064e3b;">
+                      <td colspan="2" style="padding:16px;color:rgba(255,255,255,0.7);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Total Pagado</td>
+                      <td style="padding:16px;text-align:right;color:white;font-size:22px;font-weight:900;">$${Number(total).toLocaleString("es-CO")}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+
+                <!-- MÉTODO PAGO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;margin-bottom:32px;">
+                  <tr>
+                    <td style="padding:18px 24px;">
+                      <div style="font-size:11px;font-weight:800;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Método de pago</div>
+                      <div style="font-size:15px;font-weight:700;color:#065f46;">💳 &nbsp;${paymentLabel}</div>
+                    </td>
+                  </tr>
+                </table>
+
+                ${shippingAddress ? `
+                <!-- ENVÍO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;margin-bottom:32px;">
+                  <tr>
+                    <td style="padding:20px 24px;">
+                      <div style="font-size:11px;font-weight:800;color:#1d4ed8;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Datos de envío</div>
+                      <div style="font-weight:800;color:#1e3a8a;font-size:15px;margin-bottom:4px;">📍 ${shippingCity || ""}</div>
+                      <div style="color:#1d4ed8;font-size:14px;line-height:1.5;">${shippingAddress}</div>
+                      ${shippingNotes ? `<div style="color:#3b82f6;font-size:12px;margin-top:6px;font-style:italic;">Nota: ${shippingNotes}</div>` : ""}
+                    </td>
+                  </tr>
+                </table>
+                ` : ""}
+
+                <!-- CTA WHATSAPP -->
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="center">
+                      <a href="https://wa.me/573145055073?text=Hola!%20Tengo%20preguntas%20sobre%20mi%20pedido%20${orderCode}"
+                         style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:16px 36px;border-radius:50px;letter-spacing:0.5px;">
+                        💬 &nbsp;Contactar por WhatsApp
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+              </td>
+            </tr>
+
+            <!-- FOOTER -->
+            <tr>
+              <td style="background:#0f172a;padding:28px 40px;border-radius:0 0 20px 20px;text-align:center;">
+                <div style="color:#94a3b8;font-size:12px;margin-bottom:8px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
+                <div style="color:#475569;font-size:11px;">Este es un correo automático, por favor no respondas directamente.</div>
+              </td>
+            </tr>
+
+          </table>
+        </td></tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  try {
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log("✅ Email pago confirmado enviado:", data.messageId);
+    return true;
+  } catch (error) {
+    console.error("❌ Error al enviar email pago confirmado:", error);
+    return false;
+  }
+};
+// ============================================
 // 🔍 VERIFICAR CONFIGURACIÓN AL INICIAR
 // ============================================
 const verifyEmailConfig = () => {
@@ -342,5 +511,6 @@ verifyEmailConfig();
 module.exports = {
   generateVerificationCode,
   sendVerificationEmail,
-  sendOrderConfirmationEmail,   // ← NUEVO
+  sendOrderConfirmationEmail,
+  sendPaymentConfirmedEmail,   // ← AGREGAR
 };
