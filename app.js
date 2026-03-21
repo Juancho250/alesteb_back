@@ -1,4 +1,4 @@
-// src/app.js  ← este archivo va en la carpeta src/, NO en la raíz
+// app.js  ← VA EN LA RAÍZ del proyecto (mismo nivel que server.js)
 const express = require("express");
 const cors    = require("cors");
 const helmet  = require("helmet");
@@ -11,6 +11,7 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 
+// Helper que no revienta la app si un módulo falta
 function safeRequire(path, label) {
   try {
     const mod = require(path);
@@ -22,19 +23,19 @@ function safeRequire(path, label) {
   }
 }
 
-// Paths relativos a src/app.js → src/routes/
-const authRoutes          = safeRequire("./routes/auth.routes",          "auth.routes");
-const usersRoutes         = safeRequire("./routes/users.routes",         "users.routes");
-const rolesRoutes         = safeRequire("./routes/roles.routes",         "roles.routes");
-const providersRoutes     = safeRequire("./routes/providers.routes",     "providers.routes");
-const financeRoutes       = safeRequire("./routes/finance.routes",       "finance.routes");
-const productsRoutes      = safeRequire("./routes/products.routes",      "products.routes");
-const categoriesRoutes    = safeRequire("./routes/categories.routes",    "categories.routes");
-const discountsRoutes     = safeRequire("./routes/discounts.routes",     "discounts.routes");
-const salesRoutes         = safeRequire("./routes/sales.routes",         "sales.routes");
-const bannersRoutes       = safeRequire("./routes/banners.routes",       "banners.routes");
-const notificationsRoutes = safeRequire("./routes/notifications.routes", "notifications.routes");
-const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
+// Rutas — paths relativos a la RAÍZ del proyecto
+const authRoutes          = safeRequire("./routes/auth.routes",               "auth.routes");
+const usersRoutes         = safeRequire("./routes/users.routes",              "users.routes");
+const rolesRoutes         = safeRequire("./routes/roles.routes",              "roles.routes");
+const providersRoutes     = safeRequire("./routes/providers.routes",          "providers.routes");
+const financeRoutes       = safeRequire("./routes/finance.routes",            "finance.routes");
+const productsRoutes      = safeRequire("./routes/products.routes",           "products.routes");
+const categoriesRoutes    = safeRequire("./routes/categories.routes",         "categories.routes");
+const discountsRoutes     = safeRequire("./routes/discounts.routes",          "discounts.routes");
+const salesRoutes         = safeRequire("./routes/sales.routes",              "sales.routes");
+const bannersRoutes       = safeRequire("./routes/banners.routes",            "banners.routes");
+const notificationsRoutes = safeRequire("./routes/notifications.routes",      "notifications.routes");
+const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -49,7 +50,9 @@ if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
 
-app.get("/", (req, res) => res.json({ message: "API Alesteb OK", timestamp: new Date() }));
+app.get("/", (req, res) =>
+  res.json({ message: "API Alesteb OK", timestamp: new Date() })
+);
 
 app.use((err, req, res, next) => {
   console.error("[EXPRESS ERROR]", err.stack);
