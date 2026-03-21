@@ -13,11 +13,13 @@ const financeRoutes = require("./routes/finance.routes");
 // Pruébalo comentando la siguiente línea si sigue fallando:
 // const purchaseOrdersRoutes = require("./routes/purchase_orders.routes"); 
 const productsRoutes = require("./routes/products.routes");
+const variantsBundlesRoutes = require("./routes/variants_bundles.routes");
 const categoriesRoutes = require("./routes/categories.routes");
 const discountsRoutes = require("./routes/discounts.routes");
 const salesRoutes = require("./routes/sales.routes");
 const bannersRoutes = require("./routes/banners.routes");
 const notificationsRoutes = require("./routes/notifications.routes");
+
 
 const app = express();
 
@@ -33,6 +35,7 @@ app.use("/api/users", usersRoutes);
 app.use("/api/roles", rolesRoutes);
 app.use("/api/providers", providersRoutes);
 app.use("/api/products", productsRoutes);
+app.use("/api/variants-bundles", variantsBundlesRoutes);
 app.use("/api/categories", categoriesRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/discounts", discountsRoutes);
