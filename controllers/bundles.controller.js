@@ -39,24 +39,16 @@ exports.getBundleItems = async (req, res) => {
 // El bundle es un producto normal con is_bundle=true
 // body: { name, description, category_id, bundle_price, items: [{product_id, variant_id?, quantity, is_gift}] }
 exports.createBundle = async (req, res) => {
-  let { name, description, category_id, bundle_price, items } = req.body;
+  const { name, description, category_id, bundle_price, items = [] } = req.body;
   const images = Array.isArray(req.files) ? req.files : [];
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
 
-    // ── CORRECCIÓN: parsear items si viene como string (FormData) ──
-    if (typeof items === "string") {
-      try { items = JSON.parse(items); }
-      catch { return res.status(400).json({ success: false, message: "items JSON inválido" }); }
-    }
-    if (!Array.isArray(items)) items = [];
-
-    if (!name?.trim())                throw new Error("El nombre es requerido");
-    if (!bundle_price || Number(bundle_price) <= 0) throw new Error("El precio del bundle es requerido");
-    if (items.length < 2)             throw new Error("Un bundle debe tener al menos 2 productos");
-
+    if (!name?.trim()) throw new Error("El nombre es requerido");
+    if (!bundle_price || bundle_price <= 0) throw new Error("El precio del bundle es requerido");
+    if (items.length < 2) throw new Error("Un bundle debe tener al menos 2 productos");
 
     // Crear el producto "bundle"
     const prodRes = await client.query(
