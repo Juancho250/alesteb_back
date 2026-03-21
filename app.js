@@ -14,24 +14,24 @@ const safeRequire = (path) => {
   }
 };
 
-// ── Config primero ────────────────────────────────────────────────────────────
-const db         = safeRequire("./config/db");
-const cloudinary = safeRequire("./config/cloudinary");
+// ── Config ────────────────────────────────────────────────────────────────────
+const db         = safeRequire("./src/config/db");
+const cloudinary = safeRequire("./src/config/cloudinary");
 
-// ── Rutas — nombres EXACTOS de tus archivos ───────────────────────────────────
-const authRoutes            = safeRequire("./routes/auth.routes");
-const usersRoutes           = safeRequire("./routes/users.routes");
-const rolesRoutes           = safeRequire("./routes/roles.routes");
-const providersRoutes       = safeRequire("./routes/providers.routes");
-const financeRoutes         = safeRequire("./routes/finance.routes");
-const productsRoutes        = safeRequire("./routes/products.routes");
-const variantsBundlesRoutes = safeRequire("./routes/variants_bundles.routes"); // ← guion bajo
-const categoriesRoutes      = safeRequire("./routes/categories.routes");
-const discountsRoutes       = safeRequire("./routes/discounts.routes");
-const salesRoutes           = safeRequire("./routes/sales.routes");
-const bannersRoutes         = safeRequire("./routes/banners.routes");
-const notificationsRoutes   = safeRequire("./routes/notifications.routes");
-const statsRoutes           = safeRequire("./routes/stats.routes"); // ← existe en tu carpeta
+// ── Rutas ─────────────────────────────────────────────────────────────────────
+const authRoutes            = safeRequire("./src/routes/auth.routes");
+const usersRoutes           = safeRequire("./src/routes/users.routes");
+const rolesRoutes           = safeRequire("./src/routes/roles.routes");
+const providersRoutes       = safeRequire("./src/routes/providers.routes");
+const financeRoutes         = safeRequire("./src/routes/finance.routes");
+const productsRoutes        = safeRequire("./src/routes/products.routes");
+const variantsBundlesRoutes = safeRequire("./src/routes/variants_bundles.routes");
+const categoriesRoutes      = safeRequire("./src/routes/categories.routes");
+const discountsRoutes       = safeRequire("./src/routes/discounts.routes");
+const salesRoutes           = safeRequire("./src/routes/sales.routes");
+const bannersRoutes         = safeRequire("./src/routes/banners.routes");
+const notificationsRoutes   = safeRequire("./src/routes/notifications.routes");
+const statsRoutes           = safeRequire("./src/routes/stats.routes");
 
 const app = express();
 
