@@ -18,6 +18,7 @@ const discountsRoutes = require("./routes/discounts.routes");
 const salesRoutes = require("./routes/sales.routes");
 const bannersRoutes = require("./routes/banners.routes");
 const notificationsRoutes = require("./routes/notifications.routes");
+const variantsBundlesRoutes = require("./routes/variants_bundles.routes");
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use("/api/discounts", discountsRoutes);
 app.use("/api/banners", bannersRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/api/variants-bundles", variantsBundlesRoutes);
 
 // Solo si el archivo existe
 // app.use("/api/purchase-orders", purchaseOrdersRoutes);
