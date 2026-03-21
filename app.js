@@ -1,28 +1,8 @@
-// src/app.js
+// src/app.js — versión diagnóstico: cada require en try/catch con log detallado
 const express = require("express");
 const cors    = require("cors");
 const helmet  = require("helmet");
 const morgan  = require("morgan");
-
-const authRoutes          = require("./routes/auth.routes");
-const usersRoutes         = require("./routes/users.routes");
-const rolesRoutes         = require("./routes/roles.routes");
-const providersRoutes     = require("./routes/providers.routes");
-const financeRoutes       = require("./routes/finance.routes");
-const productsRoutes      = require("./routes/products.routes");
-const categoriesRoutes    = require("./routes/categories.routes");
-const discountsRoutes     = require("./routes/discounts.routes");
-const salesRoutes         = require("./routes/sales.routes");
-const bannersRoutes       = require("./routes/banners.routes");
-const notificationsRoutes = require("./routes/notifications.routes");
-
-// ✅ Rutas nuevas — solo se montan si el archivo existe
-let variantsBundlesRoutes = null;
-try {
-  variantsBundlesRoutes = require("./routes/variants_bundles.routes");
-} catch (e) {
-  console.warn("[WARN] variants_bundles.routes.js no encontrado — rutas de variantes desactivadas");
-}
 
 const app = express();
 
@@ -31,23 +11,52 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 
-// Rutas
-app.use("/api/auth",          authRoutes);
-app.use("/api/users",         usersRoutes);
-app.use("/api/roles",         rolesRoutes);
-app.use("/api/providers",     providersRoutes);
-app.use("/api/products",      productsRoutes);
-app.use("/api/categories",    categoriesRoutes);
-app.use("/api/sales",         salesRoutes);
-app.use("/api/discounts",     discountsRoutes);
-app.use("/api/banners",       bannersRoutes);
-app.use("/api/finance",       financeRoutes);
-app.use("/api/notifications", notificationsRoutes);
-
-if (variantsBundlesRoutes) {
-  app.use("/api", variantsBundlesRoutes);
+// ── Función helper para require seguro ──────────────────────────────────────
+function safeRequire(path, label) {
+  try {
+    const mod = require(path);
+    console.log(`[OK] ${label}`);
+    return mod;
+  } catch (e) {
+    console.error(`[CRASH] ${label} →`, e.message);
+    return null;
+  }
 }
 
-app.get("/", (req, res) => res.json({ message: "API Alesteb OK" }));
+// ── Cargar rutas de forma segura ─────────────────────────────────────────────
+const authRoutes          = safeRequire("./routes/auth.routes",          "auth.routes");
+const usersRoutes         = safeRequire("./routes/users.routes",         "users.routes");
+const rolesRoutes         = safeRequire("./routes/roles.routes",         "roles.routes");
+const providersRoutes     = safeRequire("./routes/providers.routes",     "providers.routes");
+const financeRoutes       = safeRequire("./routes/finance.routes",       "finance.routes");
+const productsRoutes      = safeRequire("./routes/products.routes",      "products.routes");
+const categoriesRoutes    = safeRequire("./routes/categories.routes",    "categories.routes");
+const discountsRoutes     = safeRequire("./routes/discounts.routes",     "discounts.routes");
+const salesRoutes         = safeRequire("./routes/sales.routes",         "sales.routes");
+const bannersRoutes       = safeRequire("./routes/banners.routes",       "banners.routes");
+const notificationsRoutes = safeRequire("./routes/notifications.routes", "notifications.routes");
+const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
+
+// ── Montar solo las que cargaron correctamente ────────────────────────────────
+if (authRoutes)          app.use("/api/auth",          authRoutes);
+if (usersRoutes)         app.use("/api/users",         usersRoutes);
+if (rolesRoutes)         app.use("/api/roles",         rolesRoutes);
+if (providersRoutes)     app.use("/api/providers",     providersRoutes);
+if (productsRoutes)      app.use("/api/products",      productsRoutes);
+if (categoriesRoutes)    app.use("/api/categories",    categoriesRoutes);
+if (salesRoutes)         app.use("/api/sales",         salesRoutes);
+if (discountsRoutes)     app.use("/api/discounts",     discountsRoutes);
+if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
+if (financeRoutes)       app.use("/api/finance",       financeRoutes);
+if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
+if (variantsRoutes)      app.use("/api",               variantsRoutes);
+
+app.get("/", (req, res) => res.json({ message: "API Alesteb OK", timestamp: new Date() }));
+
+// ── Error handler global ─────────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error("[EXPRESS ERROR]", err.stack);
+  res.status(500).json({ success: false, message: "Error interno del servidor", error: err.message });
+});
 
 module.exports = app;
