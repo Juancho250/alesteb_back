@@ -1,4 +1,4 @@
-// src/app.js — versión diagnóstico: cada require en try/catch con log detallado
+// src/app.js  ← este archivo va en la carpeta src/, NO en la raíz
 const express = require("express");
 const cors    = require("cors");
 const helmet  = require("helmet");
@@ -11,7 +11,6 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 
-// ── Función helper para require seguro ──────────────────────────────────────
 function safeRequire(path, label) {
   try {
     const mod = require(path);
@@ -23,7 +22,7 @@ function safeRequire(path, label) {
   }
 }
 
-// ── Cargar rutas de forma segura ─────────────────────────────────────────────
+// Paths relativos a src/app.js → src/routes/
 const authRoutes          = safeRequire("./routes/auth.routes",          "auth.routes");
 const usersRoutes         = safeRequire("./routes/users.routes",         "users.routes");
 const rolesRoutes         = safeRequire("./routes/roles.routes",         "roles.routes");
@@ -37,7 +36,6 @@ const bannersRoutes       = safeRequire("./routes/banners.routes",       "banner
 const notificationsRoutes = safeRequire("./routes/notifications.routes", "notifications.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
 
-// ── Montar solo las que cargaron correctamente ────────────────────────────────
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
 if (rolesRoutes)         app.use("/api/roles",         rolesRoutes);
@@ -53,10 +51,9 @@ if (variantsRoutes)      app.use("/api",               variantsRoutes);
 
 app.get("/", (req, res) => res.json({ message: "API Alesteb OK", timestamp: new Date() }));
 
-// ── Error handler global ─────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("[EXPRESS ERROR]", err.stack);
-  res.status(500).json({ success: false, message: "Error interno del servidor", error: err.message });
+  res.status(500).json({ success: false, message: err.message });
 });
 
 module.exports = app;
