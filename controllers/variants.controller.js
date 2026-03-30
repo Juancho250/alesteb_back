@@ -18,7 +18,7 @@ const getVariantsForProduct = async (productId) => {
             'display_value',   COALESCE(av.display_value, av.value),
             'hex_color',       av.hex_color,
             'attribute_value_id', av.id
-          ) ORDER BY at.sort_order, av.sort_order
+          ) ORDER BY at.id, av.sort_order   -- ✅ fix aquí
         ) FILTER (WHERE av.id IS NOT NULL),
         '[]'
       ) AS attributes,
@@ -37,7 +37,6 @@ const getVariantsForProduct = async (productId) => {
   `, [productId]);
   return result.rows;
 };
-
 // GET /products/:productId/variants
 exports.list = async (req, res) => {
   try {
