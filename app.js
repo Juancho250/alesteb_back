@@ -12,6 +12,7 @@ app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 
 // Helper que no revienta la app si un módulo falta
+// En app.js, cambia la función safeRequire por esta:
 function safeRequire(path, label) {
   try {
     const mod = require(path);
@@ -19,10 +20,10 @@ function safeRequire(path, label) {
     return mod;
   } catch (e) {
     console.error(`[CRASH] ${label} →`, e.message);
+    console.error(e.stack); // ← agrega esto para ver el stack completo
     return null;
   }
 }
-
 // Rutas — paths relativos a la RAÍZ del proyecto
 const authRoutes          = safeRequire("./routes/auth.routes",               "auth.routes");
 const usersRoutes         = safeRequire("./routes/users.routes",              "users.routes");
@@ -49,6 +50,24 @@ if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
+
+// Justo antes del app.get("/", ...)
+app.get("/api/health", (req, res) => {
+  res.json({
+    auth:          !!authRoutes,
+    users:         !!usersRoutes,
+    roles:         !!rolesRoutes,
+    providers:     !!providersRoutes,
+    products:      !!productsRoutes,
+    categories:    !!categoriesRoutes,
+    sales:         !!salesRoutes,
+    discounts:     !!discountsRoutes,
+    banners:       !!bannersRoutes,
+    finance:       !!financeRoutes,
+    notifications: !!notificationsRoutes,
+    variants:      !!variantsRoutes,
+  });
+});
 
 app.get("/", (req, res) =>
   res.json({ message: "API Alesteb OK", timestamp: new Date() })
