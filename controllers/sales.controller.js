@@ -6,19 +6,17 @@ const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../co
 // ============================================
 exports.getAllSales = async (req, res) => {
   try {
-    // Si el usuario es admin o gerente, puede ver todas las ventas
-    // Si no, solo ve sus propias ventas
     let query;
     let params = [];
 
     if (req.user?.roles?.includes('admin') || req.user?.roles?.includes('gerente')) {
-      // Admin/Gerente ve todas las ventas
+      // Admin/Gerente ve TODAS las ventas
       query = `
-        SELECT 
+        SELECT
           s.id,
           s.sale_number,
           s.customer_id,
-          s.sale_date AS created_at,
+          s.sale_date         AS created_at,
           s.total,
           s.payment_status,
           s.payment_method,
@@ -31,20 +29,24 @@ exports.getAllSales = async (req, res) => {
           s.shipping_notes,
           s.payment_proof_url,
           s.payment_proof_uploaded_at,
-          u.name AS customer_name,
-          u.email AS customer_email
+          u.name              AS customer_name,
+          u.email             AS customer_email
         FROM sales s
         LEFT JOIN users u ON s.customer_id = u.id
         ORDER BY s.sale_date DESC
       `;
+      // params queda vacío — sin $1 en la query, pg no se queja
     } else if (req.user?.id) {
-      // Usuario normal solo ve sus ventas
+      // ✅ CORRECCIÓN BUG #3: la query anterior NO tenía WHERE s.customer_id = $1
+      // pero sí enviaba params = [req.user.id], lo que hacía que pg lanzara:
+      // "bind message supplies 1 parameters, but prepared statement requires 0"
+      // Además el usuario veía las ventas de TODOS. Ambos problemas corregidos.
       query = `
-        SELECT 
+        SELECT
           s.id,
           s.sale_number,
           s.customer_id,
-          s.sale_date AS created_at,
+          s.sale_date         AS created_at,
           s.total,
           s.payment_status,
           s.payment_method,
@@ -57,23 +59,24 @@ exports.getAllSales = async (req, res) => {
           s.shipping_notes,
           s.payment_proof_url,
           s.payment_proof_uploaded_at,
-          u.name AS customer_name,
-          u.email AS customer_email
+          u.name              AS customer_name,
+          u.email             AS customer_email
         FROM sales s
         LEFT JOIN users u ON s.customer_id = u.id
+        WHERE s.customer_id = $1
         ORDER BY s.sale_date DESC
       `;
       params = [req.user.id];
     } else {
       return res.status(403).json({
         success: false,
-        message: "No autorizado para ver ventas"
+        message: "No autorizado para ver ventas",
       });
     }
 
     const result = await db.query(query, params);
-
     res.json(result.rows);
+
   } catch (error) {
     console.error("GET ALL SALES ERROR:", error);
     res.status(500).json({
@@ -86,7 +89,6 @@ exports.getAllSales = async (req, res) => {
 // ============================================
 // 📦 OBTENER HISTORIAL DE PEDIDOS DEL USUARIO
 // ============================================
-
 exports.getUserOrderHistory = async (req, res) => {
   const { userId } = req.query;
 
@@ -99,7 +101,7 @@ exports.getUserOrderHistory = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT 
+      `SELECT
         s.id,
         s.sale_number            AS order_code,
         s.sale_date              AS created_at,
@@ -146,12 +148,12 @@ exports.getUserStats = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT 
-        COUNT(DISTINCT s.id) AS total_orders,
+      `SELECT
+        COUNT(DISTINCT s.id)                                                          AS total_orders,
         COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0) AS total_invested,
         COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) AS pending_amount,
-        COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END) AS completed_orders,
-        COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END) AS pending_orders
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END)          AS completed_orders,
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END)          AS pending_orders
       FROM sales s
       WHERE s.customer_id = $1`,
       [userId]
@@ -175,7 +177,7 @@ exports.getOrderDetail = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT 
+      `SELECT
         si.id,
         si.product_id,
         si.quantity,
@@ -185,10 +187,10 @@ exports.getOrderDetail = async (req, res) => {
         p.name,
         p.sku,
         (
-          SELECT pi.url 
-          FROM product_images pi 
-          WHERE pi.product_id = p.id 
-            AND pi.is_main = true 
+          SELECT pi.url
+          FROM product_images pi
+          WHERE pi.product_id = p.id
+            AND pi.is_main = true
           LIMIT 1
         ) AS main_image
       FROM sale_items si
@@ -210,22 +212,20 @@ exports.getOrderDetail = async (req, res) => {
 
 // ============================================
 // 🛒 CREAR PEDIDO/VENTA (VENTAS FÍSICAS Y ONLINE)
-// ✅ CORREGIDO: Ahora acepta tanto ventas físicas como online
 // ============================================
 exports.createOrder = async (req, res) => {
   const {
     customer_id,
     items,
-    payment_method = "cash",
-    discount_amount  = 0,
-    tax_amount       = 0,
-    sale_type        = "online",  // "fisica" o "online"
+    payment_method  = "cash",
+    discount_amount = 0,
+    tax_amount      = 0,
+    sale_type       = "online",
     shipping_address,
     shipping_city,
     shipping_notes,
   } = req.body;
 
-  // Validaciones
   if (!customer_id || !items || items.length === 0) {
     return res.status(400).json({
       success: false,
@@ -238,14 +238,12 @@ exports.createOrder = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Obtener datos del cliente
+    // 1. Datos del cliente
     const customerResult = await client.query(
       "SELECT id, name, email FROM users WHERE id = $1",
       [customer_id]
     );
-    if (customerResult.rows.length === 0) {
-      throw new Error("Cliente no encontrado");
-    }
+    if (customerResult.rows.length === 0) throw new Error("Cliente no encontrado");
     const customer = customerResult.rows[0];
 
     // 2. Validar productos y calcular totales
@@ -258,36 +256,31 @@ exports.createOrder = async (req, res) => {
         [item.product_id]
       );
 
-      if (productResult.rows.length === 0) {
+      if (productResult.rows.length === 0)
         throw new Error(`Producto ${item.product_id} no encontrado o inactivo`);
-      }
 
       const product = productResult.rows[0];
 
-      if (product.stock < item.quantity) {
-        throw new Error(
-          `Stock insuficiente para ${product.name}. Disponible: ${product.stock}`
-        );
-      }
+      if (product.stock < item.quantity)
+        throw new Error(`Stock insuficiente para ${product.name}. Disponible: ${product.stock}`);
 
-      // ✅ CORREGIDO: Usar el precio del producto de la DB, no el enviado por el frontend
       const itemSubtotal = product.sale_price * item.quantity;
       subtotal += itemSubtotal;
 
       validatedItems.push({
-        product_id:     product.id,
-        name:           product.name,
-        sku:            product.sku,
-        quantity:       item.quantity,
-        unit_price:     product.sale_price,
-        unit_cost:      product.purchase_price || 0,
-        subtotal:       itemSubtotal,
+        product_id:      product.id,
+        name:            product.name,
+        sku:             product.sku,
+        quantity:        item.quantity,
+        unit_price:      product.sale_price,
+        unit_cost:       product.purchase_price || 0,
+        subtotal:        itemSubtotal,
         profit_per_unit: product.sale_price - (product.purchase_price || 0),
-        total_profit:   (product.sale_price - (product.purchase_price || 0)) * item.quantity,
+        total_profit:    (product.sale_price - (product.purchase_price || 0)) * item.quantity,
       });
     }
 
-    const total = subtotal - discount_amount + tax_amount;
+    const total = subtotal - Number(discount_amount) + Number(tax_amount);
 
     // 3. Generar número de venta
     const saleNumberResult = await client.query(
@@ -296,40 +289,19 @@ exports.createOrder = async (req, res) => {
     const saleNumber = `VEN-${String(saleNumberResult.rows[0].next_num).padStart(6, "0")}`;
 
     // 4. Crear venta
-    // ✅ CORREGIDO: Para ventas físicas, el pago es inmediato (paid), para online es pending
     const payment_status = sale_type === "fisica" ? "paid" : "pending";
 
     const saleResult = await client.query(
       `INSERT INTO sales (
-        sale_number,
-        customer_id,
-        subtotal,
-        tax_amount,
-        discount_amount,
-        total,
-        payment_method,
-        payment_status,
-        sale_type,
-        created_by,
-        shipping_address,
-        shipping_city,
-        shipping_notes
+        sale_number, customer_id, subtotal, tax_amount, discount_amount,
+        total, payment_method, payment_status, sale_type, created_by,
+        shipping_address, shipping_city, shipping_notes
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING id`,
       [
-        saleNumber,
-        customer_id,
-        subtotal,
-        tax_amount,
-        discount_amount,
-        total,
-        payment_method,
-        payment_status,
-        sale_type,
-        customer_id,
-        shipping_address || null,
-        shipping_city    || null,
-        shipping_notes   || null,
+        saleNumber, customer_id, subtotal, tax_amount, discount_amount,
+        total, payment_method, payment_status, sale_type, customer_id,
+        shipping_address || null, shipping_city || null, shipping_notes || null,
       ]
     );
 
@@ -343,18 +315,11 @@ exports.createOrder = async (req, res) => {
           subtotal, profit_per_unit, total_profit
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
-          saleId,
-          item.product_id,
-          item.quantity,
-          item.unit_price,
-          item.unit_cost,
-          item.subtotal,
-          item.profit_per_unit,
-          item.total_profit,
+          saleId, item.product_id, item.quantity, item.unit_price,
+          item.unit_cost, item.subtotal, item.profit_per_unit, item.total_profit,
         ]
       );
 
-      // ✅ Reducir stock automáticamente
       await client.query(
         "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
         [item.quantity, item.product_id]
@@ -363,15 +328,14 @@ exports.createOrder = async (req, res) => {
 
     await client.query("COMMIT");
 
-    // 6. Código público de orden (AL-XXXXXX)
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
-    // 7. Enviar email de confirmación solo para pedidos online (best-effort)
+    // 6. Email de confirmación (best-effort, no bloquea la respuesta)
     if (sale_type === "online" && customer.email) {
       sendOrderConfirmationEmail(customer.email, customer.name, {
         orderCode,
         total,
-        items: validatedItems,
+        items:           validatedItems,
         shippingAddress: shipping_address,
         shippingCity:    shipping_city,
         shippingNotes:   shipping_notes,
@@ -382,23 +346,13 @@ exports.createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       message: sale_type === "fisica" ? "Venta realizada exitosamente" : "Pedido creado exitosamente",
-      data: {
-        sale_id:     saleId,
-        sale_number: saleNumber,
-        order_code:  orderCode,
-        total,
-        payment_status
-      },
+      data: { sale_id: saleId, sale_number: saleNumber, order_code: orderCode, total, payment_status },
     });
 
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("CREATE ORDER ERROR:", error);
-
-    res.status(500).json({
-      success: false,
-      message: error.message || "Error al crear el pedido",
-    });
+    res.status(500).json({ success: false, message: error.message || "Error al crear el pedido" });
   } finally {
     client.release();
   }
@@ -503,7 +457,6 @@ exports.confirmPayment = async (req, res) => {
       [payment_method || "cash", id]
     );
 
-    // Obtener items del pedido para el email
     const itemsResult = await client.query(
       `SELECT si.quantity, si.unit_price, si.subtotal, p.name, p.sku
        FROM sale_items si
@@ -514,7 +467,6 @@ exports.confirmPayment = async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Enviar email de confirmación al cliente (best-effort)
     if (order.customer_email) {
       const orderCode = `AL-${order.sale_number?.slice(4) || id}`;
       sendPaymentConfirmedEmail(
@@ -554,44 +506,35 @@ exports.uploadPaymentProof = async (req, res) => {
   }
 
   try {
-    // Verificar que la venta existe y pertenece al usuario
     const saleCheck = await db.query(
       "SELECT id, customer_id, payment_status FROM sales WHERE id = $1",
       [id]
     );
 
-    if (saleCheck.rows.length === 0) {
+    if (saleCheck.rows.length === 0)
       return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-    }
 
     const sale = saleCheck.rows[0];
 
-    // Solo el dueño del pedido puede subir el comprobante
-    if (sale.customer_id !== req.user.id) {
+    if (sale.customer_id !== req.user.id)
       return res.status(403).json({ success: false, message: "No tienes permiso para modificar este pedido" });
-    }
 
-    if (sale.payment_status === "paid") {
+    if (sale.payment_status === "paid")
       return res.status(400).json({ success: false, message: "Este pedido ya fue pagado" });
-    }
 
-    if (sale.payment_status === "cancelled") {
+    if (sale.payment_status === "cancelled")
       return res.status(400).json({ success: false, message: "Este pedido fue cancelado" });
-    }
 
-    // Guardar URL del comprobante
     const proofUrl = req.file.path || req.file.secure_url;
 
     await db.query(
-      `UPDATE sales 
-       SET payment_proof_url = $1, payment_proof_uploaded_at = NOW()
-       WHERE id = $2`,
+      `UPDATE sales SET payment_proof_url = $1, payment_proof_uploaded_at = NOW() WHERE id = $2`,
       [proofUrl, id]
     );
 
     res.json({
-      success: true,
-      message: "Comprobante subido exitosamente. El administrador verificará tu pago.",
+      success:   true,
+      message:   "Comprobante subido exitosamente. El administrador verificará tu pago.",
       proof_url: proofUrl,
     });
 
@@ -609,15 +552,14 @@ exports.getPaymentProof = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT id, sale_number, payment_proof_url, payment_proof_uploaded_at, 
+      `SELECT id, sale_number, payment_proof_url, payment_proof_uploaded_at,
               payment_status, total, customer_id
        FROM sales WHERE id = $1`,
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (result.rows.length === 0)
       return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-    }
 
     res.json({ success: true, data: result.rows[0] });
 
