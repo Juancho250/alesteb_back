@@ -712,3 +712,45 @@ exports.getProfile = async (req, res) => {
     });
   }
 };
+// ============================================
+// ✏️ ACTUALIZAR PERFIL PROPIO
+// ============================================
+// ============================================
+// ✏️ ACTUALIZAR PERFIL PROPIO
+// ============================================
+
+exports.updateProfile = async (req, res) => {
+  const client = await db.connect();
+  try {
+    const userId = req.user.id;
+    const { name, phone, city, address } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ success: false, message: "El nombre es requerido" });
+    }
+
+    await client.query(
+      `UPDATE users 
+       SET name = $1, phone = $2, city = $3, address = $4, updated_at = NOW()
+       WHERE id = $5`,
+      [name.trim(), phone?.trim() || null, city?.trim() || null, address?.trim() || null, userId]
+    );
+
+    const updated = await client.query(
+      `SELECT id, email, name, phone, cedula, city, address FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    res.json({ 
+      success: true, 
+      message: "Perfil actualizado correctamente", 
+      data: updated.rows[0] 
+    });
+
+  } catch (error) {
+    console.error("[UPDATE PROFILE ERROR]", error);
+    res.status(500).json({ success: false, message: "Error al actualizar perfil" });
+  } finally {
+    client.release();
+  }
+};
