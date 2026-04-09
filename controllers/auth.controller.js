@@ -698,10 +698,7 @@ exports.getProfile = async (req, res) => {
 
     res.json({
       success: true,
-      data: {
-        ...user,
-        roles
-      }
+      data: { ...user, roles }
     });
 
   } catch (error) {
@@ -712,9 +709,7 @@ exports.getProfile = async (req, res) => {
     });
   }
 };
-// ============================================
-// ✏️ ACTUALIZAR PERFIL PROPIO
-// ============================================
+
 // ============================================
 // ✏️ ACTUALIZAR PERFIL PROPIO
 // ============================================
