@@ -1,16 +1,14 @@
 // config/emailConfig.js
-const SibApiV3Sdk = require('@getbrevo/brevo');
+const { ApiClient, TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 
 // ============================================
 // 🔧 CONFIGURACIÓN CLIENTE BREVO
-// ✅ La autenticación va en la INSTANCIA, no en ApiClient.instance
 // ============================================
-// ✅ CORRECTO — la auth va en ApiClient.instance (cliente global)
-const defaultClient = SibApiV3Sdk.ApiClient.instance;
+const defaultClient = ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
 
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+const apiInstance = new TransactionalEmailsApi();
 
 const SENDER = {
   name:  "Alesteb Boutique",
@@ -24,7 +22,7 @@ const generateVerificationCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 const sendVerificationEmail = async (email, code, userName) => {
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  const sendSmtpEmail = new SendSmtpEmail();
 
   sendSmtpEmail.subject = "🔐 Verifica tu cuenta - Alesteb Boutique";
   sendSmtpEmail.to      = [{ email, name: userName || 'Usuario' }];
@@ -121,7 +119,7 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
   const paymentLabels = { transfer:'🏦 Transferencia bancaria', cash:'💵 Efectivo', credit:'💳 Crédito', check:'📄 Cheque' };
   const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || 'Por confirmar';
 
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  const sendSmtpEmail = new SendSmtpEmail();
   sendSmtpEmail.subject = `✅ Tu pedido ${orderCode} fue recibido - Alesteb`;
   sendSmtpEmail.to      = [{ email, name: userName }];
   sendSmtpEmail.sender  = SENDER;
@@ -245,7 +243,7 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
     </tr>
   `).join('');
 
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  const sendSmtpEmail = new SendSmtpEmail();
   sendSmtpEmail.subject = `🎉 ¡Pago confirmado! Tu pedido ${orderCode} está en camino - Alesteb`;
   sendSmtpEmail.to      = [{ email, name: userName }];
   sendSmtpEmail.sender  = SENDER;
@@ -354,7 +352,7 @@ const verifyEmailConfig = () => {
     console.error('❌ BREVO_API_KEY no configurada en variables de entorno');
     return false;
   }
-  const key = apiInstance.authentications['api-key'].apiKey;
+  const key = defaultClient.authentications['api-key'].apiKey;
   console.log('✅ Brevo lista — key:', key ? `${key.substring(0, 8)}...` : 'VACÍA ⚠️');
   return true;
 };
