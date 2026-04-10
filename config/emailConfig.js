@@ -2,11 +2,11 @@
 const Brevo = require('@getbrevo/brevo');
 
 // ============================================
-// 🔧 CONFIGURACIÓN CLIENTE BREVO (nueva API)
+// 🔧 CONFIGURACIÓN CLIENTE BREVO
 // ============================================
-let defaultClient = Brevo.ApiClient.instance;
-let apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;  // ← así se autentica en @getbrevo/brevo
+const defaultClient = Brevo.ApiClient.instance;
+const apiKeyAuth = defaultClient.authentications['api-key'];
+apiKeyAuth.apiKey = process.env.BREVO_API_KEY;
 
 const apiInstance = new Brevo.TransactionalEmailsApi();
 
@@ -15,73 +15,99 @@ const SENDER = {
   email: process.env.BREVO_SENDER_EMAIL || "web@alesteb.com",
 };
 
-
 // ============================================
-// 🔐 CÓDIGO DE VERIFICACIÓN (existente)
+// 🔐 CÓDIGO DE VERIFICACIÓN
 // ============================================
 const generateVerificationCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 const sendVerificationEmail = async (email, code, userName) => {
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  const sendSmtpEmail = new Brevo.SendSmtpEmail();
 
-  sendSmtpEmail.subject  = "🔐 Código de Verificación - Alesteb";
-  sendSmtpEmail.to       = [{ email, name: userName || 'Usuario' }];
-  sendSmtpEmail.sender   = SENDER;
+  sendSmtpEmail.subject = "🔐 Verifica tu cuenta - Alesteb Boutique";
+  sendSmtpEmail.to      = [{ email, name: userName || 'Usuario' }];
+  sendSmtpEmail.sender  = SENDER;
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html>
-    <html>
+    <html lang="es">
     <head>
       <meta charset="utf-8">
-      <style>
-        body { font-family: 'Arial', sans-serif; background-color: #f5f5f7; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 40px auto; background: white; border-radius: 24px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 40px 30px; text-align: center; }
-        .header h1 { color: white; font-size: 32px; font-weight: 900; margin: 0; letter-spacing: -1px; text-transform: uppercase; }
-        .header p { color: #94a3b8; margin: 10px 0 0; font-size: 14px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
-        .content { padding: 50px 40px; text-align: center; }
-        .greeting { font-size: 18px; color: #475569; margin-bottom: 20px; font-weight: 600; }
-        .message { font-size: 15px; color: #64748b; line-height: 1.6; margin-bottom: 30px; }
-        .code-container { background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 30px; margin: 30px 0; }
-        .code { font-size: 48px; font-weight: 900; color: #0f172a; letter-spacing: 8px; font-family: 'Courier New', monospace; margin: 0; }
-        .code-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; margin-bottom: 10px; }
-        .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px 20px; margin: 30px 0; border-radius: 8px; text-align: left; }
-        .warning-text { font-size: 13px; color: #92400e; margin: 0; line-height: 1.5; }
-        .footer { background: #f8fafc; padding: 30px 40px; text-align: center; border-top: 1px solid #e2e8f0; }
-        .footer-text { font-size: 12px; color: #94a3b8; margin: 5px 0; }
-        .badge { display: inline-block; background: #3b82f6; color: white; padding: 6px 16px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-top: 20px; }
-      </style>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
     </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>ALESTEB</h1>
-          <p>Boutique Premium 2026</p>
-        </div>
-        <div class="content">
-          <p class="greeting">¡Hola, ${userName || 'Usuario'}! 👋</p>
-          <p class="message">
-            Estás a un paso de unirte a nuestra comunidad exclusiva. 
-            Para verificar tu cuenta, utiliza el siguiente código:
-          </p>
-          <div class="code-container">
-            <p class="code-label">Tu Código de Verificación</p>
-            <p class="code">${code}</p>
-          </div>
-          <div class="warning">
-            <p class="warning-text">
-              ⏱️ <strong>Este código expira en 10 minutos.</strong><br>
-              🔒 No compartas este código con nadie.<br>
-              ❌ Si no solicitaste este registro, ignora este mensaje.
-            </p>
-          </div>
-          <div class="badge">CÓDIGO VÁLIDO POR 10 MINUTOS</div>
-        </div>
-        <div class="footer">
-          <p class="footer-text">© 2026 Alesteb System - Auth Module</p>
-          <p class="footer-text" style="margin-top: 15px;">Este es un email automático, por favor no respondas.</p>
-        </div>
-      </div>
+    <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+        <tr><td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+
+            <!-- HEADER -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
+                <div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:50px;display:inline-block;padding:6px 20px;margin-bottom:20px;">
+                  <span style="color:#93c5fd;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;">Boutique Premium · 2026</span>
+                </div>
+                <div style="color:white;font-size:40px;font-weight:900;letter-spacing:-2px;text-transform:uppercase;margin:0;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:#3b82f6;margin:16px auto 24px;border-radius:2px;"></div>
+                <div style="background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);border-radius:50px;display:inline-block;padding:10px 28px;">
+                  <span style="color:#c7d2fe;font-size:13px;font-weight:700;">🔐 &nbsp;VERIFICACIÓN DE CUENTA</span>
+                </div>
+              </td>
+            </tr>
+
+            <!-- BODY -->
+            <tr>
+              <td style="background:white;padding:48px 40px;">
+                <p style="font-size:24px;color:#0f172a;font-weight:800;margin:0 0 12px;">
+                  ¡Hola, ${userName || 'bienvenido/a'}! 👋
+                </p>
+                <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 36px;">
+                  Estás a un paso de unirte a <strong style="color:#0f172a;">Alesteb Boutique</strong>.
+                  Usa el código de verificación de abajo para activar tu cuenta. 
+                  Es válido por <strong>10 minutos</strong>.
+                </p>
+
+                <!-- CÓDIGO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border:2px dashed #cbd5e1;border-radius:20px;margin-bottom:36px;">
+                  <tr>
+                    <td style="padding:36px;text-align:center;">
+                      <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:3px;text-transform:uppercase;margin-bottom:16px;">Tu código de verificación</div>
+                      <div style="font-size:52px;font-weight:900;color:#0f172a;letter-spacing:10px;font-family:'Courier New',monospace;line-height:1;">${code}</div>
+                      <div style="margin-top:16px;display:inline-block;background:#3b82f6;color:white;padding:6px 18px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:1px;">
+                        ⏱ VÁLIDO POR 10 MINUTOS
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- AVISO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef9ec;border-left:4px solid #f59e0b;border-radius:0 12px 12px 0;margin-bottom:32px;">
+                  <tr>
+                    <td style="padding:18px 20px;">
+                      <p style="font-size:13px;color:#78350f;margin:0;line-height:1.7;">
+                        🔒 <strong>No compartas este código</strong> con nadie — Alesteb nunca te lo pedirá.<br>
+                        ❌ Si no creaste esta cuenta, puedes ignorar este mensaje.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="font-size:13px;color:#94a3b8;text-align:center;margin:0;">
+                  ¿Necesitas ayuda? Escríbenos a 
+                  <a href="mailto:web@alesteb.com" style="color:#3b82f6;text-decoration:none;font-weight:700;">web@alesteb.com</a>
+                </p>
+              </td>
+            </tr>
+
+            <!-- FOOTER -->
+            <tr>
+              <td style="background:#0f172a;padding:28px 40px;border-radius:0 0 20px 20px;text-align:center;">
+                <div style="color:#475569;font-size:12px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
+                <div style="color:#334155;font-size:11px;margin-top:6px;">Este es un correo automático, por favor no respondas directamente.</div>
+              </td>
+            </tr>
+
+          </table>
+        </td></tr>
+      </table>
     </body>
     </html>
   `;
@@ -97,15 +123,8 @@ const sendVerificationEmail = async (email, code, userName) => {
 };
 
 // ============================================
-// 📦 EMAIL DE CONFIRMACIÓN DE PEDIDO (NUEVO)
+// 📦 EMAIL DE CONFIRMACIÓN DE PEDIDO
 // ============================================
-
-/**
- * Envía confirmación de pedido al cliente
- * @param {string} email         - correo del cliente
- * @param {string} userName      - nombre del cliente
- * @param {object} orderData     - { orderCode, total, items, shippingAddress, shippingCity, shippingNotes, paymentMethod }
- */
 const sendOrderConfirmationEmail = async (email, userName, orderData) => {
   const {
     orderCode,
@@ -117,200 +136,160 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
     paymentMethod,
   } = orderData;
 
-  // Construir filas de productos
   const itemsRows = items.map(item => `
     <tr>
-      <td style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9;">
-        <div style="font-weight: 700; color: #0f172a; font-size: 14px;">${item.name}</div>
-        ${item.sku ? `<div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">SKU: ${item.sku}</div>` : ''}
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#0f172a;font-size:14px;">${item.name}</div>
+        ${item.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:3px;">SKU: ${item.sku}</div>` : ''}
       </td>
-      <td style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9; text-align: center; color: #475569; font-weight: 600; font-size: 14px;">
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b;font-weight:700;font-size:14px;">
         ×${item.quantity}
       </td>
-      <td style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 800; color: #0f172a; font-size: 14px;">
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:900;color:#0f172a;font-size:14px;">
         $${Number(item.unit_price * item.quantity).toLocaleString('es-CO')}
       </td>
     </tr>
   `).join('');
 
-  // Etiqueta de método de pago legible
   const paymentLabels = {
-    transfer: 'Transferencia bancaria',
-    cash:     'Efectivo',
-    credit:   'Crédito',
-    check:    'Cheque',
+    transfer: '🏦 Transferencia bancaria',
+    cash:     '💵 Efectivo',
+    credit:   '💳 Crédito',
+    check:    '📄 Cheque',
   };
   const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || 'Por confirmar';
 
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-  sendSmtpEmail.subject = `✅ Pedido ${orderCode} confirmado - Alesteb`;
+  const sendSmtpEmail = new Brevo.SendSmtpEmail();
+  sendSmtpEmail.subject = `✅ Tu pedido ${orderCode} fue recibido - Alesteb`;
   sendSmtpEmail.to      = [{ email, name: userName }];
   sendSmtpEmail.sender  = SENDER;
 
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html>
     <html lang="es">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Confirmación de Pedido</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#f1f5f9; font-family: 'Georgia', serif;">
-      
-      <!-- WRAPPER -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9; padding: 40px 16px;">
-        <tr>
-          <td align="center">
-            <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%;">
+    <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+    <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+        <tr><td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
 
-              <!-- HEADER -->
-              <tr>
-                <td style="background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); padding: 48px 40px; border-radius: 20px 20px 0 0; text-align:center;">
-                  <div style="display:inline-block; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 50px; padding: 6px 20px; margin-bottom: 20px;">
-                    <span style="color: #93c5fd; font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; font-family: Arial, sans-serif;">Boutique Premium</span>
-                  </div>
-                  <div style="color: white; font-size: 38px; font-weight: 900; letter-spacing: -2px; margin: 0; text-transform: uppercase; font-family: Arial, sans-serif;">ALESTEB</div>
-                  <div style="width: 40px; height: 3px; background: #3b82f6; margin: 16px auto 20px; border-radius: 2px;"></div>
-                  <div style="background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); border-radius: 50px; display: inline-block; padding: 10px 28px;">
-                    <span style="color: #86efac; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif;">✓ &nbsp;PEDIDO RECIBIDO</span>
-                  </div>
-                </td>
-              </tr>
+            <!-- HEADER -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
+                <div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:50px;display:inline-block;padding:6px 20px;margin-bottom:20px;">
+                  <span style="color:#93c5fd;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;">Boutique Premium · 2026</span>
+                </div>
+                <div style="color:white;font-size:40px;font-weight:900;letter-spacing:-2px;text-transform:uppercase;margin:0;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:#3b82f6;margin:16px auto 24px;border-radius:2px;"></div>
+                <div style="background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.35);border-radius:50px;display:inline-block;padding:12px 32px;">
+                  <span style="color:#86efac;font-size:14px;font-weight:800;">✓ &nbsp;PEDIDO RECIBIDO</span>
+                </div>
+              </td>
+            </tr>
 
-              <!-- BODY -->
-              <tr>
-                <td style="background: white; padding: 40px;">
+            <!-- BODY -->
+            <tr>
+              <td style="background:white;padding:48px 40px;">
 
-                  <!-- SALUDO -->
-                  <p style="font-size: 22px; color: #0f172a; font-weight: 700; margin: 0 0 8px; font-family: Arial, sans-serif;">
-                    ¡Hola, ${userName}! 👋
-                  </p>
-                  <p style="font-size: 15px; color: #64748b; line-height: 1.7; margin: 0 0 32px; font-family: Arial, sans-serif;">
-                    Hemos recibido tu pedido exitosamente. A continuación encontrarás el resumen completo. 
-                    Nuestro equipo lo revisará y se pondrá en contacto contigo pronto para coordinar el envío.
-                  </p>
+                <p style="font-size:24px;color:#0f172a;font-weight:800;margin:0 0 12px;">
+                  ¡Gracias, ${userName}! 🎉
+                </p>
+                <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 36px;">
+                  Recibimos tu pedido correctamente. Nuestro equipo lo revisará y se pondrá 
+                  en contacto contigo para coordinar el pago y el envío. 
+                  Guarda tu código de pedido para cualquier consulta.
+                </p>
 
-                  <!-- CÓDIGO DE ORDEN -->
-                  <table width="100%" cellpadding="0" cellspacing="0" style="background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 16px; margin-bottom: 32px;">
-                    <tr>
-                      <td style="padding: 20px 24px;">
-                        <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 2px; text-transform: uppercase; font-family: Arial, sans-serif; margin-bottom: 6px;">Código de pedido</div>
-                        <div style="font-size: 28px; font-weight: 900; color: #0f172a; letter-spacing: 1px; font-family: 'Courier New', monospace;">${orderCode}</div>
-                      </td>
-                      <td style="padding: 20px 24px; text-align: right; border-left: 1px solid #e2e8f0;">
-                        <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 2px; text-transform: uppercase; font-family: Arial, sans-serif; margin-bottom: 6px;">Fecha</div>
-                        <div style="font-size: 15px; font-weight: 700; color: #475569; font-family: Arial, sans-serif;">
-                          ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}
-                        </div>
-                      </td>
+                <!-- CÓDIGO DE ORDEN -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;margin-bottom:36px;">
+                  <tr>
+                    <td style="padding:22px 28px;">
+                      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de pedido</div>
+                      <div style="font-size:30px;font-weight:900;color:#0f172a;letter-spacing:2px;font-family:'Courier New',monospace;">${orderCode}</div>
+                    </td>
+                    <td style="padding:22px 28px;text-align:right;border-left:1px solid #e2e8f0;">
+                      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Fecha</div>
+                      <div style="font-size:14px;font-weight:700;color:#475569;">
+                        ${new Date().toLocaleDateString('es-CO', { year:'numeric', month:'long', day:'numeric' })}
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- PRODUCTOS -->
+                <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Resumen del pedido</div>
+                <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:36px;">
+                  <thead>
+                    <tr style="background:#f8fafc;">
+                      <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Producto</th>
+                      <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Cant.</th>
+                      <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Subtotal</th>
                     </tr>
-                  </table>
-
-                  <!-- PRODUCTOS -->
-                  <div style="font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 2px; text-transform: uppercase; font-family: Arial, sans-serif; margin-bottom: 12px;">
-                    Productos
-                  </div>
-                  <table width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 32px;">
-                    <thead>
-                      <tr style="background: #f8fafc;">
-                        <th style="padding: 10px 16px; text-align:left; font-size:11px; font-weight:800; color:#94a3b8; letter-spacing:1px; text-transform:uppercase; font-family:Arial,sans-serif;">Producto</th>
-                        <th style="padding: 10px 16px; text-align:center; font-size:11px; font-weight:800; color:#94a3b8; letter-spacing:1px; text-transform:uppercase; font-family:Arial,sans-serif;">Cant.</th>
-                        <th style="padding: 10px 16px; text-align:right; font-size:11px; font-weight:800; color:#94a3b8; letter-spacing:1px; text-transform:uppercase; font-family:Arial,sans-serif;">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${itemsRows}
-                    </tbody>
-                    <tfoot>
-                      <tr style="background: #0f172a;">
-                        <td colspan="2" style="padding: 16px 16px; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px;">
-                          Total del Pedido
-                        </td>
-                        <td style="padding: 16px 16px; text-align: right; color: white; font-size: 22px; font-weight: 900; font-family: Arial, sans-serif;">
-                          $${Number(total).toLocaleString('es-CO')}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-
-                  <!-- DIRECCIÓN DE ENVÍO -->
-                  ${shippingAddress ? `
-                  <div style="font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 2px; text-transform: uppercase; font-family: Arial, sans-serif; margin-bottom: 12px;">
-                    Datos de envío
-                  </div>
-                  <table width="100%" cellpadding="0" cellspacing="0" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; margin-bottom: 32px;">
-                    <tr>
-                      <td style="padding: 20px 24px;">
-                        <div style="display:flex; gap:12px; align-items:flex-start;">
-                          <span style="font-size: 20px;">📍</span>
-                          <div>
-                            <div style="font-weight: 800; color: #14532d; font-size: 15px; font-family: Arial, sans-serif; margin-bottom: 4px;">
-                              ${shippingCity || ''}
-                            </div>
-                            <div style="color: #166534; font-size: 14px; font-family: Arial, sans-serif; line-height: 1.5;">
-                              ${shippingAddress}
-                            </div>
-                            ${shippingNotes ? `
-                            <div style="color: #15803d; font-size: 12px; font-family: Arial, sans-serif; margin-top: 6px; font-style: italic;">
-                              Nota: ${shippingNotes}
-                            </div>` : ''}
-                          </div>
-                        </div>
-                      </td>
+                  </thead>
+                  <tbody>${itemsRows}</tbody>
+                  <tfoot>
+                    <tr style="background:#0f172a;">
+                      <td colspan="2" style="padding:16px 18px;color:rgba(255,255,255,0.6);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Total del pedido</td>
+                      <td style="padding:16px 18px;text-align:right;color:white;font-size:22px;font-weight:900;">$${Number(total).toLocaleString('es-CO')}</td>
                     </tr>
-                  </table>
-                  ` : ''}
+                  </tfoot>
+                </table>
 
-                  <!-- MÉTODO DE PAGO -->
-                  <table width="100%" cellpadding="0" cellspacing="0" style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; margin-bottom: 32px;">
-                    <tr>
-                      <td style="padding: 18px 24px;">
-                        <div style="font-size: 11px; font-weight: 800; color: #92400e; letter-spacing: 2px; text-transform: uppercase; font-family: Arial, sans-serif; margin-bottom: 6px;">
-                          Método de pago
-                        </div>
-                        <div style="font-size: 15px; font-weight: 700; color: #78350f; font-family: Arial, sans-serif;">
-                          💳 &nbsp;${paymentLabel}
-                        </div>
-                        <div style="font-size: 12px; color: #92400e; font-family: Arial, sans-serif; margin-top: 8px; line-height: 1.5;">
-                          Tu pedido quedará confirmado una vez verifiquemos tu pago. 
-                          Contáctanos por WhatsApp con el código <strong>${orderCode}</strong> para agilizar el proceso.
-                        </div>
-                      </td>
-                    </tr>
-                  </table>
+                <!-- MÉTODO DE PAGO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fde68a;border-radius:14px;margin-bottom:${shippingAddress ? '32px' : '36px'};">
+                  <tr>
+                    <td style="padding:20px 24px;">
+                      <div style="font-size:11px;font-weight:800;color:#92400e;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Método de pago</div>
+                      <div style="font-size:15px;font-weight:700;color:#78350f;">${paymentLabel}</div>
+                      <div style="font-size:13px;color:#92400e;margin-top:10px;line-height:1.6;">
+                        Tu pedido se confirmará una vez verifiquemos tu pago. 
+                        Contáctanos por WhatsApp con el código 
+                        <strong style="font-family:'Courier New',monospace;">${orderCode}</strong> para agilizar el proceso.
+                      </div>
+                    </td>
+                  </tr>
+                </table>
 
-                  <!-- CTA WHATSAPP -->
-                  <table width="100%" cellpadding="0" cellspacing="0">
-                    <tr>
-                      <td align="center" style="padding-bottom: 8px;">
-                        <a href="https://wa.me/573145055073?text=Hola!%20Quiero%20confirmar%20mi%20pedido%20${orderCode}"
-                           style="display:inline-block; background: #16a34a; color: white; text-decoration: none; font-size: 14px; font-weight: 800; padding: 16px 36px; border-radius: 50px; letter-spacing: 0.5px; font-family: Arial, sans-serif;">
-                          💬 &nbsp;Confirmar por WhatsApp
-                        </a>
-                      </td>
-                    </tr>
-                  </table>
+                ${shippingAddress ? `
+                <!-- DIRECCIÓN DE ENVÍO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;margin-bottom:36px;">
+                  <tr>
+                    <td style="padding:20px 24px;">
+                      <div style="font-size:11px;font-weight:800;color:#166534;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Dirección de envío</div>
+                      <div style="font-weight:800;color:#14532d;font-size:15px;margin-bottom:4px;">📍 ${shippingCity || ''}</div>
+                      <div style="color:#166534;font-size:14px;line-height:1.6;">${shippingAddress}</div>
+                      ${shippingNotes ? `<div style="color:#15803d;font-size:13px;margin-top:8px;font-style:italic;">📝 ${shippingNotes}</div>` : ''}
+                    </td>
+                  </tr>
+                </table>
+                ` : ''}
 
-                </td>
-              </tr>
+                <!-- CTA WHATSAPP -->
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="center">
+                      <a href="https://wa.me/573145055073?text=Hola!%20Quiero%20confirmar%20mi%20pedido%20${orderCode}"
+                         style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:17px 40px;border-radius:50px;letter-spacing:0.5px;">
+                        💬 &nbsp;Confirmar pago por WhatsApp
+                      </a>
+                    </td>
+                  </tr>
+                </table>
 
-              <!-- FOOTER -->
-              <tr>
-                <td style="background: #0f172a; padding: 28px 40px; border-radius: 0 0 20px 20px; text-align: center;">
-                  <div style="color: #94a3b8; font-size: 12px; font-family: Arial, sans-serif; margin-bottom: 8px;">
-                    © 2026 Alesteb Boutique · Todos los derechos reservados
-                  </div>
-                  <div style="color: #475569; font-size: 11px; font-family: Arial, sans-serif;">
-                    Este es un correo automático, por favor no respondas directamente.
-                  </div>
-                </td>
-              </tr>
+              </td>
+            </tr>
 
-            </table>
-          </td>
-        </tr>
+            <!-- FOOTER -->
+            <tr>
+              <td style="background:#0f172a;padding:28px 40px;border-radius:0 0 20px 20px;text-align:center;">
+                <div style="color:#475569;font-size:12px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
+                <div style="color:#334155;font-size:11px;margin-top:6px;">Este es un correo automático, por favor no respondas directamente.</div>
+              </td>
+            </tr>
+
+          </table>
+        </td></tr>
       </table>
-
     </body>
     </html>
   `;
@@ -321,8 +300,7 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
     return true;
   } catch (error) {
     console.error('❌ Error al enviar email de confirmación:', error);
-    // No lanzamos error — el pedido ya fue creado; el email es best-effort
-    return false;
+    return false; // best-effort: el pedido ya fue creado
   }
 };
 
@@ -341,26 +319,26 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
   } = orderData;
 
   const paymentLabels = {
-    transfer: "Transferencia bancaria",
-    cash:     "Efectivo",
-    credit:   "Tarjeta",
-    check:    "Cheque",
+    transfer: '🏦 Transferencia bancaria',
+    cash:     '💵 Efectivo',
+    credit:   '💳 Tarjeta',
+    check:    '📄 Cheque',
   };
-  const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || "Confirmado";
+  const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || 'Confirmado';
 
   const itemsRows = items.map(item => `
     <tr>
-      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;">
-        <div style="font-weight:700;color:#0f172a;font-size:14px;font-family:Arial,sans-serif;">${item.name}</div>
-        ${item.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px;">SKU: ${item.sku}</div>` : ""}
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#0f172a;font-size:14px;">${item.name}</div>
+        ${item.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:3px;">SKU: ${item.sku}</div>` : ''}
       </td>
-      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#475569;font-weight:600;font-size:14px;font-family:Arial,sans-serif;">×${item.quantity}</td>
-      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:800;color:#0f172a;font-size:14px;font-family:Arial,sans-serif;">$${Number(item.unit_price * item.quantity).toLocaleString("es-CO")}</td>
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b;font-weight:700;font-size:14px;">×${item.quantity}</td>
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:900;color:#0f172a;font-size:14px;">$${Number(item.unit_price * item.quantity).toLocaleString('es-CO')}</td>
     </tr>
-  `).join("");
+  `).join('');
 
-  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-  sendSmtpEmail.subject = `🎉 ¡Pago confirmado! Pedido ${orderCode} - Alesteb`;
+  const sendSmtpEmail = new Brevo.SendSmtpEmail();
+  sendSmtpEmail.subject = `🎉 ¡Pago confirmado! Tu pedido ${orderCode} está en camino - Alesteb`;
   sendSmtpEmail.to      = [{ email, name: userName }];
   sendSmtpEmail.sender  = SENDER;
 
@@ -368,21 +346,20 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
     <!DOCTYPE html>
     <html lang="es">
     <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-    <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,sans-serif;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+    <body style="margin:0;padding:0;background-color:#f0fdf4;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;padding:40px 16px;">
         <tr><td align="center">
           <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
 
             <!-- HEADER VERDE -->
             <tr>
-              <td style="background:linear-gradient(135deg,#064e3b 0%,#065f46 100%);padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
+              <td style="background:linear-gradient(135deg,#064e3b 0%,#065f46 60%,#047857 100%);padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
                 <div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:50px;display:inline-block;padding:6px 20px;margin-bottom:20px;">
-                  <span style="color:#a7f3d0;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;">Boutique Premium</span>
+                  <span style="color:#a7f3d0;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;">Boutique Premium · 2026</span>
                 </div>
-                <div style="color:white;font-size:38px;font-weight:900;letter-spacing:-2px;margin:0;text-transform:uppercase;">ALESTEB</div>
-                <div style="width:40px;height:3px;background:#34d399;margin:16px auto 20px;border-radius:2px;"></div>
-                <!-- Badge confirmado -->
-                <div style="background:rgba(52,211,153,0.2);border:2px solid rgba(52,211,153,0.5);border-radius:50px;display:inline-block;padding:12px 32px;">
+                <div style="color:white;font-size:40px;font-weight:900;letter-spacing:-2px;text-transform:uppercase;margin:0;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:#34d399;margin:16px auto 24px;border-radius:2px;"></div>
+                <div style="background:rgba(52,211,153,0.2);border:2px solid rgba(52,211,153,0.5);border-radius:50px;display:inline-block;padding:14px 36px;">
                   <span style="color:#6ee7b7;font-size:16px;font-weight:800;letter-spacing:1px;">✅ &nbsp;PAGO CONFIRMADO</span>
                 </div>
               </td>
@@ -390,32 +367,34 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
 
             <!-- BODY -->
             <tr>
-              <td style="background:white;padding:40px;">
+              <td style="background:white;padding:48px 40px;">
 
-                <p style="font-size:22px;color:#0f172a;font-weight:700;margin:0 0 8px;">¡Hola, ${userName}! 🎉</p>
-                <p style="font-size:15px;color:#64748b;line-height:1.7;margin:0 0 32px;">
-                  Tu pago fue <strong style="color:#059669;">verificado y confirmado</strong> por nuestro equipo.
-                  Tu pedido está listo para ser procesado y enviado. Pronto nos pondremos en contacto contigo
-                  para coordinar la entrega.
+                <p style="font-size:24px;color:#0f172a;font-weight:800;margin:0 0 12px;">
+                  ¡Excelente noticia, ${userName}! 🎉
+                </p>
+                <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 36px;">
+                  Tu pago fue <strong style="color:#059669;">verificado y aprobado</strong> por nuestro equipo. 
+                  Tu pedido está siendo procesado y pronto nos pondremos en contacto 
+                  para coordinar la entrega. ¡Gracias por confiar en Alesteb!
                 </p>
 
-                <!-- CÓDIGO -->
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:2px solid #a7f3d0;border-radius:16px;margin-bottom:32px;">
+                <!-- ESTADO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:2px solid #86efac;border-radius:16px;margin-bottom:36px;">
                   <tr>
-                    <td style="padding:20px 24px;">
-                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Código de pedido</div>
-                      <div style="font-size:28px;font-weight:900;color:#064e3b;letter-spacing:1px;font-family:'Courier New',monospace;">${orderCode}</div>
+                    <td style="padding:22px 28px;">
+                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de pedido</div>
+                      <div style="font-size:30px;font-weight:900;color:#064e3b;letter-spacing:2px;font-family:'Courier New',monospace;">${orderCode}</div>
                     </td>
-                    <td style="padding:20px 24px;text-align:right;border-left:1px solid #a7f3d0;">
-                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Estado</div>
-                      <div style="font-size:15px;font-weight:800;color:#065f46;">✅ Pagado</div>
+                    <td style="padding:22px 28px;text-align:right;border-left:1px solid #86efac;">
+                      <div style="font-size:11px;font-weight:700;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Estado</div>
+                      <div style="background:#16a34a;color:white;font-size:13px;font-weight:800;padding:8px 18px;border-radius:50px;display:inline-block;">✅ Pagado</div>
                     </td>
                   </tr>
                 </table>
 
                 <!-- PRODUCTOS -->
                 <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Resumen del pedido</div>
-                <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:32px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:36px;">
                   <thead>
                     <tr style="background:#f8fafc;">
                       <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Producto</th>
@@ -426,42 +405,42 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
                   <tbody>${itemsRows}</tbody>
                   <tfoot>
                     <tr style="background:#064e3b;">
-                      <td colspan="2" style="padding:16px;color:rgba(255,255,255,0.7);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Total Pagado</td>
-                      <td style="padding:16px;text-align:right;color:white;font-size:22px;font-weight:900;">$${Number(total).toLocaleString("es-CO")}</td>
+                      <td colspan="2" style="padding:16px 18px;color:rgba(255,255,255,0.6);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Total pagado</td>
+                      <td style="padding:16px 18px;text-align:right;color:white;font-size:22px;font-weight:900;">$${Number(total).toLocaleString('es-CO')}</td>
                     </tr>
                   </tfoot>
                 </table>
 
-                <!-- MÉTODO PAGO -->
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;margin-bottom:32px;">
+                <!-- MÉTODO DE PAGO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;margin-bottom:${shippingAddress ? '32px' : '36px'};">
                   <tr>
-                    <td style="padding:18px 24px;">
-                      <div style="font-size:11px;font-weight:800;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Método de pago</div>
-                      <div style="font-size:15px;font-weight:700;color:#065f46;">💳 &nbsp;${paymentLabel}</div>
+                    <td style="padding:20px 24px;">
+                      <div style="font-size:11px;font-weight:800;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Método de pago</div>
+                      <div style="font-size:15px;font-weight:700;color:#065f46;">${paymentLabel}</div>
                     </td>
                   </tr>
                 </table>
 
                 ${shippingAddress ? `
-                <!-- ENVÍO -->
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;margin-bottom:32px;">
+                <!-- DIRECCIÓN DE ENVÍO -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;margin-bottom:36px;">
                   <tr>
                     <td style="padding:20px 24px;">
-                      <div style="font-size:11px;font-weight:800;color:#1d4ed8;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Datos de envío</div>
-                      <div style="font-weight:800;color:#1e3a8a;font-size:15px;margin-bottom:4px;">📍 ${shippingCity || ""}</div>
-                      <div style="color:#1d4ed8;font-size:14px;line-height:1.5;">${shippingAddress}</div>
-                      ${shippingNotes ? `<div style="color:#3b82f6;font-size:12px;margin-top:6px;font-style:italic;">Nota: ${shippingNotes}</div>` : ""}
+                      <div style="font-size:11px;font-weight:800;color:#1d4ed8;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Dirección de entrega</div>
+                      <div style="font-weight:800;color:#1e3a8a;font-size:15px;margin-bottom:4px;">📍 ${shippingCity || ''}</div>
+                      <div style="color:#1d4ed8;font-size:14px;line-height:1.6;">${shippingAddress}</div>
+                      ${shippingNotes ? `<div style="color:#3b82f6;font-size:13px;margin-top:8px;font-style:italic;">📝 ${shippingNotes}</div>` : ''}
                     </td>
                   </tr>
                 </table>
-                ` : ""}
+                ` : ''}
 
                 <!-- CTA WHATSAPP -->
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
                     <td align="center">
-                      <a href="https://wa.me/573145055073?text=Hola!%20Tengo%20preguntas%20sobre%20mi%20pedido%20${orderCode}"
-                         style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:16px 36px;border-radius:50px;letter-spacing:0.5px;">
+                      <a href="https://wa.me/573145055073?text=Hola!%20Tengo%20una%20pregunta%20sobre%20mi%20pedido%20${orderCode}"
+                         style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:17px 40px;border-radius:50px;letter-spacing:0.5px;">
                         💬 &nbsp;Contactar por WhatsApp
                       </a>
                     </td>
@@ -474,8 +453,8 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
             <!-- FOOTER -->
             <tr>
               <td style="background:#0f172a;padding:28px 40px;border-radius:0 0 20px 20px;text-align:center;">
-                <div style="color:#94a3b8;font-size:12px;margin-bottom:8px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
-                <div style="color:#475569;font-size:11px;">Este es un correo automático, por favor no respondas directamente.</div>
+                <div style="color:#475569;font-size:12px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
+                <div style="color:#334155;font-size:11px;margin-top:6px;">Este es un correo automático, por favor no respondas directamente.</div>
               </td>
             </tr>
 
@@ -488,13 +467,14 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
 
   try {
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("✅ Email pago confirmado enviado:", data.messageId);
+    console.log('✅ Email pago confirmado enviado:', data.messageId);
     return true;
   } catch (error) {
-    console.error("❌ Error al enviar email pago confirmado:", error);
+    console.error('❌ Error al enviar email pago confirmado:', error);
     return false;
   }
 };
+
 // ============================================
 // 🔍 VERIFICAR CONFIGURACIÓN AL INICIAR
 // ============================================
@@ -503,7 +483,8 @@ const verifyEmailConfig = () => {
     console.error('❌ BREVO_API_KEY no configurada en .env');
     return false;
   }
-  console.log('✅ Configuración de Brevo lista');
+  const key = Brevo.ApiClient.instance.authentications['api-key'].apiKey;
+  console.log('✅ Brevo lista — key:', key ? `${key.substring(0, 8)}...` : 'VACÍA ⚠️');
   return true;
 };
 
@@ -513,5 +494,5 @@ module.exports = {
   generateVerificationCode,
   sendVerificationEmail,
   sendOrderConfirmationEmail,
-  sendPaymentConfirmedEmail,   // ← AGREGAR
+  sendPaymentConfirmedEmail,
 };
