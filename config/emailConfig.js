@@ -5,9 +5,12 @@ const SibApiV3Sdk = require('@getbrevo/brevo');
 // 🔧 CONFIGURACIÓN CLIENTE BREVO
 // ✅ La autenticación va en la INSTANCIA, no en ApiClient.instance
 // ============================================
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-const apiKey = apiInstance.authentications['api-key'];
+// ✅ CORRECTO — la auth va en ApiClient.instance (cliente global)
+const defaultClient = SibApiV3Sdk.ApiClient.instance;
+const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
+
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const SENDER = {
   name:  "Alesteb Boutique",
