@@ -1,19 +1,34 @@
 // config/emailConfig.js
-const { ApiClient, TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
-
-// ============================================
-// 🔧 CONFIGURACIÓN CLIENTE BREVO
-// ============================================
-const defaultClient = ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-
-const apiInstance = new TransactionalEmailsApi();
 
 const SENDER = {
   name:  "Alesteb Boutique",
   email: process.env.BREVO_SENDER_EMAIL || "web@alesteb.com",
 };
+
+// ============================================
+// 🔧 INICIALIZACIÓN LAZY — evita crash al startup
+// ============================================
+let _apiInstance = null;
+let _SendSmtpEmail = null;
+
+function getBrevoClient() {
+  if (_apiInstance) return { apiInstance: _apiInstance, SendSmtpEmail: _SendSmtpEmail };
+
+  const brevo = require('@getbrevo/brevo');
+
+  // Soporte para cualquier forma de exportación del paquete
+  const ApiClient          = brevo.ApiClient          ?? brevo.default?.ApiClient;
+  const TransactionalEmailsApi = brevo.TransactionalEmailsApi ?? brevo.default?.TransactionalEmailsApi;
+  _SendSmtpEmail           = brevo.SendSmtpEmail       ?? brevo.default?.SendSmtpEmail;
+
+  if (!ApiClient) throw new Error('No se pudo cargar ApiClient de @getbrevo/brevo');
+
+  const defaultClient = ApiClient.instance;
+  defaultClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
+
+  _apiInstance = new TransactionalEmailsApi();
+  return { apiInstance: _apiInstance, SendSmtpEmail: _SendSmtpEmail };
+}
 
 // ============================================
 // 🔐 CÓDIGO DE VERIFICACIÓN
@@ -22,11 +37,12 @@ const generateVerificationCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 const sendVerificationEmail = async (email, code, userName) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
   const sendSmtpEmail = new SendSmtpEmail();
 
-  sendSmtpEmail.subject = "🔐 Verifica tu cuenta - Alesteb Boutique";
-  sendSmtpEmail.to      = [{ email, name: userName || 'Usuario' }];
-  sendSmtpEmail.sender  = SENDER;
+  sendSmtpEmail.subject     = "🔐 Verifica tu cuenta - Alesteb Boutique";
+  sendSmtpEmail.to          = [{ email, name: userName || 'Usuario' }];
+  sendSmtpEmail.sender      = SENDER;
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html><html lang="es">
     <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -103,6 +119,7 @@ const sendVerificationEmail = async (email, code, userName) => {
 // 📦 EMAIL DE CONFIRMACIÓN DE PEDIDO
 // ============================================
 const sendOrderConfirmationEmail = async (email, userName, orderData) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
   const { orderCode, total, items = [], shippingAddress, shippingCity, shippingNotes, paymentMethod } = orderData;
 
   const itemsRows = items.map(item => `
@@ -120,9 +137,9 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
   const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || 'Por confirmar';
 
   const sendSmtpEmail = new SendSmtpEmail();
-  sendSmtpEmail.subject = `✅ Tu pedido ${orderCode} fue recibido - Alesteb`;
-  sendSmtpEmail.to      = [{ email, name: userName }];
-  sendSmtpEmail.sender  = SENDER;
+  sendSmtpEmail.subject     = `✅ Tu pedido ${orderCode} fue recibido - Alesteb`;
+  sendSmtpEmail.to          = [{ email, name: userName }];
+  sendSmtpEmail.sender      = SENDER;
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html><html lang="es">
     <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -227,6 +244,7 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
 // ✅ EMAIL DE PAGO CONFIRMADO (Admin → Cliente)
 // ============================================
 const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
   const { orderCode, total, items = [], shippingAddress, shippingCity, shippingNotes, paymentMethod } = orderData;
 
   const paymentLabels = { transfer:'🏦 Transferencia bancaria', cash:'💵 Efectivo', credit:'💳 Tarjeta', check:'📄 Cheque' };
@@ -244,9 +262,9 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
   `).join('');
 
   const sendSmtpEmail = new SendSmtpEmail();
-  sendSmtpEmail.subject = `🎉 ¡Pago confirmado! Tu pedido ${orderCode} está en camino - Alesteb`;
-  sendSmtpEmail.to      = [{ email, name: userName }];
-  sendSmtpEmail.sender  = SENDER;
+  sendSmtpEmail.subject     = `🎉 ¡Pago confirmado! Tu pedido ${orderCode} está en camino - Alesteb`;
+  sendSmtpEmail.to          = [{ email, name: userName }];
+  sendSmtpEmail.sender      = SENDER;
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html><html lang="es">
     <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -349,11 +367,10 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
 // ============================================
 const verifyEmailConfig = () => {
   if (!process.env.BREVO_API_KEY) {
-    console.error('❌ BREVO_API_KEY no configurada en variables de entorno');
+    console.warn('⚠️  BREVO_API_KEY no configurada — emails desactivados');
     return false;
   }
-  const key = defaultClient.authentications['api-key'].apiKey;
-  console.log('✅ Brevo lista — key:', key ? `${key.substring(0, 8)}...` : 'VACÍA ⚠️');
+  console.log('✅ Brevo lista — key:', `${process.env.BREVO_API_KEY.substring(0, 8)}...`);
   return true;
 };
 
