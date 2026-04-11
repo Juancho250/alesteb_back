@@ -6,7 +6,7 @@ const SENDER = {
 };
 
 // ============================================
-// 🔧 INICIALIZACIÓN LAZY — evita crash al startup
+// 🔧 INICIALIZACIÓN LAZY
 // ============================================
 let _apiInstance = null;
 let _SendSmtpEmail = null;
@@ -15,31 +15,29 @@ function getBrevoClient() {
   if (_apiInstance) return { apiInstance: _apiInstance, SendSmtpEmail: _SendSmtpEmail };
 
   const brevo = require('@getbrevo/brevo');
-  
-  // Log para ver qué está exportando realmente el paquete
+
   console.log('🔍 Brevo exports keys:', Object.keys(brevo));
 
-  // El paquete compila con esModuleInterop — probar todas las variantes
-  const root = brevo.default ?? brevo;
-  
-  const ApiClient              = root.ApiClient;
-  const TransactionalEmailsApi = root.TransactionalEmailsApi;
-  _SendSmtpEmail               = root.SendSmtpEmail;
+  // ✅ Método correcto para @getbrevo/brevo v3+
+  _SendSmtpEmail = brevo.SendSmtpEmail;
 
-  console.log('🔍 ApiClient:', typeof ApiClient);
-  console.log('🔍 TransactionalEmailsApi:', typeof TransactionalEmailsApi);
-  console.log('🔍 SendSmtpEmail:', typeof _SendSmtpEmail);
-
-  if (!ApiClient || !TransactionalEmailsApi || !_SendSmtpEmail) {
-    throw new Error(`Brevo exports inválidos. Keys disponibles: ${Object.keys(brevo).join(', ')}`);
+  if (!brevo.TransactionalEmailsApi || !_SendSmtpEmail) {
+    throw new Error(`Brevo exports inválidos. Keys: ${Object.keys(brevo).join(', ')}`);
   }
 
-  const defaultClient = ApiClient.instance;
-  defaultClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-  
-  console.log('🔑 API Key configurada:', process.env.BREVO_API_KEY ? `${process.env.BREVO_API_KEY.substring(0, 8)}...` : '❌ VACÍA');
+  _apiInstance = new brevo.TransactionalEmailsApi();
 
-  _apiInstance = new TransactionalEmailsApi();
+  // ✅ AQUÍ estaba el bug: la autenticación cambió en v3
+  _apiInstance.setApiKey(
+    brevo.TransactionalEmailsApiApiKeys.apiKey,
+    process.env.BREVO_API_KEY
+  );
+
+  console.log('🔑 API Key configurada:', process.env.BREVO_API_KEY
+    ? `${process.env.BREVO_API_KEY.substring(0, 8)}...`
+    : '❌ VACÍA'
+  );
+
   return { apiInstance: _apiInstance, SendSmtpEmail: _SendSmtpEmail };
 }
 
