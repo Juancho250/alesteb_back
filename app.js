@@ -28,6 +28,7 @@ function safeRequire(path, label) {
 const authRoutes          = safeRequire("./routes/auth.routes",               "auth.routes");
 const usersRoutes         = safeRequire("./routes/users.routes",              "users.routes");
 const rolesRoutes         = safeRequire("./routes/roles.routes",              "roles.routes");
+const statsRoutes         = safeRequire("./routes/stats.routes",              "stats.routes");
 const providersRoutes     = safeRequire("./routes/providers.routes",          "providers.routes");
 const financeRoutes       = safeRequire("./routes/finance.routes",            "finance.routes");
 const productsRoutes      = safeRequire("./routes/products.routes",           "products.routes");
@@ -42,6 +43,7 @@ if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
 if (rolesRoutes)         app.use("/api/roles",         rolesRoutes);
 if (providersRoutes)     app.use("/api/providers",     providersRoutes);
+if (statsRoutes)         app.use("/api/stats",         statsRoutes);
 if (productsRoutes)      app.use("/api/products",      productsRoutes);
 if (categoriesRoutes)    app.use("/api/categories",    categoriesRoutes);
 if (salesRoutes)         app.use("/api/sales",         salesRoutes);
@@ -66,9 +68,9 @@ app.get("/api/health", (req, res) => {
     finance:       !!financeRoutes,
     notifications: !!notificationsRoutes,
     variants:      !!variantsRoutes,
+    stats:         !!statsRoutes,   // ← esto faltó
   });
 });
-
 app.get("/", (req, res) =>
   res.json({ message: "API Alesteb OK", timestamp: new Date() })
 );
