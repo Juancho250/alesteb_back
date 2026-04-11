@@ -38,6 +38,7 @@ const salesRoutes         = safeRequire("./routes/sales.routes",              "s
 const bannersRoutes       = safeRequire("./routes/banners.routes",            "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",      "notifications.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
+const chatRoutes          = safeRequire("./routes/chat.routes",                 "chat.routes");
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -52,6 +53,7 @@ if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
+if (chatRoutes)         app.use("/api/chat",          chatRoutes);
 
 // Justo antes del app.get("/", ...)
 app.get("/api/health", (req, res) => {
@@ -69,6 +71,7 @@ app.get("/api/health", (req, res) => {
     notifications: !!notificationsRoutes,
     variants:      !!variantsRoutes,
     stats:         !!statsRoutes,   // ← esto faltó
+    chat:          !!chatRoutes,    // ← esto faltó
   });
 });
 app.get("/", (req, res) =>
