@@ -2,7 +2,7 @@
 
 const SENDER = {
   name:  "Alesteb Boutique",
-  email: process.env.BREVO_SENDER_EMAIL || "web@alesteb.com",
+  email: process.env.BREVO_SENDER_EMAIL || "softturin@gmail.com",
 };
 
 // ============================================
