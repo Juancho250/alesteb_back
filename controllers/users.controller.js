@@ -102,77 +102,41 @@ exports.updateUser = async (req, res) => {
 // ============================================
 
 exports.createUser = async (req, res) => {
-  const { 
-    email, 
-    password, 
-    name, 
-    phone, 
-    cedula, 
-    city, 
-    address, 
-    role_id = 3 // Por defecto: cliente
-  } = req.body;
-
+  const { email, password, name, phone, cedula, city, address, role_id = 3 } = req.body;
   const client = await db.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1. Crear usuario
     const passwordToHash = password || cedula || "123456";
     const hashedPassword = await bcrypt.hash(passwordToHash, 10);
 
     const userRes = await client.query(
-      `INSERT INTO users (email, password, name, phone, cedula, city, address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
+      `INSERT INTO users (email, password, name, phone, cedula, city, address, is_verified, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
        RETURNING id`,
-      [
-        email || null, 
-        hashedPassword, 
-        name, 
-        phone || null, 
-        cedula, 
-        city || null, 
-        address || null
-      ]
+      [email || null, hashedPassword, name, phone || null, cedula, city || null, address || null]
     );
-    
+
     const userId = userRes.rows[0].id;
 
-    // 2. Asignar rol
     await client.query(
-      "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT (user_id, role_id) DO NOTHING",
+      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)
+       ON CONFLICT (user_id, role_id) DO NOTHING`,
       [userId, role_id]
     );
 
     await client.query('COMMIT');
-    
-    res.status(201).json({ 
-      success: true,
-      message: "Usuario creado correctamente", 
-      data: { id: userId }
-    });
+    res.status(201).json({ success: true, message: "Usuario creado correctamente", data: { id: userId } });
 
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("CREATE USER ERROR:", error);
-    
-    // Manejo de errores específicos
     let errorMessage = "Error al crear usuario";
-    
-    if (error.code === '23505') { // Unique violation
-      if (error.constraint === 'users_email_key') {
-        errorMessage = "El email ya está registrado";
-      } else if (error.constraint === 'users_cedula_key') {
-        errorMessage = "La cédula ya está registrada";
-      }
+    if (error.code === '23505') {
+      if (error.constraint === 'users_email_key') errorMessage = "El email ya está registrado";
+      else if (error.constraint === 'users_cedula_key') errorMessage = "La cédula ya está registrada";
     }
-    
-    res.status(500).json({ 
-      success: false,
-      message: errorMessage,
-      error: error.message 
-    });
+    res.status(500).json({ success: false, message: errorMessage });
   } finally {
     client.release();
   }
