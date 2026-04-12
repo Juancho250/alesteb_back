@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getHistory, clearHistory } = require('../controllers/chat.controller');
-const { auth } = require('../middleware/auth.middleware'); // ← auth, no authenticate
+const { getChatUsers, getConversation, clearHistory } = require('../controllers/chat.controller');
+const { auth } = require('../middleware/auth.middleware');
 
-router.get('/history', auth, getHistory);
-router.delete('/history', auth, clearHistory);
+router.get('/users',                  auth, getChatUsers);
+router.get('/conversation/:userId',   auth, getConversation);
+router.delete('/history',             auth, clearHistory);
 
 module.exports = router;
