@@ -85,7 +85,7 @@ const editMessage = async (req, res) => {
 
 const uploadImage = async (req, res) => {
   try {
-    console.log('[uploadImage] file:', req.file);       // ← ver qué llega
+    console.log('[uploadImage] file:', req.file);       // ← ver qué llega en req.file
     console.log('[uploadImage] body:', req.body);
 
     if (!req.file) return res.status(400).json({ error: 'No se recibió imagen' });
