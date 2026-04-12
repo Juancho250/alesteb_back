@@ -1,6 +1,23 @@
 const db = require('../config/db');
+const cloudinary = require('../config/cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
 
-// GET /api/chat/users — lista de admins para chatear
+// ── Multer/Cloudinary para imágenes de chat ──────────────────────────────────
+const chatStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: 'chat_images',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+    public_id: `chat-${Date.now()}-${file.originalname.split('.')[0]}`,
+  }),
+});
+const uploadChatImage = multer({
+  storage: chatStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+// GET /api/chat/users — solo admins activos (excluyendo el usuario actual)
 const getChatUsers = async (req, res) => {
   try {
     const result = await db.query(`
@@ -14,6 +31,8 @@ const getChatUsers = async (req, res) => {
             OR (cm.user_id = $1 AND cm.recipient_id = u.id)
          ORDER BY cm.created_at DESC LIMIT 1) AS last_message_at
       FROM users u
+      INNER JOIN user_roles ur ON ur.user_id = u.id
+      INNER JOIN roles r       ON r.id = ur.role_id AND r.name = 'admin'
       WHERE u.id != $1 AND u.is_active = true
       ORDER BY last_message_at DESC NULLS LAST, u.name
     `, [req.user.id]);
@@ -24,7 +43,7 @@ const getChatUsers = async (req, res) => {
   }
 };
 
-// GET /api/chat/conversation/:userId — historial con un usuario
+// GET /api/chat/conversation/:userId
 const getConversation = async (req, res) => {
   const { userId } = req.params;
   const myId = req.user.id;
@@ -43,6 +62,39 @@ const getConversation = async (req, res) => {
   }
 };
 
+// PUT /api/chat/message/:id — editar mensaje (solo el autor)
+const editMessage = async (req, res) => {
+  const { id } = req.params;
+  const { message } = req.body;
+  const myId = req.user.id;
+  try {
+    const result = await db.query(`
+      UPDATE chat_messages
+      SET message = $1, edited_at = NOW()
+      WHERE id = $2 AND user_id = $3
+      RETURNING *
+    `, [message, id, myId]);
+    if (result.rowCount === 0)
+      return res.status(403).json({ error: 'No autorizado o mensaje no encontrado' });
+    res.json({ message: result.rows[0] });
+  } catch (err) {
+    console.error('[Chat] editMessage:', err);
+    res.status(500).json({ error: 'Error editando mensaje' });
+  }
+};
+
+// POST /api/chat/upload-image — subir imagen al chat
+const uploadImage = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No se recibió imagen' });
+    res.json({ image_url: req.file.path });
+  } catch (err) {
+    console.error('[Chat] uploadImage:', err);
+    res.status(500).json({ error: 'Error subiendo imagen' });
+  }
+};
+
+// DELETE /api/chat/history
 const clearHistory = async (req, res) => {
   try {
     await db.query('DELETE FROM chat_messages');
@@ -52,4 +104,7 @@ const clearHistory = async (req, res) => {
   }
 };
 
-module.exports = { getChatUsers, getConversation, clearHistory };
+module.exports = {
+  getChatUsers, getConversation, editMessage,
+  uploadImage, uploadChatImage, clearHistory,
+};
