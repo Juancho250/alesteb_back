@@ -83,19 +83,25 @@ const editMessage = async (req, res) => {
   }
 };
 
-// POST /api/chat/upload-image — sube imagen Y guarda el mensaje
 const uploadImage = async (req, res) => {
   try {
+    console.log('[uploadImage] file:', req.file);       // ← ver qué llega
+    console.log('[uploadImage] body:', req.body);
+
     if (!req.file) return res.status(400).json({ error: 'No se recibió imagen' });
-    const { recipientId } = req.body;
+
+    const recipientId = req.body.recipientId || req.body.recipient_id;
+    if (!recipientId) return res.status(400).json({ error: 'Falta recipientId' });
+
     const result = await db.query(
       `INSERT INTO chat_messages (user_id, recipient_id, message, image_url)
-       VALUES ($1, $2, '', $3) RETURNING *`,
-      [req.user.id, recipientId, req.file.path]
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.user.id, recipientId, '', req.file.path]   // message = '' es válido si la columna lo acepta
     );
     res.json({ message: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: 'Error subiendo imagen' });
+    console.error('[Chat] uploadImage error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 };
 
