@@ -1,21 +1,18 @@
 const db = require("../config/db");
 const bcrypt = require('bcryptjs');
-
+const { emitDataUpdate } = require("../config/socket");
 
 // ============================================
-// 📋 OBTENER USUARIOS CON ROLES (SIN PERMISOS)
+// 📋 OBTENER USUARIOS CON ROLES
 // ============================================
-
 exports.getUsers = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT 
+      SELECT
         u.*,
         COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object('id', r.id, 'name', r.name)
-          ) FILTER (WHERE r.id IS NOT NULL), 
-          '[]'
+          json_agg(DISTINCT jsonb_build_object('id', r.id, 'name', r.name))
+          FILTER (WHERE r.id IS NOT NULL), '[]'
         ) as roles
       FROM users u
       LEFT JOIN user_roles ur ON u.id = ur.user_id
@@ -23,24 +20,16 @@ exports.getUsers = async (req, res) => {
       GROUP BY u.id
       ORDER BY u.id DESC
     `);
-    
-    res.json({
-      success: true,
-      data: result.rows
-    });
+    res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("GET USERS ERROR:", error);
-    res.status(500).json({ 
-      success: false,
-      message: "Error al obtener usuarios" 
-    });
+    res.status(500).json({ success: false, message: "Error al obtener usuarios" });
   }
 };
 
 // ============================================
 // ✏️ ACTUALIZAR USUARIO
 // ============================================
-
 exports.updateUser = async (req, res) => {
   const { id } = req.params;
   const { name, email, phone, cedula, city, address, role_id, password } = req.body;
@@ -49,26 +38,20 @@ exports.updateUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Actualizar datos básicos
     await client.query(
-      `UPDATE users 
-       SET name = $1, email = $2, phone = $3, cedula = $4, city = $5, address = $6, updated_at = NOW()
-       WHERE id = $7`,
+      `UPDATE users
+       SET name=$1, email=$2, phone=$3, cedula=$4, city=$5, address=$6, updated_at=NOW()
+       WHERE id=$7`,
       [name, email, phone, cedula, city, address, id]
     );
 
-    // 2. Actualizar contraseña si se envió
     if (password && password.trim() !== "") {
       const hashedPassword = await bcrypt.hash(password, 10);
-      await client.query(
-        "UPDATE users SET password = $1 WHERE id = $2", 
-        [hashedPassword, id]
-      );
+      await client.query("UPDATE users SET password=$1 WHERE id=$2", [hashedPassword, id]);
     }
 
-    // 3. Actualizar Rol (eliminar existentes y crear nuevo)
-    await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
-    
+    await client.query("DELETE FROM user_roles WHERE user_id=$1", [id]);
+
     if (role_id) {
       await client.query(
         "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT (user_id, role_id) DO NOTHING",
@@ -77,21 +60,14 @@ exports.updateUser = async (req, res) => {
     }
 
     await client.query('COMMIT');
-    
-    res.json({ 
-      success: true,
-      message: "Usuario actualizado correctamente" 
-    });
-    
+
+    emitDataUpdate("users", "updated", { id: parseInt(id) });
+
+    res.json({ success: true, message: "Usuario actualizado correctamente" });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("UPDATE USER ERROR:", error);
-    
-    res.status(500).json({ 
-      success: false,
-      message: "Error al actualizar usuario",
-      error: error.message 
-    });
+    res.status(500).json({ success: false, message: "Error al actualizar usuario", error: error.message });
   } finally {
     client.release();
   }
@@ -100,7 +76,6 @@ exports.updateUser = async (req, res) => {
 // ============================================
 // ➕ CREAR USUARIO
 // ============================================
-
 exports.createUser = async (req, res) => {
   const { email, password, name, phone, cedula, city, address, role_id = 3 } = req.body;
   const client = await db.connect();
@@ -114,26 +89,27 @@ exports.createUser = async (req, res) => {
     const userRes = await client.query(
       `INSERT INTO users (email, password, name, phone, cedula, city, address, is_verified, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
-       RETURNING id`,
+       RETURNING id, name, email`,
       [email || null, hashedPassword, name, phone || null, cedula, city || null, address || null]
     );
 
-    const userId = userRes.rows[0].id;
+    const newUser = userRes.rows[0];
 
     await client.query(
-      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)
-       ON CONFLICT (user_id, role_id) DO NOTHING`,
-      [userId, role_id]
+      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT (user_id, role_id) DO NOTHING`,
+      [newUser.id, role_id]
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ success: true, message: "Usuario creado correctamente", data: { id: userId } });
 
+    emitDataUpdate("users", "created", { id: newUser.id, name: newUser.name, email: newUser.email });
+
+    res.status(201).json({ success: true, message: "Usuario creado correctamente", data: { id: newUser.id } });
   } catch (error) {
     await client.query('ROLLBACK');
     let errorMessage = "Error al crear usuario";
     if (error.code === '23505') {
-      if (error.constraint === 'users_email_key') errorMessage = "El email ya está registrado";
+      if (error.constraint === 'users_email_key')   errorMessage = "El email ya está registrado";
       else if (error.constraint === 'users_cedula_key') errorMessage = "La cédula ya está registrada";
     }
     res.status(500).json({ success: false, message: errorMessage });
@@ -145,7 +121,6 @@ exports.createUser = async (req, res) => {
 // ============================================
 // 🗑️ ELIMINAR USUARIO
 // ============================================
-
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;
   const client = await db.connect();
@@ -153,46 +128,27 @@ exports.deleteUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Eliminar relaciones primero
-    await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
+    await client.query("DELETE FROM user_roles WHERE user_id=$1", [id]);
 
-    // Eliminar usuario
-    const result = await client.query(
-      "DELETE FROM users WHERE id = $1 RETURNING id", 
-      [id]
-    );
+    const result = await client.query("DELETE FROM users WHERE id=$1 RETURNING id", [id]);
 
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ 
-        success: false,
-        message: "Usuario no encontrado" 
-      });
+      return res.status(404).json({ success: false, message: "Usuario no encontrado" });
     }
 
     await client.query('COMMIT');
-    
-    res.json({ 
-      success: true,
-      message: "Usuario eliminado correctamente" 
-    });
-    
+
+    emitDataUpdate("users", "deleted", { id: parseInt(id) });
+
+    res.json({ success: true, message: "Usuario eliminado correctamente" });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("DELETE USER ERROR:", error);
-    
-    let errorMessage = "No se puede eliminar: el usuario tiene registros vinculados";
-    
-    // Error de foreign key constraint
-    if (error.code === '23503') {
-      errorMessage = "No se puede eliminar: el usuario tiene ventas o compras asociadas";
-    }
-    
-    res.status(500).json({ 
-      success: false,
-      message: errorMessage,
-      error: error.message 
-    });
+    const errorMessage = error.code === '23503'
+      ? "No se puede eliminar: el usuario tiene ventas o compras asociadas"
+      : "No se puede eliminar: el usuario tiene registros vinculados";
+    res.status(500).json({ success: false, message: errorMessage, error: error.message });
   } finally {
     client.release();
   }

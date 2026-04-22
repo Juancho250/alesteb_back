@@ -1,7 +1,7 @@
 // src/controllers/products.controller.js
-// ✅ VERSION SEGURA: no usa tablas nuevas (product_variants, etc.) si no existen
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
+const { emitDataUpdate } = require("../config/socket");
 
 const getPublicIdFromUrl = (url) => {
   try {
@@ -84,14 +84,13 @@ exports.getAll = async (req, res) => {
     queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     queryParams.push(Number(limit), Number(offset));
 
-    const result     = await db.query(queryText, queryParams);
+    const result      = await db.query(queryText, queryParams);
     const countResult = await db.query(
       `SELECT COUNT(*) FROM products p LEFT JOIN categories c ON p.category_id = c.id
        WHERE p.is_active = true ${categoria ? "AND c.slug = $1" : ""}`,
       categoria ? [categoria] : []
     );
 
-    // Agregar has_variants e is_bundle solo si las columnas existen
     const rows = result.rows.map(row => ({
       ...row,
       has_variants: row.has_variants ?? false,
@@ -148,7 +147,6 @@ exports.getById = async (req, res) => {
       `SELECT id, url, is_main FROM product_images WHERE product_id=$1 ORDER BY is_main DESC, display_order ASC`, [id]
     );
 
-    // Variantes — solo si la tabla existe
     let variants = [];
     try {
       if (product.has_variants) {
@@ -174,7 +172,6 @@ exports.getById = async (req, res) => {
       console.warn("[VARIANTS] Tabla no disponible aún:", e.message);
     }
 
-    // Bundle items — solo si la tabla existe
     let bundleItems = [];
     try {
       if (product.is_bundle) {
@@ -227,12 +224,11 @@ exports.create = async (req, res) => {
     );
     const productId = productResult.rows[0].id;
 
-    // Intentar marcar has_variants si la columna existe
     try {
       if (has_variants === "true" || has_variants === true) {
         await client.query(`UPDATE products SET has_variants = true WHERE id = $1`, [productId]);
       }
-    } catch (e) { /* columna aún no existe, ignorar */ }
+    } catch (e) { /* columna aún no existe */ }
 
     for (let i = 0; i < images.length; i++) {
       await client.query(
@@ -242,6 +238,9 @@ exports.create = async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    emitDataUpdate("products", "created", { id: productId, name: name.trim() });
+
     res.status(201).json({ success: true, message: "Producto creado correctamente", data: { id: productId } });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -318,6 +317,9 @@ exports.update = async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    emitDataUpdate("products", "updated", { id: parseInt(id) });
+
     res.json({ success: true, message: "Producto actualizado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -352,6 +354,9 @@ exports.remove = async (req, res) => {
 
     await client.query("DELETE FROM products WHERE id=$1", [id]);
     await client.query("COMMIT");
+
+    emitDataUpdate("products", "deleted", { id: parseInt(id) });
+
     res.json({ success: true, message: "Producto eliminado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");

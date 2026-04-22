@@ -3,8 +3,6 @@ const db = require('./db');
 
 let io;
 
-const getRoomId = (a, b) => `dm_${Math.min(a, b)}_${Math.max(a, b)}`;
-
 const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
@@ -20,16 +18,14 @@ const initSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
-    console.log(`[Chat] conectado: ${socket.id}`);
+    console.log(`[Socket] conectado: ${socket.id}`);
 
     socket.on('chat:join', (userData) => {
       socket.userData = userData;
-      // Unirse a sala personal (para recibir DMs)
       socket.join(`user_${userData.id}`);
       io.emit('chat:user_joined', { name: userData.name, id: userData.id });
     });
 
-    // Mensaje directo entre dos usuarios
     socket.on('chat:dm', async ({ senderId, senderName, recipientId, message }) => {
       try {
         const result = await db.query(
@@ -38,7 +34,6 @@ const initSocket = (httpServer) => {
           [senderId, senderName, recipientId, message]
         );
         const msg = result.rows[0];
-        // Enviar al destinatario y al emisor
         io.to(`user_${recipientId}`).emit('chat:dm', msg);
         io.to(`user_${senderId}`).emit('chat:dm', msg);
       } catch (err) {
@@ -57,4 +52,11 @@ const initSocket = (httpServer) => {
 };
 
 const getIO = () => io;
-module.exports = { initSocket, getIO };
+
+const emitDataUpdate = (resource, action, payload = null) => {
+  if (!io) return;
+  io.emit('data:update', { resource, action, payload });
+  console.log(`[Socket] data:update → ${resource}:${action}`);
+};
+
+module.exports = { initSocket, getIO, emitDataUpdate };

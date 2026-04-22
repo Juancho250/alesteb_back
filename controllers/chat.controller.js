@@ -2,6 +2,7 @@ const db = require('../config/db');
 const cloudinary = require('../config/cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
+const { getIO } = require('../config/socket');
 
 // ── Multer/Cloudinary para imágenes de chat ──────────────────────────────────
 const chatStorage = new CloudinaryStorage({
@@ -17,7 +18,7 @@ const uploadChatImage = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// GET /api/chat/users — solo admins activos (excluyendo el usuario actual)
+// GET /api/chat/users
 const getChatUsers = async (req, res) => {
   try {
     const result = await db.query(`
@@ -62,7 +63,7 @@ const getConversation = async (req, res) => {
   }
 };
 
-// PUT /api/chat/message/:id — editar mensaje (solo el autor)
+// PUT /api/chat/message/:id
 const editMessage = async (req, res) => {
   const { id } = req.params;
   const { message } = req.body;
@@ -74,20 +75,29 @@ const editMessage = async (req, res) => {
       WHERE id = $2 AND user_id = $3
       RETURNING *
     `, [message, id, myId]);
+
     if (result.rowCount === 0)
       return res.status(403).json({ error: 'No autorizado o mensaje no encontrado' });
-    res.json({ message: result.rows[0] });
+
+    const updatedMsg = result.rows[0];
+
+    // Notificar en tiempo real a ambos participantes de la conversación
+    const io = getIO();
+    if (io) {
+      io.to(`user_${updatedMsg.recipient_id}`).emit('chat:message_edited', updatedMsg);
+      io.to(`user_${updatedMsg.user_id}`).emit('chat:message_edited', updatedMsg);
+    }
+
+    res.json({ message: updatedMsg });
   } catch (err) {
     console.error('[Chat] editMessage:', err);
     res.status(500).json({ error: 'Error editando mensaje' });
   }
 };
 
+// POST /api/chat/image
 const uploadImage = async (req, res) => {
   try {
-    console.log('[uploadImage] file:', req.file);       // ← ver qué llega en req.file
-    console.log('[uploadImage] body:', req.body);
-
     if (!req.file) return res.status(400).json({ error: 'No se recibió imagen' });
 
     const recipientId = req.body.recipientId || req.body.recipient_id;
@@ -96,9 +106,19 @@ const uploadImage = async (req, res) => {
     const result = await db.query(
       `INSERT INTO chat_messages (user_id, recipient_id, message, image_url)
        VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.user.id, recipientId, '', req.file.path]   // message = '' es válido si la columna lo acepta
+      [req.user.id, recipientId, '', req.file.path]
     );
-    res.json({ message: result.rows[0] });
+
+    const newMsg = result.rows[0];
+
+    // Emitir imagen a ambos participantes por socket
+    const io = getIO();
+    if (io) {
+      io.to(`user_${recipientId}`).emit('chat:dm', newMsg);
+      io.to(`user_${req.user.id}`).emit('chat:dm', newMsg);
+    }
+
+    res.json({ message: newMsg });
   } catch (err) {
     console.error('[Chat] uploadImage error:', err.message);
     res.status(500).json({ error: err.message });
