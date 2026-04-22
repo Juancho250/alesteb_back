@@ -2,8 +2,8 @@
 const express = require("express");
 const router  = express.Router();
 
-const authController  = require("../controllers/auth.controller");
-const { auth, checkRateLimit } = require("../middleware/auth.middleware");
+const authController            = require("../controllers/auth.controller");
+const { auth, checkRateLimit }  = require("../middleware/auth.middleware");
 
 // ============================================
 // 🔓 RUTAS PÚBLICAS
@@ -21,7 +21,7 @@ router.post(
   authController.register
 );
 
-router.post("/verify",      authController.verifyEmail);
+router.post("/verify",     authController.verifyEmail);
 
 router.post(
   "/resend-code",
@@ -29,18 +29,29 @@ router.post(
   authController.resendVerificationCode
 );
 
-router.post("/refresh",     authController.refreshToken);
+router.post("/refresh",    authController.refreshToken);
+
+// ============================================
+// 🛠️ SETUP — SOLO FUNCIONA SI NO HAY ADMINS
+// Requiere SETUP_SECRET_KEY en el body
+// DESHABILITA esta ruta una vez tengas tu primer admin creado
+// ============================================
+router.post("/setup",      authController.setupAdmin);
 
 // ============================================
 // 🔐 RUTAS PROTEGIDAS
 // ============================================
 
-router.post("/logout",      auth, authController.logout);
-router.get ("/profile",     auth, authController.getProfile);
-router.put ("/profile",     auth, authController.updateProfile);  // ← editar perfil propio
+router.post("/logout",     auth, authController.logout);
+router.get ("/profile",    auth, authController.getProfile);
+router.put ("/profile",    auth, authController.updateProfile);
 
 router.get("/verify-token", auth, (req, res) => {
-  res.json({ success: true, message: "Token válido", data: { user: req.user } });
+  res.json({
+    success: true,
+    message: "Token válido",
+    data: { user: req.user },
+  });
 });
 
 module.exports = router;
