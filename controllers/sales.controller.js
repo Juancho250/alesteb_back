@@ -169,50 +169,22 @@ exports.getUserStats = async (req, res) => {
   }
 };
 
-// ============================================
-// 📄 OBTENER DETALLE DE UN PEDIDO (CON ITEMS)
-// ============================================
-exports.getOrderDetail = async (req, res) => {
-  const { id } = req.params;
+// ============================================================
+// MIGRATION — ejecutar una sola vez en la base de datos
+// ============================================================
+//
+// ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS variant_id INTEGER
+//   REFERENCES product_variants(id) ON DELETE SET NULL;
+//
+// CREATE INDEX IF NOT EXISTS idx_sale_items_variant ON sale_items (variant_id);
+//
+// ============================================================
 
-  try {
-    const result = await db.query(
-      `SELECT
-        si.id,
-        si.product_id,
-        si.quantity,
-        si.unit_price,
-        si.subtotal,
-        si.discount_amount,
-        p.name,
-        p.sku,
-        (
-          SELECT pi.url
-          FROM product_images pi
-          WHERE pi.product_id = p.id
-            AND pi.is_main = true
-          LIMIT 1
-        ) AS main_image
-      FROM sale_items si
-      INNER JOIN products p ON si.product_id = p.id
-      WHERE si.sale_id = $1
-      ORDER BY si.id`,
-      [id]
-    );
 
-    res.json(result.rows);
-  } catch (error) {
-    console.error("GET ORDER DETAIL ERROR:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener detalle del pedido",
-    });
-  }
-};
-
-// ============================================
-// 🛒 CREAR PEDIDO/VENTA (VENTAS FÍSICAS Y ONLINE)
-// ============================================
+// ============================================================
+// 🛒 CREAR PEDIDO/VENTA — con soporte de variantes
+// Reemplaza la función createOrder en orders.controller.js
+// ============================================================
 exports.createOrder = async (req, res) => {
   const {
     customer_id,
@@ -246,43 +218,79 @@ exports.createOrder = async (req, res) => {
     if (customerResult.rows.length === 0) throw new Error("Cliente no encontrado");
     const customer = customerResult.rows[0];
 
-    // 2. Validar productos y calcular totales
+    // 2. Validar ítems y calcular totales
     let subtotal = 0;
     const validatedItems = [];
 
     for (const item of items) {
+      // ── Producto base ──────────────────────────────────────
       const productResult = await client.query(
-        "SELECT id, name, sku, sale_price, stock, purchase_price FROM products WHERE id = $1 AND is_active = true",
+        `SELECT id, name, sku, sale_price, stock, purchase_price, has_variants
+         FROM products WHERE id = $1 AND is_active = true`,
         [item.product_id]
       );
-
       if (productResult.rows.length === 0)
         throw new Error(`Producto ${item.product_id} no encontrado o inactivo`);
 
       const product = productResult.rows[0];
 
-      if (product.stock < item.quantity)
-        throw new Error(`Stock insuficiente para ${product.name}. Disponible: ${product.stock}`);
+      // ── Variante (opcional) ────────────────────────────────
+      let variantId    = null;
+      let unitPrice    = Number(product.sale_price);
+      let unitCost     = Number(product.purchase_price ?? 0);
+      let availStock   = Number(product.stock);
+      let variantSku   = null;
 
-      const itemSubtotal = product.sale_price * item.quantity;
+      if (item.variant_id) {
+        const variantResult = await client.query(
+          `SELECT id, sku, sale_price, stock
+           FROM product_variants
+           WHERE id = $1 AND product_id = $2 AND is_active = true`,
+          [item.variant_id, item.product_id]
+        );
+        if (variantResult.rows.length === 0)
+          throw new Error(`Variante ${item.variant_id} no encontrada o inactiva`);
+
+        const variant = variantResult.rows[0];
+        variantId   = variant.id;
+        variantSku  = variant.sku;
+        availStock  = Number(variant.stock);
+
+        // La variante puede tener su propio precio; si no, hereda del producto
+        if (variant.sale_price !== null && variant.sale_price !== undefined) {
+          unitPrice = Number(variant.sale_price);
+        }
+      } else if (product.has_variants) {
+        // El producto tiene variantes pero no se envió variant_id
+        throw new Error(`El producto "${product.name}" tiene variantes — debes seleccionar una`);
+      }
+
+      // ── Validar stock ──────────────────────────────────────
+      if (availStock < item.quantity)
+        throw new Error(
+          `Stock insuficiente para "${product.name}"${variantId ? " (variante seleccionada)" : ""}. Disponible: ${availStock}`
+        );
+
+      const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
 
       validatedItems.push({
         product_id:      product.id,
+        variant_id:      variantId,
         name:            product.name,
-        sku:             product.sku,
+        sku:             variantSku || product.sku,
         quantity:        item.quantity,
-        unit_price:      product.sale_price,
-        unit_cost:       product.purchase_price || 0,
+        unit_price:      unitPrice,
+        unit_cost:       unitCost,
         subtotal:        itemSubtotal,
-        profit_per_unit: product.sale_price - (product.purchase_price || 0),
-        total_profit:    (product.sale_price - (product.purchase_price || 0)) * item.quantity,
+        profit_per_unit: unitPrice - unitCost,
+        total_profit:    (unitPrice - unitCost) * item.quantity,
       });
     }
 
     const total = subtotal - Number(discount_amount) + Number(tax_amount);
 
-    // 3. Generar número de venta
+    // 3. Número de venta
     const saleNumberResult = await client.query(
       "SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 5) AS INTEGER)), 0) + 1 AS next_num FROM sales WHERE sale_number LIKE 'VEN-%'"
     );
@@ -304,33 +312,53 @@ exports.createOrder = async (req, res) => {
         shipping_address || null, shipping_city || null, shipping_notes || null,
       ]
     );
-
     const saleId = saleResult.rows[0].id;
 
-    // 5. Insertar items y reducir stock
+    // 5. Insertar ítems + reducir stock
     for (const item of validatedItems) {
+      // Insertar sale_item (incluye variant_id si aplica)
       await client.query(
         `INSERT INTO sale_items (
-          sale_id, product_id, quantity, unit_price, unit_cost,
+          sale_id, product_id, variant_id, quantity, unit_price, unit_cost,
           subtotal, profit_per_unit, total_profit
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
-          saleId, item.product_id, item.quantity, item.unit_price,
-          item.unit_cost, item.subtotal, item.profit_per_unit, item.total_profit,
+          saleId, item.product_id, item.variant_id ?? null,
+          item.quantity, item.unit_price, item.unit_cost,
+          item.subtotal, item.profit_per_unit, item.total_profit,
         ]
       );
 
-      await client.query(
-        "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
-        [item.quantity, item.product_id]
-      );
+      if (item.variant_id) {
+        // Reducir stock de la variante
+        await client.query(
+          "UPDATE product_variants SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
+          [item.quantity, item.variant_id]
+        );
+        // También sincronizar stock del producto padre (suma de variantes)
+        await client.query(`
+          UPDATE products
+          SET stock = (
+            SELECT COALESCE(SUM(pv.stock), 0)
+            FROM product_variants pv
+            WHERE pv.product_id = $1 AND pv.is_active = true
+          ), updated_at = NOW()
+          WHERE id = $1
+        `, [item.product_id]);
+      } else {
+        // Reducir stock del producto directamente
+        await client.query(
+          "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
+          [item.quantity, item.product_id]
+        );
+      }
     }
 
     await client.query("COMMIT");
 
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
-    // 6. Email de confirmación (best-effort, no bloquea la respuesta)
+    // 6. Email confirmación (best-effort)
     if (sale_type === "online" && customer.email) {
       sendOrderConfirmationEmail(customer.email, customer.name, {
         orderCode,
@@ -355,6 +383,64 @@ exports.createOrder = async (req, res) => {
     res.status(500).json({ success: false, message: error.message || "Error al crear el pedido" });
   } finally {
     client.release();
+  }
+};
+
+
+// ============================================================
+// 📄 DETALLE DE VENTA — también muestra info de variante
+// Reemplaza getOrderDetail en orders.controller.js
+// ============================================================
+exports.getOrderDetail = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT
+        si.id,
+        si.product_id,
+        si.variant_id,
+        si.quantity,
+        si.unit_price,
+        si.subtotal,
+        si.discount_amount,
+        p.name,
+        p.sku,
+        pv.sku           AS variant_sku,
+        -- Atributos de la variante como JSON
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'attribute_type',  at.name,
+                'value',           av.value,
+                'display_value',   COALESCE(av.display_value, av.value),
+                'hex_color',       av.hex_color
+              ) ORDER BY at.id
+            )
+            FROM variant_attribute_values vav
+            JOIN attribute_values av ON av.id = vav.attribute_value_id
+            JOIN attribute_types  at ON at.id = av.attribute_type_id
+            WHERE vav.variant_id = si.variant_id
+          ),
+          '[]'
+        ) AS variant_attributes,
+        (
+          SELECT pi.url
+          FROM product_images pi
+          WHERE pi.product_id = p.id AND pi.is_main = true
+          LIMIT 1
+        ) AS main_image
+      FROM sale_items si
+      INNER JOIN products p ON si.product_id = p.id
+      LEFT  JOIN product_variants pv ON pv.id = si.variant_id
+      WHERE si.sale_id = $1
+      ORDER BY si.id`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET ORDER DETAIL ERROR:", error);
+    res.status(500).json({ success: false, message: "Error al obtener detalle del pedido" });
   }
 };
 
