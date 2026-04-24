@@ -37,6 +37,7 @@ const discountsRoutes     = safeRequire("./routes/discounts.routes",          "d
 const salesRoutes         = safeRequire("./routes/sales.routes",              "sales.routes");
 const bannersRoutes       = safeRequire("./routes/banners.routes",            "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",      "notifications.routes");
+const agentRoutes         = safeRequire("./routes/agent.routes",                "agent.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",                 "chat.routes");
 
@@ -54,6 +55,7 @@ if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (chatRoutes)         app.use("/api/chat",          chatRoutes);
+if (agentRoutes)        app.use("/api/agent",         agentRoutes);
 
 // Justo antes del app.get("/", ...)
 app.get("/api/health", (req, res) => {
