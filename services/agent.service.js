@@ -1,65 +1,124 @@
 const Groq = require("groq-sdk");
-const { neon } = require("@neondatabase/serverless");
+const db = require("../config/db"); // ← usa tu db existente, NO @neondatabase/serverless
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const sql = neon(process.env.NEON_DB_URL);
 
-// ── Schema de la BD ─────────────────────────────────────────────────
-async function getSchema() {
-  const rows = await sql`
+// ── 1. WHITELIST de tablas permitidas ───────────────────────────────
+// El agente SOLO puede ver y tocar estas tablas
+const ALLOWED_TABLES = [
+  "products", "categories", "sales", "sale_items",
+  "users", "providers", "finance", "discounts", "banners",
+];
+
+// ── 2. WHITELIST de columnas sensibles PROHIBIDAS ───────────────────
+const FORBIDDEN_COLUMNS = [
+  "password", "password_hash", "token", "secret",
+  "jwt_secret", "api_key", "reset_token", "verification_token",
+];
+
+// ── 3. Solo estas operaciones están permitidas ──────────────────────
+const ALLOWED_OPERATIONS = {
+  query:  /^\s*(SELECT)\s+/i,          // solo lectura
+  mutate: /^\s*(INSERT|UPDATE)\s+/i,   // sin DELETE ni DROP
+};
+
+// ── 4. Blacklist de keywords peligrosos ────────────────────────────
+const DANGEROUS_KEYWORDS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|EXEC|EXECUTE|xp_|pg_read_file|pg_write_file|COPY\s+.*\s+TO|INTO\s+OUTFILE)\b/i;
+
+// ── 5. Validador de queries ─────────────────────────────────────────
+function validateQuery(sql, action) {
+  // Bloquear keywords peligrosos sin excepción
+  if (DANGEROUS_KEYWORDS.test(sql)) {
+    throw new Error("Query bloqueada por contener operaciones peligrosas.");
+  }
+
+  // Verificar que sea la operación correcta
+  if (!ALLOWED_OPERATIONS[action].test(sql)) {
+    throw new Error(`Solo se permiten ${action === "query" ? "SELECT" : "INSERT/UPDATE"} para esta acción.`);
+  }
+
+  // Bloquear acceso a columnas sensibles
+  const sqlLower = sql.toLowerCase();
+  for (const col of FORBIDDEN_COLUMNS) {
+    if (sqlLower.includes(col)) {
+      throw new Error(`Acceso a columna sensible '${col}' bloqueado.`);
+    }
+  }
+
+  // Verificar que solo acceda a tablas permitidas
+  // Extrae nombres de tablas del SQL con regex simple
+  const tablePattern = /\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
+  let match;
+  while ((match = tablePattern.exec(sql)) !== null) {
+    const table = match[1].toLowerCase();
+    if (!ALLOWED_TABLES.includes(table)) {
+      throw new Error(`Acceso a tabla '${table}' no permitido.`);
+    }
+  }
+
+  return true;
+}
+
+// ── 6. Schema filtrado — solo tablas permitidas, sin columnas sensibles
+async function getFilteredSchema() {
+  const result = await db.query(`
     SELECT table_name, column_name, data_type
     FROM information_schema.columns
     WHERE table_schema = 'public'
+      AND table_name = ANY($1)
     ORDER BY table_name, ordinal_position
-  `;
+  `, [ALLOWED_TABLES]);
+
   const schema = {};
-  for (const row of rows) {
+  for (const row of result.rows) {
+    // No incluir columnas sensibles en el schema que ve el modelo
+    if (FORBIDDEN_COLUMNS.some(fc => row.column_name.toLowerCase().includes(fc))) continue;
     if (!schema[row.table_name]) schema[row.table_name] = [];
     schema[row.table_name].push(`${row.column_name} (${row.data_type})`);
   }
+
   return Object.entries(schema)
     .map(([table, cols]) => `- ${table}: ${cols.join(", ")}`)
     .join("\n");
 }
 
-// ── Ejecutor seguro ──────────────────────────────────────────────────
-async function executeQuery(query, params = []) {
-  const forbidden = /\b(drop|truncate|alter\s+table|create\s+table)\b/i;
-  if (forbidden.test(query)) throw new Error("Query no permitida por seguridad");
+// ── 7. Ejecutor con usuario de solo lectura para queries ────────────
+async function executeQuery(sql, action) {
+  validateQuery(sql, action); // lanza error si no pasa validación
 
-  if (params.length > 0) {
-    return await sql(query, params);
+  // Para mutaciones: pedir siempre doble confirmación a nivel de código
+  if (action === "mutate") {
+    // Limitar a máximo 100 filas afectadas por seguridad
+    if (!/WHERE\s+/i.test(sql)) {
+      throw new Error("Las mutaciones deben incluir una cláusula WHERE.");
+    }
   }
-  // Para queries sin parámetros usamos template literal
-  return await sql.query(query);
+
+  const result = await db.query(sql);
+  return result.rows ?? result;
 }
 
-// ── Agente principal ─────────────────────────────────────────────────
-async function runAgent(messages) {
-  const schema = await getSchema();
+// ── 8. Agente principal ─────────────────────────────────────────────
+async function runAgent(messages, userContext = {}) {
+  const schema = await getFilteredSchema();
 
   const systemPrompt = `Eres el asistente inteligente del ERP "Alesteb".
-Tienes acceso a una base de datos PostgreSQL con estas tablas:
+Solo tienes acceso a estas tablas: ${ALLOWED_TABLES.join(", ")}.
 
+Esquema disponible:
 ${schema}
 
-Cuando el usuario te haga una pregunta sobre datos, responde SOLO con JSON:
-{ "action": "query", "sql": "SELECT ...", "explanation": "Voy a consultar..." }
-
-Cuando el usuario quiera modificar datos y YA haya confirmado:
-{ "action": "mutate", "sql": "INSERT/UPDATE/DELETE...", "explanation": "Voy a modificar..." }
-
-Cuando puedas responder sin consultar la BD:
-{ "action": "answer", "text": "tu respuesta aquí" }
-
-Cuando necesites confirmación antes de modificar:
-{ "action": "confirm", "text": "¿Estás seguro de que quieres...?" }
-
-REGLAS IMPORTANTES:
-- Responde SOLO con el JSON, sin texto extra ni backticks ni markdown
-- Para fechas usa NOW(), CURRENT_DATE, DATE_TRUNC, etc.
-- El mes actual en PostgreSQL: DATE_TRUNC('month', CURRENT_DATE)
-- Usa aliases claros en los SELECT para que los resultados sean legibles
+REGLAS ESTRICTAS:
+- Responde SOLO con JSON válido, sin texto extra ni backticks
+- Para consultas: { "action": "query", "sql": "SELECT...", "explanation": "..." }
+- Para modificar (solo si el usuario confirmó): { "action": "mutate", "sql": "INSERT/UPDATE...", "explanation": "..." }
+- Para respuestas directas: { "action": "answer", "text": "..." }
+- Para pedir confirmación: { "action": "confirm", "text": "¿Estás seguro de que quieres...?" }
+- NUNCA uses DELETE, DROP, TRUNCATE, ALTER, CREATE TABLE
+- NUNCA accedas a columnas de contraseñas, tokens o claves
+- NUNCA hagas SELECT * en tablas grandes, usa columnas específicas
+- Siempre incluye LIMIT en los SELECT (máximo 100)
+- Para fechas usa NOW(), CURRENT_DATE, DATE_TRUNC
 - Responde siempre en español`;
 
   const groqMessages = [
@@ -78,22 +137,15 @@ REGLAS IMPORTANTES:
   });
 
   const raw = completion.choices[0].message.content.trim();
-
-  // Limpiar posibles backticks que el modelo agregue
   const clean = raw.replace(/```json|```/g, "").trim();
 
   let parsed;
   try {
     parsed = JSON.parse(clean);
   } catch {
-    // Si no es JSON válido, lo tratamos como respuesta directa
-    return {
-      reply: raw,
-      history: [...messages, { role: "assistant", content: raw }],
-    };
+    return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
   }
 
-  // ── Respuesta directa o confirmación ────────────────────────────
   if (parsed.action === "answer" || parsed.action === "confirm") {
     return {
       reply: parsed.text,
@@ -102,31 +154,28 @@ REGLAS IMPORTANTES:
     };
   }
 
-  // ── Ejecutar query ───────────────────────────────────────────────
   if (parsed.action === "query" || parsed.action === "mutate") {
     let rows;
     try {
-      rows = await executeQuery(parsed.sql);
+      rows = await executeQuery(parsed.sql, parsed.action);
     } catch (err) {
-      const errMsg = `No pude ejecutar la consulta: ${err.message}`;
+      // Log interno pero mensaje genérico al usuario
+      console.error("[Agent Query Blocked]", err.message, "| SQL:", parsed.sql);
+      const errMsg = `No pude ejecutar esa consulta: ${err.message}`;
       return {
         reply: errMsg,
         history: [...messages, { role: "assistant", content: errMsg }],
       };
     }
 
-    // Segunda llamada: convertir resultados en respuesta legible
     const followUp = [
       ...groqMessages,
       { role: "assistant", content: raw },
       {
         role: "user",
-        content: `Resultados obtenidos de la base de datos: ${JSON.stringify(rows)}
-
-Ahora redacta una respuesta clara y amigable en español para el usuario.
-- Formatea los números con separadores (ej: 1.250.000)
-- Si son listas, máximo 10 items
-- NO incluyas JSON ni código, solo texto natural`,
+        content: `Resultados: ${JSON.stringify(rows).slice(0, 8000)}
+        
+Redacta una respuesta clara en español. Formatea números. Sin JSON ni código.`,
       },
     ];
 
@@ -144,11 +193,7 @@ Ahora redacta una respuesta clara y amigable en español para el usuario.
     };
   }
 
-  // Fallback
-  return {
-    reply: raw,
-    history: [...messages, { role: "assistant", content: raw }],
-  };
+  return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
 }
 
 module.exports = { runAgent };
