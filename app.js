@@ -11,8 +11,6 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 
-// Helper que no revienta la app si un módulo falta
-// En app.js, cambia la función safeRequire por esta:
 function safeRequire(path, label) {
   try {
     const mod = require(path);
@@ -20,11 +18,12 @@ function safeRequire(path, label) {
     return mod;
   } catch (e) {
     console.error(`[CRASH] ${label} →`, e.message);
-    console.error(e.stack); // ← agrega esto para ver el stack completo
+    console.error(e.stack);
     return null;
   }
 }
-// Rutas — paths relativos a la RAÍZ del proyecto
+
+// Rutas
 const authRoutes          = safeRequire("./routes/auth.routes",               "auth.routes");
 const usersRoutes         = safeRequire("./routes/users.routes",              "users.routes");
 const rolesRoutes         = safeRequire("./routes/roles.routes",              "roles.routes");
@@ -37,9 +36,10 @@ const discountsRoutes     = safeRequire("./routes/discounts.routes",          "d
 const salesRoutes         = safeRequire("./routes/sales.routes",              "sales.routes");
 const bannersRoutes       = safeRequire("./routes/banners.routes",            "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",      "notifications.routes");
-const agentRoutes         = safeRequire("./routes/agent.routes",                "agent.routes");
+const agentRoutes         = safeRequire("./routes/agent.routes",              "agent.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
-const chatRoutes          = safeRequire("./routes/chat.routes",                 "chat.routes");
+const chatRoutes          = safeRequire("./routes/chat.routes",               "chat.routes");
+const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes"); // ← NUEVO
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -54,10 +54,10 @@ if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
-if (chatRoutes)         app.use("/api/chat",          chatRoutes);
-if (agentRoutes)        app.use("/api/agent",         agentRoutes);
+if (chatRoutes)          app.use("/api/chat",          chatRoutes);
+if (agentRoutes)         app.use("/api/agent",         agentRoutes);
+if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes); // ← NUEVO
 
-// Justo antes del app.get("/", ...)
 app.get("/api/health", (req, res) => {
   res.json({
     auth:          !!authRoutes,
@@ -72,10 +72,12 @@ app.get("/api/health", (req, res) => {
     finance:       !!financeRoutes,
     notifications: !!notificationsRoutes,
     variants:      !!variantsRoutes,
-    stats:         !!statsRoutes,   // ← esto faltó
-    chat:          !!chatRoutes,    // ← esto faltó
+    stats:         !!statsRoutes,
+    chat:          !!chatRoutes,
+    wompi:         !!wompiRoutes, // ← NUEVO
   });
 });
+
 app.get("/", (req, res) =>
   res.json({ message: "API Alesteb OK", timestamp: new Date() })
 );
