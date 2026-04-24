@@ -198,8 +198,9 @@ exports.createInvoice = async (req, res) => {
 
     if (invoice_type === "purchase" && items.length > 0) {
       for (const item of items) {
-        const { product_id, quantity, unit_price } = item;
-        if (!product_id || !quantity || !unit_price) throw new Error("Items incompletos en la factura");
+        const { product_id, variant_id, quantity, unit_price } = item;
+        if (!product_id || !quantity || !unit_price)
+          throw new Error("Items incompletos en la factura");
 
         await client.query(
           `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, subtotal)
@@ -207,22 +208,61 @@ exports.createInvoice = async (req, res) => {
           [invoiceId, product_id, quantity, unit_price, quantity * unit_price]
         );
 
+        // Leer producto para saber si tiene variantes e historial de precio
         const oldProductResult = await client.query(
-          `SELECT purchase_price, sale_price FROM products WHERE id = $1`, [product_id]
+          `SELECT has_variants, purchase_price, sale_price FROM products WHERE id = $1`,
+          [product_id]
         );
         const oldProduct = oldProductResult.rows[0];
 
-        await client.query(
-          `UPDATE products SET purchase_price = $1, stock = stock + $2, updated_at = NOW() WHERE id = $3`,
-          [unit_price, quantity, product_id]
-        );
+        if (oldProduct?.has_variants && variant_id) {
+          // ── Producto CON variantes: stock va a product_variants ──
+          const variantExists = await client.query(
+            `SELECT id FROM product_variants WHERE id = $1 AND product_id = $2`,
+            [variant_id, product_id]
+          );
+          if (variantExists.rows.length === 0)
+            throw new Error(`La variante ${variant_id} no pertenece al producto ${product_id}`);
 
+          await client.query(
+            `UPDATE product_variants
+               SET stock = stock + $1, updated_at = NOW()
+             WHERE id = $2`,
+            [quantity, variant_id]
+          );
+
+          // Actualizar solo precio de compra base del producto (sin tocar su stock)
+          await client.query(
+            `UPDATE products
+               SET purchase_price = $1, updated_at = NOW()
+             WHERE id = $2`,
+            [unit_price, product_id]
+          );
+        } else {
+          // ── Producto SIN variantes: stock va directo a products ──
+          await client.query(
+            `UPDATE products
+               SET purchase_price = $1, stock = stock + $2, updated_at = NOW()
+             WHERE id = $3`,
+            [unit_price, quantity, product_id]
+          );
+        }
+
+        // Historial de precio si cambió
         if (oldProduct && fmtNum(oldProduct.purchase_price) !== fmtNum(unit_price)) {
           await client.query(
             `INSERT INTO product_price_history
                (product_id, old_purchase_price, new_purchase_price, old_sale_price, new_sale_price, reason, changed_by)
              VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [product_id, oldProduct.purchase_price, unit_price, oldProduct.sale_price, oldProduct.sale_price, "Factura de compra", req.user?.id || null]
+            [
+              product_id,
+              oldProduct.purchase_price,
+              unit_price,
+              oldProduct.sale_price,
+              oldProduct.sale_price,
+              "Factura de compra",
+              req.user?.id || null,
+            ]
           );
         }
       }
@@ -237,7 +277,9 @@ exports.createInvoice = async (req, res) => {
 
     await client.query("COMMIT");
     res.status(201).json({
-      message: invoice_type === "service" ? "Factura de servicio registrada exitosamente" : "Compra registrada exitosamente",
+      message: invoice_type === "service"
+        ? "Factura de servicio registrada exitosamente"
+        : "Compra registrada exitosamente",
       invoice_id: invoiceId,
     });
   } catch (err) {
