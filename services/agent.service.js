@@ -1,65 +1,87 @@
 const Groq = require("groq-sdk");
-const db = require("../config/db"); // ← usa tu db existente, NO @neondatabase/serverless
+const db = require("../config/db");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ── 1. WHITELIST de tablas permitidas ───────────────────────────────
-// El agente SOLO puede ver y tocar estas tablas
+// ── Tablas permitidas ────────────────────────────────────────────────
 const ALLOWED_TABLES = [
-  "products", "categories", "sales", "sale_items",
-  "users", "providers", "finance", "discounts", "banners",
+  "sales", "sale_items", "coupon_usage",
+  "products", "product_variants", "product_images",
+  "product_price_history", "categories",
+  "attribute_types", "attribute_values", "variant_attribute_values",
+  "bundle_items", "variant_images",
+  "expenses", "invoices", "invoice_items", "invoice_payments",
+  "financial_budgets", "provider_payments",
+  "providers", "purchase_orders", "purchase_order_items",
+  "discounts", "discount_coupons", "discount_targets",
+  "banners", "agent_conversations",
+  // Vistas
+  "v_sales_full", "v_products_full", "v_profit_analysis",
+  "v_cashflow_detailed", "v_expenses_summary",
+  "v_invoices_summary", "v_provider_balance",
 ];
 
-// ── 2. WHITELIST de columnas sensibles PROHIBIDAS ───────────────────
-const FORBIDDEN_COLUMNS = [
-  "password", "password_hash", "token", "secret",
-  "jwt_secret", "api_key", "reset_token", "verification_token",
+// ── Columnas que NUNCA viajan a Groq ────────────────────────────────
+const MASK_FIELDS = [
+  // De sales (customer info)
+  "customer_phone", "shipping_address", "shipping_city",
+  "shipping_lat", "shipping_lng", "shipping_notes",
+  "payment_proof_url",
+  // De providers (datos de contacto)
+  "phone", "email", "address", "contact_person", "tax_id",
+  // De v_sales_full
+  "customer_email",
 ];
 
-// ── 3. Solo estas operaciones están permitidas ──────────────────────
-const ALLOWED_OPERATIONS = {
-  query:  /^\s*(SELECT)\s+/i,          // solo lectura
-  mutate: /^\s*(INSERT|UPDATE)\s+/i,   // sin DELETE ni DROP
+// ── Keywords peligrosos bloqueados sin excepción ────────────────────
+const DANGEROUS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|COPY\s+.*\s+TO|pg_read_file|pg_write_file|INTO\s+OUTFILE)\b/i;
+
+// ── Operaciones permitidas por acción ───────────────────────────────
+const ALLOWED_OPS = {
+  query:  /^\s*SELECT\s+/i,
+  mutate: /^\s*(INSERT|UPDATE)\s+/i,
 };
 
-// ── 4. Blacklist de keywords peligrosos ────────────────────────────
-const DANGEROUS_KEYWORDS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|EXEC|EXECUTE|xp_|pg_read_file|pg_write_file|COPY\s+.*\s+TO|INTO\s+OUTFILE)\b/i;
-
-// ── 5. Validador de queries ─────────────────────────────────────────
+// ── Validador ────────────────────────────────────────────────────────
 function validateQuery(sql, action) {
-  // Bloquear keywords peligrosos sin excepción
-  if (DANGEROUS_KEYWORDS.test(sql)) {
-    throw new Error("Query bloqueada por contener operaciones peligrosas.");
-  }
+  if (DANGEROUS.test(sql))
+    throw new Error("Operación peligrosa bloqueada.");
 
-  // Verificar que sea la operación correcta
-  if (!ALLOWED_OPERATIONS[action].test(sql)) {
-    throw new Error(`Solo se permiten ${action === "query" ? "SELECT" : "INSERT/UPDATE"} para esta acción.`);
-  }
+  if (!ALLOWED_OPS[action].test(sql))
+    throw new Error(`Solo se permiten ${action === "query" ? "SELECT" : "INSERT/UPDATE"}.`);
 
-  // Bloquear acceso a columnas sensibles
-  const sqlLower = sql.toLowerCase();
-  for (const col of FORBIDDEN_COLUMNS) {
-    if (sqlLower.includes(col)) {
-      throw new Error(`Acceso a columna sensible '${col}' bloqueado.`);
-    }
-  }
+  if (action === "mutate" && !/WHERE\s+/i.test(sql))
+    throw new Error("Las modificaciones deben incluir WHERE.");
 
-  // Verificar que solo acceda a tablas permitidas
-  // Extrae nombres de tablas del SQL con regex simple
+  // Verificar tablas
   const tablePattern = /\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
   let match;
   while ((match = tablePattern.exec(sql)) !== null) {
     const table = match[1].toLowerCase();
-    if (!ALLOWED_TABLES.includes(table)) {
-      throw new Error(`Acceso a tabla '${table}' no permitido.`);
-    }
+    if (!ALLOWED_TABLES.includes(table))
+      throw new Error(`Tabla '${table}' no permitida.`);
   }
-
-  return true;
 }
 
-// ── 6. Schema filtrado — solo tablas permitidas, sin columnas sensibles
+// ── Sanitizar resultados antes de enviar a Groq ─────────────────────
+function sanitizeRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map(row => {
+    const clean = { ...row };
+    for (const key of Object.keys(clean)) {
+      if (MASK_FIELDS.some(f => key.toLowerCase() === f.toLowerCase())) {
+        clean[key] = "***";
+      }
+      // Bloquear cualquier columna que suene a dato personal
+      if (/\b(cedula|documento|password|token|secret)\b/i.test(key)) {
+        clean[key] = "***";
+      }
+    }
+    return clean;
+  });
+}
+
+// ── Schema filtrado para el system prompt ───────────────────────────
 async function getFilteredSchema() {
   const result = await db.query(`
     SELECT table_name, column_name, data_type
@@ -69,10 +91,17 @@ async function getFilteredSchema() {
     ORDER BY table_name, ordinal_position
   `, [ALLOWED_TABLES]);
 
+  // Excluir columnas sensibles del schema que ve el modelo
+  const HIDE_COLS = [
+    "password", "token", "secret", "cedula", "documento",
+    "customer_phone", "shipping_address", "shipping_lat",
+    "shipping_lng", "payment_proof_url", "tax_id",
+    "contact_person", "device_info", "token_hash",
+  ];
+
   const schema = {};
   for (const row of result.rows) {
-    // No incluir columnas sensibles en el schema que ve el modelo
-    if (FORBIDDEN_COLUMNS.some(fc => row.column_name.toLowerCase().includes(fc))) continue;
+    if (HIDE_COLS.some(c => row.column_name.toLowerCase().includes(c))) continue;
     if (!schema[row.table_name]) schema[row.table_name] = [];
     schema[row.table_name].push(`${row.column_name} (${row.data_type})`);
   }
@@ -82,43 +111,34 @@ async function getFilteredSchema() {
     .join("\n");
 }
 
-// ── 7. Ejecutor con usuario de solo lectura para queries ────────────
-async function executeQuery(sql, action) {
-  validateQuery(sql, action); // lanza error si no pasa validación
-
-  // Para mutaciones: pedir siempre doble confirmación a nivel de código
-  if (action === "mutate") {
-    // Limitar a máximo 100 filas afectadas por seguridad
-    if (!/WHERE\s+/i.test(sql)) {
-      throw new Error("Las mutaciones deben incluir una cláusula WHERE.");
-    }
-  }
-
-  const result = await db.query(sql);
-  return result.rows ?? result;
-}
-
-// ── 8. Agente principal ─────────────────────────────────────────────
-async function runAgent(messages, userContext = {}) {
+// ── Agente principal ─────────────────────────────────────────────────
+async function runAgent(messages) {
   const schema = await getFilteredSchema();
 
   const systemPrompt = `Eres el asistente inteligente del ERP "Alesteb".
-Solo tienes acceso a estas tablas: ${ALLOWED_TABLES.join(", ")}.
 
-Esquema disponible:
+VISTAS DISPONIBLES (úsalas siempre que puedas, ya tienen los JOINs hechos):
+- v_sales_full         → ventas con nombre cliente, vendedor, profit, items
+- v_products_full      → productos con categoría, imagen, estado de stock
+- v_profit_analysis    → rentabilidad por producto (margen, unidades vendidas)
+- v_cashflow_detailed  → flujo de caja diario (ingresos vs gastos)
+- v_expenses_summary   → resumen de gastos por mes y tipo
+- v_invoices_summary   → facturas con proveedor, días de mora
+- v_provider_balance   → balance y crédito disponible por proveedor
+
+ESQUEMA COMPLETO:
 ${schema}
 
-REGLAS ESTRICTAS:
+REGLAS:
 - Responde SOLO con JSON válido, sin texto extra ni backticks
-- Para consultas: { "action": "query", "sql": "SELECT...", "explanation": "..." }
-- Para modificar (solo si el usuario confirmó): { "action": "mutate", "sql": "INSERT/UPDATE...", "explanation": "..." }
-- Para respuestas directas: { "action": "answer", "text": "..." }
-- Para pedir confirmación: { "action": "confirm", "text": "¿Estás seguro de que quieres...?" }
+- Para consultas:   { "action": "query",   "sql": "SELECT...", "explanation": "..." }
+- Para modificar:   { "action": "mutate",  "sql": "INSERT/UPDATE...", "explanation": "..." }
+- Para responder:   { "action": "answer",  "text": "..." }
+- Para confirmar:   { "action": "confirm", "text": "¿Estás seguro...?" }
 - NUNCA uses DELETE, DROP, TRUNCATE, ALTER, CREATE TABLE
-- NUNCA accedas a columnas de contraseñas, tokens o claves
-- NUNCA hagas SELECT * en tablas grandes, usa columnas específicas
-- Siempre incluye LIMIT en los SELECT (máximo 100)
-- Para fechas usa NOW(), CURRENT_DATE, DATE_TRUNC
+- NUNCA accedas a: users, refresh_tokens, user_roles, roles, chat_messages
+- Siempre usa LIMIT (máximo 100 filas)
+- Usa DATE_TRUNC, NOW(), CURRENT_DATE para filtros de fecha
 - Responde siempre en español`;
 
   const groqMessages = [
@@ -157,10 +177,11 @@ REGLAS ESTRICTAS:
   if (parsed.action === "query" || parsed.action === "mutate") {
     let rows;
     try {
-      rows = await executeQuery(parsed.sql, parsed.action);
+      validateQuery(parsed.sql, parsed.action);
+      const result = await db.query(parsed.sql);
+      rows = result.rows ?? result;
     } catch (err) {
-      // Log interno pero mensaje genérico al usuario
-      console.error("[Agent Query Blocked]", err.message, "| SQL:", parsed.sql);
+      console.error("[Agent Blocked]", err.message, "SQL:", parsed.sql);
       const errMsg = `No pude ejecutar esa consulta: ${err.message}`;
       return {
         reply: errMsg,
@@ -168,14 +189,20 @@ REGLAS ESTRICTAS:
       };
     }
 
+    // Sanitizar antes de que salgan del servidor
+    const sanitized = sanitizeRows(rows);
+
     const followUp = [
       ...groqMessages,
       { role: "assistant", content: raw },
       {
         role: "user",
-        content: `Resultados: ${JSON.stringify(rows).slice(0, 8000)}
-        
-Redacta una respuesta clara en español. Formatea números. Sin JSON ni código.`,
+        content: `Resultados (${sanitized.length} filas):
+${JSON.stringify(sanitized).slice(0, 6000)}
+
+Redacta una respuesta clara en español. Formatea números con puntos de miles.
+Si hay "***" son datos privados, no los menciones.
+Sin JSON ni código, solo texto natural.`,
       },
     ];
 
