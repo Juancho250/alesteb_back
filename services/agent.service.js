@@ -1,40 +1,41 @@
-import Groq from "groq-sdk";
-import { neon } from "@neondatabase/serverless";
+const Groq = require("groq-sdk");
+const { neon } = require("@neondatabase/serverless");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const sql = neon(process.env.DATABASE_URL);
+const sql = neon(process.env.NEON_DB_URL);
 
-// ── Obtener schema de la BD para dárselo al modelo ──────────────────
+// ── Schema de la BD ─────────────────────────────────────────────────
 async function getSchema() {
-  const rows = await sql(`
+  const rows = await sql`
     SELECT table_name, column_name, data_type
     FROM information_schema.columns
     WHERE table_schema = 'public'
     ORDER BY table_name, ordinal_position
-  `);
-
-  // Agrupa por tabla para que sea más legible
+  `;
   const schema = {};
   for (const row of rows) {
     if (!schema[row.table_name]) schema[row.table_name] = [];
     schema[row.table_name].push(`${row.column_name} (${row.data_type})`);
   }
-
   return Object.entries(schema)
     .map(([table, cols]) => `- ${table}: ${cols.join(", ")}`)
     .join("\n");
 }
 
-// ── Ejecutar query segura ───────────────────────────────────────────
+// ── Ejecutor seguro ──────────────────────────────────────────────────
 async function executeQuery(query, params = []) {
-  // Bloquea queries peligrosas
-  const forbidden = /drop|truncate|alter|create\s+table/i;
-  if (forbidden.test(query)) throw new Error("Query no permitida");
-  return await sql(query, params);
+  const forbidden = /\b(drop|truncate|alter\s+table|create\s+table)\b/i;
+  if (forbidden.test(query)) throw new Error("Query no permitida por seguridad");
+
+  if (params.length > 0) {
+    return await sql(query, params);
+  }
+  // Para queries sin parámetros usamos template literal
+  return await sql.query(query);
 }
 
-// ── Loop agentico principal ─────────────────────────────────────────
-export async function runAgent(messages) {
+// ── Agente principal ─────────────────────────────────────────────────
+async function runAgent(messages) {
   const schema = await getSchema();
 
   const systemPrompt = `Eres el asistente inteligente del ERP "Alesteb".
@@ -42,25 +43,25 @@ Tienes acceso a una base de datos PostgreSQL con estas tablas:
 
 ${schema}
 
-Cuando el usuario te haga una pregunta sobre datos, debes responder con un JSON así:
+Cuando el usuario te haga una pregunta sobre datos, responde SOLO con JSON:
 { "action": "query", "sql": "SELECT ...", "explanation": "Voy a consultar..." }
 
-Cuando el usuario quiera modificar datos y YA haya confirmado, responde:
-{ "action": "mutate", "sql": "INSERT/UPDATE...", "explanation": "Voy a crear/modificar..." }
+Cuando el usuario quiera modificar datos y YA haya confirmado:
+{ "action": "mutate", "sql": "INSERT/UPDATE/DELETE...", "explanation": "Voy a modificar..." }
 
 Cuando puedas responder sin consultar la BD:
 { "action": "answer", "text": "tu respuesta aquí" }
 
-Cuando necesites que el usuario confirme algo antes de modificar:
+Cuando necesites confirmación antes de modificar:
 { "action": "confirm", "text": "¿Estás seguro de que quieres...?" }
 
-IMPORTANTE:
-- Responde SOLO con el JSON, sin texto extra ni backticks
-- Para fechas usa NOW(), CURRENT_DATE, etc.
-- Filtra siempre por datos relevantes, no hagas SELECT * sin WHERE en tablas grandes
+REGLAS IMPORTANTES:
+- Responde SOLO con el JSON, sin texto extra ni backticks ni markdown
+- Para fechas usa NOW(), CURRENT_DATE, DATE_TRUNC, etc.
+- El mes actual en PostgreSQL: DATE_TRUNC('month', CURRENT_DATE)
+- Usa aliases claros en los SELECT para que los resultados sean legibles
 - Responde siempre en español`;
 
-  // Construye el historial para Groq
   const groqMessages = [
     { role: "system", content: systemPrompt },
     ...messages.map((m) => ({
@@ -72,69 +73,82 @@ IMPORTANTE:
   const completion = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: groqMessages,
-    temperature: 0.1, // bajo para que sea preciso con SQL
+    temperature: 0.1,
     max_tokens: 1024,
   });
 
   const raw = completion.choices[0].message.content.trim();
 
+  // Limpiar posibles backticks que el modelo agregue
+  const clean = raw.replace(/```json|```/g, "").trim();
+
   let parsed;
   try {
-    // A veces el modelo envuelve en ```json ... ``` — lo limpiamos
-    const clean = raw.replace(/```json|```/g, "").trim();
     parsed = JSON.parse(clean);
   } catch {
-    // Si no puede parsear, lo tratamos como respuesta directa
-    return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
+    // Si no es JSON válido, lo tratamos como respuesta directa
+    return {
+      reply: raw,
+      history: [...messages, { role: "assistant", content: raw }],
+    };
   }
 
-  // ── Ejecutar la acción ────────────────────────────────────────────
+  // ── Respuesta directa o confirmación ────────────────────────────
   if (parsed.action === "answer" || parsed.action === "confirm") {
-    const reply = parsed.text;
     return {
-      reply,
-      history: [...messages, { role: "assistant", content: reply }],
+      reply: parsed.text,
+      history: [...messages, { role: "assistant", content: parsed.text }],
       needsConfirm: parsed.action === "confirm",
     };
   }
 
+  // ── Ejecutar query ───────────────────────────────────────────────
   if (parsed.action === "query" || parsed.action === "mutate") {
+    let rows;
     try {
-      const rows = await executeQuery(parsed.sql);
-
-      // Le pasamos los resultados al modelo para que genere respuesta legible
-      const followUp = [
-        ...groqMessages,
-        { role: "assistant", content: raw },
-        {
-          role: "user",
-          content: `Resultados de la query: ${JSON.stringify(rows)}
-          
-Ahora responde al usuario en español de forma clara y amigable, con los números formateados. 
-Responde SOLO con el texto final, sin JSON.`,
-        },
-      ];
-
-      const finalCompletion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: followUp,
-        temperature: 0.3,
-        max_tokens: 1024,
-      });
-
-      const reply = finalCompletion.choices[0].message.content.trim();
-      return {
-        reply,
-        history: [...messages, { role: "assistant", content: reply }],
-      };
+      rows = await executeQuery(parsed.sql);
     } catch (err) {
-      const errMsg = `Hubo un error ejecutando la consulta: ${err.message}`;
+      const errMsg = `No pude ejecutar la consulta: ${err.message}`;
       return {
         reply: errMsg,
         history: [...messages, { role: "assistant", content: errMsg }],
       };
     }
+
+    // Segunda llamada: convertir resultados en respuesta legible
+    const followUp = [
+      ...groqMessages,
+      { role: "assistant", content: raw },
+      {
+        role: "user",
+        content: `Resultados obtenidos de la base de datos: ${JSON.stringify(rows)}
+
+Ahora redacta una respuesta clara y amigable en español para el usuario.
+- Formatea los números con separadores (ej: 1.250.000)
+- Si son listas, máximo 10 items
+- NO incluyas JSON ni código, solo texto natural`,
+      },
+    ];
+
+    const finalCompletion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: followUp,
+      temperature: 0.3,
+      max_tokens: 1024,
+    });
+
+    const reply = finalCompletion.choices[0].message.content.trim();
+    return {
+      reply,
+      history: [...messages, { role: "assistant", content: reply }],
+    };
   }
 
-  return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
+  // Fallback
+  return {
+    reply: raw,
+    history: [...messages, { role: "assistant", content: raw }],
+  };
 }
+
+module.exports = { runAgent };
