@@ -3,6 +3,46 @@ const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 const { emitDataUpdate } = require("../config/socket");
 
+// ── Helper: construye un producto completo para emitir por socket ─────────────
+// Mismo shape que devuelve getAll → el frontend puede usarlo directamente
+const fetchFullProduct = async (id) => {
+  const result = await db.query(`
+    SELECT
+      p.*,
+      c.name AS category_name,
+      c.slug AS category_slug,
+      (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
+      best_discount.type  AS discount_type,
+      best_discount.value AS discount_value,
+      COALESCE(best_discount.final_price, p.sale_price) AS final_price
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN LATERAL (
+      SELECT d.type, d.value,
+        CASE
+          WHEN d.type = 'percentage' THEN ROUND((p.sale_price - (p.sale_price * (d.value / 100)))::numeric, 2)
+          WHEN d.type = 'fixed'      THEN p.sale_price - d.value
+          ELSE p.sale_price
+        END AS final_price
+      FROM discount_targets dt
+      JOIN discounts d ON d.id = dt.discount_id
+      WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
+         OR  (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+        AND d.active = true AND NOW() BETWEEN d.starts_at AND d.ends_at
+      ORDER BY final_price ASC LIMIT 1
+    ) best_discount ON true
+    WHERE p.id = $1
+  `, [id]);
+
+  if (!result.rows.length) return null;
+
+  return {
+    ...result.rows[0],
+    has_variants: result.rows[0].has_variants ?? false,
+    is_bundle:    result.rows[0].is_bundle    ?? false,
+  };
+};
+
 const getPublicIdFromUrl = (url) => {
   try {
     if (!url || typeof url !== "string") return null;
@@ -201,6 +241,8 @@ exports.getById = async (req, res) => {
 
 // ============================================
 // ➕ CREAR PRODUCTO
+// Patrón Chat: emitimos el producto completo →
+// el frontend parchea state sin hacer HTTP
 // ============================================
 exports.create = async (req, res) => {
   const client = await db.connect();
@@ -239,7 +281,17 @@ exports.create = async (req, res) => {
 
     await client.query("COMMIT");
 
-    emitDataUpdate("products", "created", { id: productId, name: name.trim() });
+    // ── Emitir producto COMPLETO (patrón Chat) ──────────────────────────────
+    // fetchFullProduct hace la query con joins → el frontend recibe todo
+    // el objeto listo y NO necesita hacer un GET adicional
+    try {
+      const fullProduct = await fetchFullProduct(productId);
+      emitDataUpdate("products", "created", { id: productId, product: fullProduct });
+    } catch (emitErr) {
+      // Si falla la query de socket, no bloqueamos la respuesta HTTP
+      console.warn("[Socket] No se pudo emitir producto completo:", emitErr.message);
+      emitDataUpdate("products", "created", { id: productId, product: null });
+    }
 
     res.status(201).json({ success: true, message: "Producto creado correctamente", data: { id: productId } });
   } catch (error) {
@@ -252,6 +304,7 @@ exports.create = async (req, res) => {
 
 // ============================================
 // ✏️ ACTUALIZAR PRODUCTO
+// Mismo patrón: emitimos el producto completo
 // ============================================
 exports.update = async (req, res) => {
   const client = await db.connect();
@@ -318,7 +371,14 @@ exports.update = async (req, res) => {
 
     await client.query("COMMIT");
 
-    emitDataUpdate("products", "updated", { id: parseInt(id) });
+    // ── Emitir producto COMPLETO (patrón Chat) ──────────────────────────────
+    try {
+      const fullProduct = await fetchFullProduct(parseInt(id));
+      emitDataUpdate("products", "updated", { id: parseInt(id), product: fullProduct });
+    } catch (emitErr) {
+      console.warn("[Socket] No se pudo emitir producto completo:", emitErr.message);
+      emitDataUpdate("products", "updated", { id: parseInt(id), product: null });
+    }
 
     res.json({ success: true, message: "Producto actualizado correctamente" });
   } catch (error) {
@@ -355,6 +415,7 @@ exports.remove = async (req, res) => {
     await client.query("DELETE FROM products WHERE id=$1", [id]);
     await client.query("COMMIT");
 
+    // Delete: solo necesitamos el id, no hay nada que emitir completo
     emitDataUpdate("products", "deleted", { id: parseInt(id) });
 
     res.json({ success: true, message: "Producto eliminado correctamente" });
