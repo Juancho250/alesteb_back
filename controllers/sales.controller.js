@@ -9,8 +9,7 @@ exports.getAllSales = async (req, res) => {
     let query;
     let params = [];
 
-    if (req.user?.roles?.includes('admin') || req.user?.roles?.includes('gerente')) {
-      // Admin/Gerente ve TODAS las ventas
+    if (req.user?.roles?.includes("admin") || req.user?.roles?.includes("gerente")) {
       query = `
         SELECT
           s.id,
@@ -27,20 +26,13 @@ exports.getAllSales = async (req, res) => {
           s.shipping_address,
           s.shipping_city,
           s.shipping_notes,
-          s.payment_proof_url,
-          s.payment_proof_uploaded_at,
           u.name              AS customer_name,
           u.email             AS customer_email
         FROM sales s
         LEFT JOIN users u ON s.customer_id = u.id
         ORDER BY s.sale_date DESC
       `;
-      // params queda vacío — sin $1 en la query, pg no se queja
     } else if (req.user?.id) {
-      // ✅ CORRECCIÓN BUG #3: la query anterior NO tenía WHERE s.customer_id = $1
-      // pero sí enviaba params = [req.user.id], lo que hacía que pg lanzara:
-      // "bind message supplies 1 parameters, but prepared statement requires 0"
-      // Además el usuario veía las ventas de TODOS. Ambos problemas corregidos.
       query = `
         SELECT
           s.id,
@@ -57,8 +49,6 @@ exports.getAllSales = async (req, res) => {
           s.shipping_address,
           s.shipping_city,
           s.shipping_notes,
-          s.payment_proof_url,
-          s.payment_proof_uploaded_at,
           u.name              AS customer_name,
           u.email             AS customer_email
         FROM sales s
@@ -68,10 +58,7 @@ exports.getAllSales = async (req, res) => {
       `;
       params = [req.user.id];
     } else {
-      return res.status(403).json({
-        success: false,
-        message: "No autorizado para ver ventas",
-      });
+      return res.status(403).json({ success: false, message: "No autorizado para ver ventas" });
     }
 
     const result = await db.query(query, params);
@@ -79,10 +66,7 @@ exports.getAllSales = async (req, res) => {
 
   } catch (error) {
     console.error("GET ALL SALES ERROR:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener ventas",
-    });
+    res.status(500).json({ success: false, message: "Error al obtener ventas" });
   }
 };
 
@@ -93,10 +77,7 @@ exports.getUserOrderHistory = async (req, res) => {
   const { userId } = req.query;
 
   if (!userId) {
-    return res.status(400).json({
-      success: false,
-      message: "userId es requerido",
-    });
+    return res.status(400).json({ success: false, message: "userId es requerido" });
   }
 
   try {
@@ -114,9 +95,7 @@ exports.getUserOrderHistory = async (req, res) => {
         s.discount_amount,
         s.shipping_address,
         s.shipping_city,
-        s.shipping_notes,
-        s.payment_proof_url,
-        s.payment_proof_uploaded_at
+        s.shipping_notes
       FROM sales s
       WHERE s.customer_id = $1
       ORDER BY s.sale_date DESC`,
@@ -126,10 +105,7 @@ exports.getUserOrderHistory = async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error("GET USER ORDER HISTORY ERROR:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener historial de pedidos",
-    });
+    res.status(500).json({ success: false, message: "Error al obtener historial de pedidos" });
   }
 };
 
@@ -140,20 +116,17 @@ exports.getUserStats = async (req, res) => {
   const { userId } = req.query;
 
   if (!userId) {
-    return res.status(400).json({
-      success: false,
-      message: "userId es requerido",
-    });
+    return res.status(400).json({ success: false, message: "userId es requerido" });
   }
 
   try {
     const result = await db.query(
       `SELECT
-        COUNT(DISTINCT s.id)                                                          AS total_orders,
-        COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0) AS total_invested,
-        COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) AS pending_amount,
-        COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END)          AS completed_orders,
-        COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END)          AS pending_orders
+        COUNT(DISTINCT s.id)                                                               AS total_orders,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0)  AS total_invested,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0)  AS pending_amount,
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END)               AS completed_orders,
+        COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END)               AS pending_orders
       FROM sales s
       WHERE s.customer_id = $1`,
       [userId]
@@ -162,34 +135,17 @@ exports.getUserStats = async (req, res) => {
     res.json({ summary: result.rows[0] });
   } catch (error) {
     console.error("GET USER STATS ERROR:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener estadísticas",
-    });
+    res.status(500).json({ success: false, message: "Error al obtener estadísticas" });
   }
 };
 
-// ============================================================
-// MIGRATION — ejecutar una sola vez en la base de datos
-// ============================================================
-//
-// ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS variant_id INTEGER
-//   REFERENCES product_variants(id) ON DELETE SET NULL;
-//
-// CREATE INDEX IF NOT EXISTS idx_sale_items_variant ON sale_items (variant_id);
-//
-// ============================================================
-
-
-// ============================================================
-// 🛒 CREAR PEDIDO/VENTA — con soporte de variantes
-// Reemplaza la función createOrder en orders.controller.js
-// ============================================================
+// ============================================
+// 🛒 CREAR PEDIDO — pago siempre vía Wompi
+// ============================================
 exports.createOrder = async (req, res) => {
   const {
     customer_id,
     items,
-    payment_method  = "cash",
     discount_amount = 0,
     tax_amount      = 0,
     sale_type       = "online",
@@ -199,10 +155,7 @@ exports.createOrder = async (req, res) => {
   } = req.body;
 
   if (!customer_id || !items || items.length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: "Datos incompletos para crear el pedido",
-    });
+    return res.status(400).json({ success: false, message: "Datos incompletos para crear el pedido" });
   }
 
   const client = await db.connect();
@@ -223,7 +176,6 @@ exports.createOrder = async (req, res) => {
     const validatedItems = [];
 
     for (const item of items) {
-      // ── Producto base ──────────────────────────────────────
       const productResult = await client.query(
         `SELECT id, name, sku, sale_price, stock, purchase_price, has_variants
          FROM products WHERE id = $1 AND is_active = true`,
@@ -234,12 +186,11 @@ exports.createOrder = async (req, res) => {
 
       const product = productResult.rows[0];
 
-      // ── Variante (opcional) ────────────────────────────────
-      let variantId    = null;
-      let unitPrice    = Number(product.sale_price);
-      let unitCost     = Number(product.purchase_price ?? 0);
-      let availStock   = Number(product.stock);
-      let variantSku   = null;
+      let variantId  = null;
+      let unitPrice  = Number(product.sale_price);
+      let unitCost   = Number(product.purchase_price ?? 0);
+      let availStock = Number(product.stock);
+      let variantSku = null;
 
       if (item.variant_id) {
         const variantResult = await client.query(
@@ -252,20 +203,16 @@ exports.createOrder = async (req, res) => {
           throw new Error(`Variante ${item.variant_id} no encontrada o inactiva`);
 
         const variant = variantResult.rows[0];
-        variantId   = variant.id;
-        variantSku  = variant.sku;
-        availStock  = Number(variant.stock);
-
-        // La variante puede tener su propio precio; si no, hereda del producto
+        variantId  = variant.id;
+        variantSku = variant.sku;
+        availStock = Number(variant.stock);
         if (variant.sale_price !== null && variant.sale_price !== undefined) {
           unitPrice = Number(variant.sale_price);
         }
       } else if (product.has_variants) {
-        // El producto tiene variantes pero no se envió variant_id
         throw new Error(`El producto "${product.name}" tiene variantes — debes seleccionar una`);
       }
 
-      // ── Validar stock ──────────────────────────────────────
       if (availStock < item.quantity)
         throw new Error(
           `Stock insuficiente para "${product.name}"${variantId ? " (variante seleccionada)" : ""}. Disponible: ${availStock}`
@@ -297,18 +244,18 @@ exports.createOrder = async (req, res) => {
     const saleNumber = `VEN-${String(saleNumberResult.rows[0].next_num).padStart(6, "0")}`;
 
     // 4. Crear venta
-    const payment_status = sale_type === "fisica" ? "paid" : "pending";
-
+    // payment_method = 'credit' (Wompi maneja tarjeta/PSE)
+    // payment_status = 'pending' siempre — el webhook de Wompi lo cambia a 'paid'
     const saleResult = await client.query(
       `INSERT INTO sales (
         sale_number, customer_id, subtotal, tax_amount, discount_amount,
         total, payment_method, payment_status, sale_type, created_by,
         shipping_address, shipping_city, shipping_notes
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      ) VALUES ($1,$2,$3,$4,$5,$6,'credit','pending',$7,$8,$9,$10,$11)
       RETURNING id`,
       [
         saleNumber, customer_id, subtotal, tax_amount, discount_amount,
-        total, payment_method, payment_status, sale_type, customer_id,
+        total, sale_type, customer_id,
         shipping_address || null, shipping_city || null, shipping_notes || null,
       ]
     );
@@ -316,7 +263,6 @@ exports.createOrder = async (req, res) => {
 
     // 5. Insertar ítems + reducir stock
     for (const item of validatedItems) {
-      // Insertar sale_item (incluye variant_id si aplica)
       await client.query(
         `INSERT INTO sale_items (
           sale_id, product_id, variant_id, quantity, unit_price, unit_cost,
@@ -330,23 +276,21 @@ exports.createOrder = async (req, res) => {
       );
 
       if (item.variant_id) {
-        // Reducir stock de la variante
         await client.query(
           "UPDATE product_variants SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
           [item.quantity, item.variant_id]
         );
-        // También sincronizar stock del producto padre (suma de variantes)
-        await client.query(`
-          UPDATE products
-          SET stock = (
-            SELECT COALESCE(SUM(pv.stock), 0)
-            FROM product_variants pv
-            WHERE pv.product_id = $1 AND pv.is_active = true
-          ), updated_at = NOW()
-          WHERE id = $1
-        `, [item.product_id]);
+        await client.query(
+          `UPDATE products
+           SET stock = (
+             SELECT COALESCE(SUM(pv.stock), 0)
+             FROM product_variants pv
+             WHERE pv.product_id = $1 AND pv.is_active = true
+           ), updated_at = NOW()
+           WHERE id = $1`,
+          [item.product_id]
+        );
       } else {
-        // Reducir stock del producto directamente
         await client.query(
           "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
           [item.quantity, item.product_id]
@@ -358,8 +302,8 @@ exports.createOrder = async (req, res) => {
 
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
-    // 6. Email confirmación (best-effort)
-    if (sale_type === "online" && customer.email) {
+    // 6. Email de confirmación del pedido (best-effort)
+    if (customer.email) {
       sendOrderConfirmationEmail(customer.email, customer.name, {
         orderCode,
         total,
@@ -367,14 +311,14 @@ exports.createOrder = async (req, res) => {
         shippingAddress: shipping_address,
         shippingCity:    shipping_city,
         shippingNotes:   shipping_notes,
-        paymentMethod:   payment_method,
+        paymentMethod:   "wompi",
       }).catch(err => console.error("Email confirmación falló (non-blocking):", err));
     }
 
     res.status(201).json({
       success: true,
-      message: sale_type === "fisica" ? "Venta realizada exitosamente" : "Pedido creado exitosamente",
-      data: { sale_id: saleId, sale_number: saleNumber, order_code: orderCode, total, payment_status },
+      message: "Pedido creado exitosamente. Redirigiendo al pago…",
+      data: { sale_id: saleId, sale_number: saleNumber, order_code: orderCode, total, payment_status: "pending" },
     });
 
   } catch (error) {
@@ -386,11 +330,9 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-
-// ============================================================
-// 📄 DETALLE DE VENTA — también muestra info de variante
-// Reemplaza getOrderDetail en orders.controller.js
-// ============================================================
+// ============================================
+// 📄 DETALLE DE VENTA
+// ============================================
 exports.getOrderDetail = async (req, res) => {
   const { id } = req.params;
   try {
@@ -405,16 +347,15 @@ exports.getOrderDetail = async (req, res) => {
         si.discount_amount,
         p.name,
         p.sku,
-        pv.sku           AS variant_sku,
-        -- Atributos de la variante como JSON
+        pv.sku AS variant_sku,
         COALESCE(
           (
             SELECT json_agg(
               json_build_object(
-                'attribute_type',  at.name,
-                'value',           av.value,
-                'display_value',   COALESCE(av.display_value, av.value),
-                'hex_color',       av.hex_color
+                'attribute_type', at.name,
+                'value',          av.value,
+                'display_value',  COALESCE(av.display_value, av.value),
+                'hex_color',      av.hex_color
               ) ORDER BY at.id
             )
             FROM variant_attribute_values vav
@@ -431,7 +372,7 @@ exports.getOrderDetail = async (req, res) => {
           LIMIT 1
         ) AS main_image
       FROM sale_items si
-      INNER JOIN products p ON si.product_id = p.id
+      INNER JOIN products p  ON si.product_id = p.id
       LEFT  JOIN product_variants pv ON pv.id = si.variant_id
       WHERE si.sale_id = $1
       ORDER BY si.id`,
@@ -480,14 +421,32 @@ exports.cancelOrder = async (req, res) => {
 
     // Restaurar stock
     const items = await client.query(
-      "SELECT product_id, quantity FROM sale_items WHERE sale_id = $1",
+      "SELECT product_id, variant_id, quantity FROM sale_items WHERE sale_id = $1",
       [id]
     );
+
     for (const item of items.rows) {
-      await client.query(
-        "UPDATE products SET stock = stock + $1 WHERE id = $2",
-        [item.quantity, item.product_id]
-      );
+      if (item.variant_id) {
+        await client.query(
+          "UPDATE product_variants SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
+          [item.quantity, item.variant_id]
+        );
+        await client.query(
+          `UPDATE products
+           SET stock = (
+             SELECT COALESCE(SUM(pv.stock), 0)
+             FROM product_variants pv
+             WHERE pv.product_id = $1 AND pv.is_active = true
+           ), updated_at = NOW()
+           WHERE id = $1`,
+          [item.product_id]
+        );
+      } else {
+        await client.query(
+          "UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
+          [item.quantity, item.product_id]
+        );
+      }
     }
 
     await client.query("UPDATE sales SET payment_status = 'cancelled' WHERE id = $1", [id]);
@@ -501,157 +460,6 @@ exports.cancelOrder = async (req, res) => {
     res.status(500).json({ success: false, message: "Error al cancelar el pedido" });
   } finally {
     client.release();
-  }
-};
-
-// ============================================
-// 💰 CONFIRMAR PAGO (Admin/Gerente)
-// ============================================
-exports.confirmPayment = async (req, res) => {
-  const { id }             = req.params;
-  const { payment_method } = req.body;
-
-  const client = await db.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const orderCheck = await client.query(
-      `SELECT s.id, s.payment_status, s.total, s.sale_number,
-              u.email AS customer_email, u.name AS customer_name,
-              s.shipping_address, s.shipping_city, s.shipping_notes
-       FROM sales s
-       LEFT JOIN users u ON s.customer_id = u.id
-       WHERE s.id = $1`,
-      [id]
-    );
-
-    if (orderCheck.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-    }
-
-    const order = orderCheck.rows[0];
-
-    if (order.payment_status !== "pending") {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ success: false, message: "El pedido ya fue procesado" });
-    }
-
-    await client.query(
-      "UPDATE sales SET payment_status = 'paid', payment_method = $1 WHERE id = $2",
-      [payment_method || "cash", id]
-    );
-
-    const itemsResult = await client.query(
-      `SELECT si.quantity, si.unit_price, si.subtotal, p.name, p.sku
-       FROM sale_items si
-       INNER JOIN products p ON si.product_id = p.id
-       WHERE si.sale_id = $1`,
-      [id]
-    );
-
-    await client.query("COMMIT");
-
-    if (order.customer_email) {
-      const orderCode = `AL-${order.sale_number?.slice(4) || id}`;
-      sendPaymentConfirmedEmail(
-        order.customer_email,
-        order.customer_name,
-        {
-          orderCode,
-          total:           order.total,
-          items:           itemsResult.rows,
-          shippingAddress: order.shipping_address,
-          shippingCity:    order.shipping_city,
-          shippingNotes:   order.shipping_notes,
-          paymentMethod:   payment_method || "transfer",
-        }
-      ).catch(err => console.error("Email confirmación pago falló:", err));
-    }
-
-    res.json({ success: true, message: "Pago confirmado exitosamente" });
-
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("CONFIRM PAYMENT ERROR:", error);
-    res.status(500).json({ success: false, message: "Error al confirmar el pago" });
-  } finally {
-    client.release();
-  }
-};
-
-// ============================================
-// 📎 SUBIR COMPROBANTE DE PAGO (Cliente)
-// ============================================
-exports.uploadPaymentProof = async (req, res) => {
-  const { id } = req.params;
-
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: "Debes subir una imagen del comprobante" });
-  }
-
-  try {
-    const saleCheck = await db.query(
-      "SELECT id, customer_id, payment_status FROM sales WHERE id = $1",
-      [id]
-    );
-
-    if (saleCheck.rows.length === 0)
-      return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-
-    const sale = saleCheck.rows[0];
-
-    if (sale.customer_id !== req.user.id)
-      return res.status(403).json({ success: false, message: "No tienes permiso para modificar este pedido" });
-
-    if (sale.payment_status === "paid")
-      return res.status(400).json({ success: false, message: "Este pedido ya fue pagado" });
-
-    if (sale.payment_status === "cancelled")
-      return res.status(400).json({ success: false, message: "Este pedido fue cancelado" });
-
-    const proofUrl = req.file.path || req.file.secure_url;
-
-    await db.query(
-      `UPDATE sales SET payment_proof_url = $1, payment_proof_uploaded_at = NOW() WHERE id = $2`,
-      [proofUrl, id]
-    );
-
-    res.json({
-      success:   true,
-      message:   "Comprobante subido exitosamente. El administrador verificará tu pago.",
-      proof_url: proofUrl,
-    });
-
-  } catch (error) {
-    console.error("UPLOAD PROOF ERROR:", error);
-    res.status(500).json({ success: false, message: "Error al subir el comprobante" });
-  }
-};
-
-// ============================================
-// 🖼️ OBTENER COMPROBANTE (Admin)
-// ============================================
-exports.getPaymentProof = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const result = await db.query(
-      `SELECT id, sale_number, payment_proof_url, payment_proof_uploaded_at,
-              payment_status, total, customer_id
-       FROM sales WHERE id = $1`,
-      [id]
-    );
-
-    if (result.rows.length === 0)
-      return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-
-    res.json({ success: true, data: result.rows[0] });
-
-  } catch (error) {
-    console.error("GET PROOF ERROR:", error);
-    res.status(500).json({ success: false, message: "Error al obtener el comprobante" });
   }
 };
 
