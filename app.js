@@ -39,7 +39,8 @@ const notificationsRoutes = safeRequire("./routes/notifications.routes",      "n
 const agentRoutes         = safeRequire("./routes/agent.routes",              "agent.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",               "chat.routes");
-const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes"); // ← NUEVO
+const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes");
+const reportsRoutes       = safeRequire("./routes/reports.routes",            "reports.routes"); // ← NUEVO
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -56,7 +57,8 @@ if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
-if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes); // ← NUEVO
+if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes);
+if (reportsRoutes)       app.use("/api/reports",       reportsRoutes);       // ← NUEVO
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -74,7 +76,8 @@ app.get("/api/health", (req, res) => {
     variants:      !!variantsRoutes,
     stats:         !!statsRoutes,
     chat:          !!chatRoutes,
-    wompi:         !!wompiRoutes, // ← NUEVO
+    wompi:         !!wompiRoutes,
+    reports:       !!reportsRoutes,                                           // ← NUEVO
   });
 });
 
