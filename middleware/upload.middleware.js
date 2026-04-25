@@ -2,18 +2,32 @@ const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("../config/cloudinary");
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => ({
-    folder: "products",
-    allowed_formats: ["jpg", "png", "webp"],
-    public_id: `${Date.now()}-${file.originalname.split(".")[0]}`
-  }),
-});
+function createUpload(folder = "general", maxSizeMB = 5) {
+  const storage = new CloudinaryStorage({
+    cloudinary,
+    params: async (req, file) => ({
+      folder:         `alesteb/${folder}`,
+      format:         "webp",
+      transformation: [{ quality: "auto:good" }],
+      public_id:      `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    }),
+  });
 
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-});
+  return multer({
+    storage,
+    limits: { fileSize: maxSizeMB * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new Error(`Formato no soportado: ${file.mimetype}. Usa JPG, PNG o WebP.`));
+    },
+  });
+}
 
-module.exports = upload;
+const uploadProduct = createUpload("products");
+const uploadBanner  = createUpload("banners", 10);
+const uploadBundle  = createUpload("bundles");
+const uploadAvatar  = createUpload("avatars", 2);
+const upload        = createUpload("misc");
+
+module.exports = { createUpload, upload, uploadProduct, uploadBanner, uploadBundle, uploadAvatar };
