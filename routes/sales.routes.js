@@ -15,7 +15,6 @@ router.post("/",            auth, salesController.createOrder);
 router.post("/checkout",    auth, salesController.createOrder);
 
 // ── Rutas con :id ────────────────────────────────────────────────────────────
-
 // Cancelar pedido (cliente)
 router.post("/:id/cancel", auth, salesController.cancelOrder);
 
