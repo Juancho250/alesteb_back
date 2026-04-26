@@ -55,9 +55,7 @@ exports.createBundle = async (req, res) => {
         throw new Error("Formato de items inválido");
       }
     }
-
     if (items.length < 2) throw new Error("Un bundle debe tener al menos 2 productos");
-
     const prodRes = await client.query(
       `INSERT INTO products (name, description, category_id, sale_price, stock, is_bundle, bundle_price, has_variants)
        VALUES ($1, $2, $3, $4, 9999, true, $4, false) RETURNING id`,
