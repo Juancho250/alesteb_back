@@ -414,7 +414,6 @@ exports.remove = async (req, res) => {
 
     await client.query("DELETE FROM products WHERE id=$1", [id]);
     await client.query("COMMIT");
-
     // Delete: solo necesitamos el id, no hay nada que emitir completo
     emitDataUpdate("products", "deleted", { id: parseInt(id) });
 
