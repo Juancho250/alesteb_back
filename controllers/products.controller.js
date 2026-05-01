@@ -75,7 +75,10 @@ const validateProductData = (data, isUpdate = false) => {
 // ============================================
 exports.getAll = async (req, res) => {
   try {
-    const { categoria, search, min_price, max_price, limit = 100, offset = 0 } = req.query;
+    const { categoria, search, min_price, max_price } = req.query;
+    const page   = parseInt(req.query.page)  || 1;
+    const limit  = parseInt(req.query.limit) || 12;
+    const offset = (page - 1) * limit;
 
     let queryText = `
       SELECT
@@ -117,19 +120,43 @@ exports.getAll = async (req, res) => {
       queryParams.push(`%${search}%`);
       paramIndex++;
     }
-    if (min_price) { queryText += ` AND p.sale_price >= $${paramIndex++}`; queryParams.push(Number(min_price)); }
-    if (max_price) { queryText += ` AND p.sale_price <= $${paramIndex++}`; queryParams.push(Number(max_price)); }
+    if (min_price) {
+      queryText += ` AND p.sale_price >= $${paramIndex++}`;
+      queryParams.push(Number(min_price));
+    }
+    if (max_price) {
+      queryText += ` AND p.sale_price <= $${paramIndex++}`;
+      queryParams.push(Number(max_price));
+    }
 
     queryText += ` ORDER BY p.created_at DESC`;
     queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    queryParams.push(Number(limit), Number(offset));
+    queryParams.push(limit, offset);
 
-    const result      = await db.query(queryText, queryParams);
-    const countResult = await db.query(
-      `SELECT COUNT(*) FROM products p LEFT JOIN categories c ON p.category_id = c.id
-       WHERE p.is_active = true ${categoria ? "AND c.slug = $1" : ""}`,
-      categoria ? [categoria] : []
-    );
+    // Count con los mismos filtros
+    const countParams = [];
+    let countWhere = "WHERE p.is_active = true";
+    let ci = 1;
+
+    if (categoria) {
+      countWhere += ` AND c.slug = $${ci++}`;
+      countParams.push(categoria);
+    }
+    if (search) {
+      countWhere += ` AND (p.name ILIKE $${ci} OR p.description ILIKE $${ci})`;
+      countParams.push(`%${search}%`);
+      ci++;
+    }
+
+    const [result, countResult] = await Promise.all([
+      db.query(queryText, queryParams),
+      db.query(
+        `SELECT COUNT(*) FROM products p
+         LEFT JOIN categories c ON p.category_id = c.id
+         ${countWhere}`,
+        countParams
+      ),
+    ]);
 
     const rows = result.rows.map(row => ({
       ...row,
@@ -137,14 +164,18 @@ exports.getAll = async (req, res) => {
       is_bundle:    row.is_bundle    ?? false,
     }));
 
+    const total = Number(countResult.rows[0].count);
+
     res.json({
       success: true,
       data: rows,
       pagination: {
-        total:   Number(countResult.rows[0].count),
-        limit:   Number(limit),
-        offset:  Number(offset),
-        hasMore: Number(offset) + rows.length < Number(countResult.rows[0].count),
+        total,
+        totalPages: Math.ceil(total / limit),
+        page,
+        limit,
+        offset,
+        hasMore: offset + rows.length < total,
       },
     });
   } catch (error) {
