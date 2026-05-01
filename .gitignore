@@ -7,3 +7,5 @@ git commit -m "fix: remove .env from git tracking"
 
 # 3. Push
 git push
+
+.env
