@@ -1,7 +1,8 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// npm install groq-sdk
+const Groq = require("groq-sdk");
 const db = require("../config/db");
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ── Tablas permitidas ────────────────────────────────────────────────
 const ALLOWED_TABLES = [
@@ -15,13 +16,11 @@ const ALLOWED_TABLES = [
   "providers", "purchase_orders", "purchase_order_items",
   "discounts", "discount_coupons", "discount_targets",
   "banners", "agent_conversations",
-  // Vistas
   "v_sales_full", "v_products_full", "v_profit_analysis",
   "v_cashflow_detailed", "v_expenses_summary",
   "v_invoices_summary", "v_provider_balance",
 ];
 
-// ── Columnas que NUNCA viajan a Gemini ──────────────────────────────
 const MASK_FIELDS = [
   "customer_phone", "shipping_address", "shipping_city",
   "shipping_lat", "shipping_lng", "shipping_notes",
@@ -30,7 +29,6 @@ const MASK_FIELDS = [
   "customer_email",
 ];
 
-// ── Keywords peligrosos bloqueados ──────────────────────────────────
 const DANGEROUS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|COPY\s+.*\s+TO|pg_read_file|pg_write_file|INTO\s+OUTFILE)\b/i;
 
 const ALLOWED_OPS = {
@@ -38,14 +36,11 @@ const ALLOWED_OPS = {
   mutate: /^\s*(INSERT|UPDATE)\s+/i,
 };
 
-// ── Validador ────────────────────────────────────────────────────────
 function validateQuery(sql, action) {
   if (DANGEROUS.test(sql))
     throw new Error("Operación peligrosa bloqueada.");
-
   if (!ALLOWED_OPS[action].test(sql))
     throw new Error(`Solo se permiten ${action === "query" ? "SELECT" : "INSERT/UPDATE"}.`);
-
   if (action === "mutate" && !/WHERE\s+/i.test(sql))
     throw new Error("Las modificaciones deben incluir WHERE.");
 
@@ -58,24 +53,20 @@ function validateQuery(sql, action) {
   }
 }
 
-// ── Sanitizar resultados ─────────────────────────────────────────────
 function sanitizeRows(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.map(row => {
     const clean = { ...row };
     for (const key of Object.keys(clean)) {
-      if (MASK_FIELDS.some(f => key.toLowerCase() === f.toLowerCase())) {
+      if (MASK_FIELDS.some(f => key.toLowerCase() === f.toLowerCase()))
         clean[key] = "***";
-      }
-      if (/\b(cedula|documento|password|token|secret)\b/i.test(key)) {
+      if (/\b(cedula|documento|password|token|secret)\b/i.test(key))
         clean[key] = "***";
-      }
     }
     return clean;
   });
 }
 
-// ── Schema filtrado ──────────────────────────────────────────────────
 async function getFilteredSchema() {
   const result = await db.query(`
     SELECT table_name, column_name, data_type
@@ -104,18 +95,34 @@ async function getFilteredSchema() {
     .join("\n");
 }
 
-// ── Convierte el historial al formato de Gemini ──────────────────────
-// Gemini usa { role: "user"|"model", parts: [{ text }] }
-// y el system prompt va aparte en la config del modelo
-function toGeminiHistory(messages) {
-  return messages.map(m => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }],
-  }));
+// ── Groq usa el formato estándar OpenAI: { role, content } ───────────
+// No necesita conversión especial como Gemini
+function buildGroqMessages(systemPrompt, messages) {
+  return [
+    { role: "system", content: systemPrompt },
+    ...messages.map(m => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+    })),
+  ];
+}
+
+// ── Llamada a Groq ────────────────────────────────────────────────────
+async function callGroq(groqMessages) {
+  const response = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: groqMessages,
+    temperature: 0.1,
+    max_tokens: 1024,
+  });
+  return response.choices[0].message.content.trim();
 }
 
 // ── Agente principal ─────────────────────────────────────────────────
 async function runAgent(messages) {
+  if (!process.env.GROQ_API_KEY)
+    throw new Error("GROQ_API_KEY no está configurada en las variables de entorno");
+
   const schema = await getFilteredSchema();
 
   const systemPrompt = `Eres el asistente inteligente del ERP "Alesteb".
@@ -144,45 +151,21 @@ REGLAS:
 - Usa DATE_TRUNC, NOW(), CURRENT_DATE para filtros de fecha
 - Responde siempre en español`;
 
-  // Separar el último mensaje del historial previo
-  // Gemini requiere que el historial NO incluya el último turno del usuario
-  const history  = messages.slice(0, -1);
-  const lastMsg  = messages[messages.length - 1];
-  const lastText = typeof lastMsg.content === "string"
-    ? lastMsg.content
-    : JSON.stringify(lastMsg.content);
-
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",           // o "gemini-1.5-pro" si prefieres más potencia
-    systemInstruction: systemPrompt,
-    generationConfig: {
-      temperature:     0.1,
-      maxOutputTokens: 1024,
-    },
-  });
-
-  // Iniciar chat con el historial previo
-  const chat = model.startChat({
-    history: toGeminiHistory(history),
-  });
-
-  // Enviar el último mensaje
-  const result = await chat.sendMessage(lastText);
-  const raw    = result.response.text().trim();
-  const clean  = raw.replace(/```json|```/g, "").trim();
+  // Primera llamada: el modelo decide qué acción tomar
+  const raw   = await callGroq(buildGroqMessages(systemPrompt, messages));
+  const clean = raw.replace(/```json|```/g, "").trim();
 
   let parsed;
   try {
     parsed = JSON.parse(clean);
   } catch {
-    // Si no es JSON válido, devolvemos el texto directo
     return {
       reply:   raw,
       history: [...messages, { role: "assistant", content: raw }],
     };
   }
 
-  // ── Acción: respuesta directa o confirmación ─────────────────────
+  // ── Respuesta directa o confirmación ────────────────────────────
   if (parsed.action === "answer" || parsed.action === "confirm") {
     return {
       reply:        parsed.text,
@@ -191,7 +174,7 @@ REGLAS:
     };
   }
 
-  // ── Acción: query o mutate ───────────────────────────────────────
+  // ── Query o mutate ───────────────────────────────────────────────
   if (parsed.action === "query" || parsed.action === "mutate") {
     let rows;
     try {
@@ -209,16 +192,22 @@ REGLAS:
 
     const sanitized = sanitizeRows(rows);
 
-    // Segunda llamada para redactar la respuesta en lenguaje natural
-    const followUpText = `Resultados (${sanitized.length} filas):
+    // Segunda llamada: redactar respuesta en lenguaje natural
+    const followUpMessages = buildGroqMessages(systemPrompt, [
+      ...messages,
+      { role: "assistant", content: clean },
+      {
+        role: "user",
+        content: `Resultados (${sanitized.length} filas):
 ${JSON.stringify(sanitized).slice(0, 6000)}
 
 Redacta una respuesta clara en español. Formatea números con puntos de miles.
 Si hay "***" son datos privados, no los menciones.
-Sin JSON ni código, solo texto natural.`;
+Sin JSON ni código, solo texto natural.`,
+      },
+    ]);
 
-    const followUp = await chat.sendMessage(followUpText);
-    const reply    = followUp.response.text().trim();
+    const reply = await callGroq(followUpMessages);
 
     return {
       reply,
