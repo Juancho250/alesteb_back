@@ -153,7 +153,7 @@ REGLAS:
     : JSON.stringify(lastMsg.content);
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",           // o "gemini-1.5-pro" si prefieres más potencia
+    model: "gemini-2.0-flash",           // o "gemini-1.5-pro" si prefieres más potencia
     systemInstruction: systemPrompt,
     generationConfig: {
       temperature:     0.1,
