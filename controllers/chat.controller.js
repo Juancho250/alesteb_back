@@ -28,6 +28,17 @@ const uploadChatImage = multer({
 // ── GET /api/chat/users ───────────────────────────────────────────────────────
 const getChatUsers = async (req, res) => {
   try {
+    // FIX: reemplazamos INNER JOIN con EXISTS para evitar el fallo si el
+    // nombre exacto del rol no coincide. Acepta 'admin', 'administrator',
+    // 'administrador' (case-insensitive).
+    // Si quieres ver todos los roles disponibles, descomenta la query de debug
+    // que está abajo y revisa los logs del servidor.
+
+    // ── DEBUG: descomenta esto UNA VEZ para ver los roles en tu DB ──
+    // const rolesDebug = await db.query('SELECT id, name FROM roles');
+    // console.log('[Chat] Roles en DB:', rolesDebug.rows);
+    // ────────────────────────────────────────────────────────────────
+
     const result = await db.query(`
       SELECT
         u.id,
@@ -58,16 +69,27 @@ const getChatUsers = async (req, res) => {
             AND cm.read_at IS NULL
         ) AS unread_count
       FROM users u
-      INNER JOIN user_roles ur ON ur.user_id = u.id
-      INNER JOIN roles r       ON r.id = ur.role_id AND r.name = 'admin'
-      WHERE u.id != $1 AND u.is_active = true
+      WHERE u.id != $1
+        AND u.is_active = true
+        AND EXISTS (
+          SELECT 1 FROM user_roles ur
+          INNER JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = u.id
+            AND LOWER(r.name) IN ('admin', 'administrator', 'administrador')
+        )
       ORDER BY last_message_at DESC NULLS LAST, u.name
     `, [req.user.id]);
 
     res.json({ users: result.rows });
   } catch (err) {
-    console.error('[Chat] getChatUsers:', err);
-    res.status(500).json({ error: 'Error obteniendo usuarios' });
+    // Log detallado para identificar la causa exacta del 500
+    console.error('[Chat] getChatUsers ERROR:', {
+      message: err.message,
+      code:    err.code,
+      detail:  err.detail,
+      hint:    err.hint,
+    });
+    res.status(500).json({ error: 'Error obteniendo usuarios', detail: err.message });
   }
 };
 
@@ -76,7 +98,6 @@ const getConversation = async (req, res) => {
   const { userId } = req.params;
   const myId = req.user.id;
 
-  // Validar que userId sea numérico
   if (!/^\d+$/.test(userId))
     return res.status(400).json({ error: 'userId inválido' });
 
@@ -89,7 +110,6 @@ const getConversation = async (req, res) => {
       LIMIT 200
     `, [myId, userId]);
 
-    // Marcar mensajes recibidos como leídos
     await db.query(`
       UPDATE chat_messages
       SET read_at = NOW()
@@ -146,7 +166,6 @@ const deleteMessage = async (req, res) => {
   const myId = req.user.id;
 
   try {
-    // Obtener mensaje antes de borrar para saber a quién notificar
     const found = await db.query(
       'SELECT * FROM chat_messages WHERE id = $1 AND user_id = $2',
       [id, myId]
@@ -157,7 +176,6 @@ const deleteMessage = async (req, res) => {
 
     const msg = found.rows[0];
 
-    // Si tiene imagen en Cloudinary, eliminarla también
     if (msg.image_url) {
       try {
         const publicId = msg.image_url.split('/').slice(-1)[0].split('.')[0];
@@ -212,7 +230,7 @@ const uploadImage = async (req, res) => {
   }
 };
 
-// ── DELETE /api/chat/history  (solo admin super) ──────────────────────────────
+// ── DELETE /api/chat/history ──────────────────────────────────────────────────
 const clearHistory = async (req, res) => {
   try {
     await db.query('DELETE FROM chat_messages');
