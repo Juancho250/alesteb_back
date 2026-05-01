@@ -1,7 +1,7 @@
-const Groq = require("groq-sdk");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const db = require("../config/db");
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── Tablas permitidas ────────────────────────────────────────────────
 const ALLOWED_TABLES = [
@@ -21,22 +21,18 @@ const ALLOWED_TABLES = [
   "v_invoices_summary", "v_provider_balance",
 ];
 
-// ── Columnas que NUNCA viajan a Groq ────────────────────────────────
+// ── Columnas que NUNCA viajan a Gemini ──────────────────────────────
 const MASK_FIELDS = [
-  // De sales (customer info)
   "customer_phone", "shipping_address", "shipping_city",
   "shipping_lat", "shipping_lng", "shipping_notes",
   "payment_proof_url",
-  // De providers (datos de contacto)
   "phone", "email", "address", "contact_person", "tax_id",
-  // De v_sales_full
   "customer_email",
 ];
 
-// ── Keywords peligrosos bloqueados sin excepción ────────────────────
+// ── Keywords peligrosos bloqueados ──────────────────────────────────
 const DANGEROUS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|COPY\s+.*\s+TO|pg_read_file|pg_write_file|INTO\s+OUTFILE)\b/i;
 
-// ── Operaciones permitidas por acción ───────────────────────────────
 const ALLOWED_OPS = {
   query:  /^\s*SELECT\s+/i,
   mutate: /^\s*(INSERT|UPDATE)\s+/i,
@@ -53,7 +49,6 @@ function validateQuery(sql, action) {
   if (action === "mutate" && !/WHERE\s+/i.test(sql))
     throw new Error("Las modificaciones deben incluir WHERE.");
 
-  // Verificar tablas
   const tablePattern = /\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
   let match;
   while ((match = tablePattern.exec(sql)) !== null) {
@@ -63,7 +58,7 @@ function validateQuery(sql, action) {
   }
 }
 
-// ── Sanitizar resultados antes de enviar a Groq ─────────────────────
+// ── Sanitizar resultados ─────────────────────────────────────────────
 function sanitizeRows(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.map(row => {
@@ -72,7 +67,6 @@ function sanitizeRows(rows) {
       if (MASK_FIELDS.some(f => key.toLowerCase() === f.toLowerCase())) {
         clean[key] = "***";
       }
-      // Bloquear cualquier columna que suene a dato personal
       if (/\b(cedula|documento|password|token|secret)\b/i.test(key)) {
         clean[key] = "***";
       }
@@ -81,7 +75,7 @@ function sanitizeRows(rows) {
   });
 }
 
-// ── Schema filtrado para el system prompt ───────────────────────────
+// ── Schema filtrado ──────────────────────────────────────────────────
 async function getFilteredSchema() {
   const result = await db.query(`
     SELECT table_name, column_name, data_type
@@ -91,7 +85,6 @@ async function getFilteredSchema() {
     ORDER BY table_name, ordinal_position
   `, [ALLOWED_TABLES]);
 
-  // Excluir columnas sensibles del schema que ve el modelo
   const HIDE_COLS = [
     "password", "token", "secret", "cedula", "documento",
     "customer_phone", "shipping_address", "shipping_lat",
@@ -109,6 +102,16 @@ async function getFilteredSchema() {
   return Object.entries(schema)
     .map(([table, cols]) => `- ${table}: ${cols.join(", ")}`)
     .join("\n");
+}
+
+// ── Convierte el historial al formato de Gemini ──────────────────────
+// Gemini usa { role: "user"|"model", parts: [{ text }] }
+// y el system prompt va aparte en la config del modelo
+function toGeminiHistory(messages) {
+  return messages.map(m => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }],
+  }));
 }
 
 // ── Agente principal ─────────────────────────────────────────────────
@@ -141,86 +144,93 @@ REGLAS:
 - Usa DATE_TRUNC, NOW(), CURRENT_DATE para filtros de fecha
 - Responde siempre en español`;
 
-  const groqMessages = [
-    { role: "system", content: systemPrompt },
-    ...messages.map((m) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-    })),
-  ];
+  // Separar el último mensaje del historial previo
+  // Gemini requiere que el historial NO incluya el último turno del usuario
+  const history  = messages.slice(0, -1);
+  const lastMsg  = messages[messages.length - 1];
+  const lastText = typeof lastMsg.content === "string"
+    ? lastMsg.content
+    : JSON.stringify(lastMsg.content);
 
-  const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: groqMessages,
-    temperature: 0.1,
-    max_tokens: 1024,
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",           // o "gemini-1.5-pro" si prefieres más potencia
+    systemInstruction: systemPrompt,
+    generationConfig: {
+      temperature:     0.1,
+      maxOutputTokens: 1024,
+    },
   });
 
-  const raw = completion.choices[0].message.content.trim();
-  const clean = raw.replace(/```json|```/g, "").trim();
+  // Iniciar chat con el historial previo
+  const chat = model.startChat({
+    history: toGeminiHistory(history),
+  });
+
+  // Enviar el último mensaje
+  const result = await chat.sendMessage(lastText);
+  const raw    = result.response.text().trim();
+  const clean  = raw.replace(/```json|```/g, "").trim();
 
   let parsed;
   try {
     parsed = JSON.parse(clean);
   } catch {
-    return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
+    // Si no es JSON válido, devolvemos el texto directo
+    return {
+      reply:   raw,
+      history: [...messages, { role: "assistant", content: raw }],
+    };
   }
 
+  // ── Acción: respuesta directa o confirmación ─────────────────────
   if (parsed.action === "answer" || parsed.action === "confirm") {
     return {
-      reply: parsed.text,
-      history: [...messages, { role: "assistant", content: parsed.text }],
+      reply:        parsed.text,
+      history:      [...messages, { role: "assistant", content: parsed.text }],
       needsConfirm: parsed.action === "confirm",
     };
   }
 
+  // ── Acción: query o mutate ───────────────────────────────────────
   if (parsed.action === "query" || parsed.action === "mutate") {
     let rows;
     try {
       validateQuery(parsed.sql, parsed.action);
-      const result = await db.query(parsed.sql);
-      rows = result.rows ?? result;
+      const dbResult = await db.query(parsed.sql);
+      rows = dbResult.rows ?? dbResult;
     } catch (err) {
       console.error("[Agent Blocked]", err.message, "SQL:", parsed.sql);
       const errMsg = `No pude ejecutar esa consulta: ${err.message}`;
       return {
-        reply: errMsg,
+        reply:   errMsg,
         history: [...messages, { role: "assistant", content: errMsg }],
       };
     }
 
-    // Sanitizar antes de que salgan del servidor
     const sanitized = sanitizeRows(rows);
 
-    const followUp = [
-      ...groqMessages,
-      { role: "assistant", content: raw },
-      {
-        role: "user",
-        content: `Resultados (${sanitized.length} filas):
+    // Segunda llamada para redactar la respuesta en lenguaje natural
+    const followUpText = `Resultados (${sanitized.length} filas):
 ${JSON.stringify(sanitized).slice(0, 6000)}
 
 Redacta una respuesta clara en español. Formatea números con puntos de miles.
 Si hay "***" son datos privados, no los menciones.
-Sin JSON ni código, solo texto natural.`,
-      },
-    ];
+Sin JSON ni código, solo texto natural.`;
 
-    const finalCompletion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: followUp,
-      temperature: 0.3,
-      max_tokens: 1024,
-    });
+    const followUp = await chat.sendMessage(followUpText);
+    const reply    = followUp.response.text().trim();
 
-    const reply = finalCompletion.choices[0].message.content.trim();
     return {
       reply,
       history: [...messages, { role: "assistant", content: reply }],
     };
   }
 
-  return { reply: raw, history: [...messages, { role: "assistant", content: raw }] };
+  // Fallback
+  return {
+    reply:   raw,
+    history: [...messages, { role: "assistant", content: raw }],
+  };
 }
 
 module.exports = { runAgent };
