@@ -73,8 +73,8 @@ function validateSQL(sql, mode) {
     throw new Error("Solo SELECT permitido en query_erp.");
   if (mode === "mutate" && !/^\s*(INSERT|UPDATE)\s+/i.test(sql))
     throw new Error("Solo INSERT/UPDATE permitido en mutate_erp.");
-  if (mode === "mutate" && !/WHERE\s+/i.test(sql))
-    throw new Error("Las modificaciones deben incluir WHERE.");
+  if (mode === "mutate" && /^\s*UPDATE\s+/i.test(sql) && !/WHERE\s+/i.test(sql))
+    throw new Error("Los UPDATE deben incluir WHERE.");
 
   const tableRx = /\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
   let m;

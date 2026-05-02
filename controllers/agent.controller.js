@@ -1,109 +1,145 @@
-// controllers/agent.controller.js  (versión actualizada)
-const { runAgent } = require("../services/agent.service");
+// controllers/agent.controller.js
 const db = require("../config/db");
+const { runAgent } = require("../services/agent.service");
 
-// ── Endpoint principal ────────────────────────────────────────────────────────
-const chat = async (req, res) => {
+// ── POST /agent/chat ─────────────────────────────────────────────────────────
+exports.chat = async (req, res) => {
   try {
     const { messages, conversationId } = req.body;
-    const userId = req.user.id;
 
-    if (!Array.isArray(messages))
-      return res.status(400).json({ error: "messages debe ser un array" });
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, message: "messages array requerido" });
+    }
 
     const result = await runAgent(messages);
 
-    // Persistir conversación
-    if (conversationId) {
-      await db.query(
-        `UPDATE agent_conversations SET messages=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3`,
-        [JSON.stringify(result.history), conversationId, userId]
-      );
-      return res.json({ ...result, conversationId });
-    }
+    const convId = await upsertConversation({
+      userId:         req.user.id,
+      conversationId,
+      history:        result.history,
+      firstUserMsg:   messages.find(m => m.role === "user")?.content,
+    });
 
-    const saved = await db.query(
-      `INSERT INTO agent_conversations (user_id, messages) VALUES ($1,$2) RETURNING id`,
-      [userId, JSON.stringify(result.history)]
-    );
-    res.json({ ...result, conversationId: saved.rows[0].id });
+    return res.json({
+      history:        result.history,
+      needsConfirm:   result.needsConfirm   || false,
+      pendingAction:  result.pendingAction   || null,
+      conversationId: convId,
+    });
 
   } catch (err) {
-    console.error("[Agent Controller]", err.message);
-    res.status(500).json({ error: "Error interno del agente" });
+    console.error("[agent.controller] chat:", err.message, "\n", err.stack);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ── Confirmar acción pendiente ────────────────────────────────────────────────
-// El frontend puede llamar esto directamente cuando el usuario confirma,
-// o simplemente dejar que el agente lo maneje vía el mensaje "sí confirmo".
-const confirmAction = async (req, res) => {
+// ── POST /agent/confirm ──────────────────────────────────────────────────────
+exports.confirmAction = async (req, res) => {
   try {
-    const { sql, conversationId } = req.body;
-    const userId = req.user.id;
+    const { messages, conversationId, pendingAction } = req.body;
 
-    if (!sql) return res.status(400).json({ error: "sql requerido" });
+    // Inyectamos el "sí confirmo" + sql pendiente en el historial
+    const updated = [
+      ...messages,
+      { role: "user", content: "sí confirmo" },
+    ];
 
-    // Reenviar como mensaje de confirmación al agente
-    const confirmMsg = { role: "user", content: "sí confirmo" };
-    const conv = await db.query(
-      `SELECT messages FROM agent_conversations WHERE id=$1 AND user_id=$2`,
-      [conversationId, userId]
-    );
-    if (conv.rowCount === 0) return res.status(404).json({ error: "Conversación no encontrada" });
+    const result = await runAgent(updated);
 
-    const messages = [...conv.rows[0].messages, confirmMsg];
-    const result   = await runAgent(messages);
+    const convId = await upsertConversation({
+      userId:         req.user.id,
+      conversationId,
+      history:        result.history,
+      firstUserMsg:   messages.find(m => m.role === "user")?.content,
+    });
 
-    await db.query(
-      `UPDATE agent_conversations SET messages=$1, updated_at=NOW() WHERE id=$2`,
-      [JSON.stringify(result.history), conversationId]
-    );
+    return res.json({
+      history:        result.history,
+      needsConfirm:   false,
+      pendingAction:  null,
+      conversationId: convId,
+    });
 
-    res.json({ ...result, conversationId });
   } catch (err) {
-    console.error("[Confirm Action]", err.message);
-    res.status(500).json({ error: "Error al confirmar acción" });
+    console.error("[agent.controller] confirmAction:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-const getConversation = async (req, res) => {
+// ── GET /agent/conversations ─────────────────────────────────────────────────
+exports.listConversations = async (req, res) => {
   try {
-    const { id } = req.params;
-    const result  = await db.query(
-      `SELECT * FROM agent_conversations WHERE id=$1 AND user_id=$2`,
-      [id, req.user.id]
-    );
-    if (result.rowCount === 0) return res.status(404).json({ error: "No encontrada" });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: "Error al cargar conversación" });
-  }
-};
-
-const listConversations = async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT id, updated_at, (messages->0->>'content') as preview
-       FROM agent_conversations WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 20`,
+    const { rows } = await db.query(
+      `SELECT id, preview, updated_at
+       FROM agent_conversations
+       WHERE user_id = $1
+       ORDER BY updated_at DESC
+       LIMIT 50`,
       [req.user.id]
     );
-    res.json(result.rows);
+    return res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: "Error al listar conversaciones" });
+    console.error("[agent.controller] listConversations:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-const deleteConversation = async (req, res) => {
+// ── GET /agent/conversations/:id ─────────────────────────────────────────────
+exports.getConversation = async (req, res) => {
   try {
-    await db.query(
-      `DELETE FROM agent_conversations WHERE id=$1 AND user_id=$2`,
+    const { rows } = await db.query(
+      `SELECT messages FROM agent_conversations
+       WHERE id = $1 AND user_id = $2`,
       [req.params.id, req.user.id]
     );
-    res.json({ success: true });
+    if (!rows.length) return res.status(404).json({ message: "Conversación no encontrada" });
+
+    // messages se guarda como JSONB o TEXT — parseamos si viene como string
+    const messages = typeof rows[0].messages === "string"
+      ? JSON.parse(rows[0].messages)
+      : rows[0].messages;
+
+    return res.json({ messages });
   } catch (err) {
-    res.status(500).json({ error: "Error al eliminar" });
+    console.error("[agent.controller] getConversation:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-module.exports = { chat, confirmAction, getConversation, listConversations, deleteConversation };
+// ── DELETE /agent/conversations/:id ──────────────────────────────────────────
+exports.deleteConversation = async (req, res) => {
+  try {
+    await db.query(
+      `DELETE FROM agent_conversations WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[agent.controller] deleteConversation:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+async function upsertConversation({ userId, conversationId, history, firstUserMsg }) {
+  const preview = (firstUserMsg || "Consulta").slice(0, 80);
+  const json    = JSON.stringify(history);
+
+  if (conversationId) {
+    await db.query(
+      `UPDATE agent_conversations
+       SET messages = $1, updated_at = NOW()
+       WHERE id = $2 AND user_id = $3`,
+      [json, conversationId, userId]
+    );
+    return conversationId;
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO agent_conversations (user_id, messages, preview, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     RETURNING id`,
+    [userId, json, preview]
+  );
+  return rows[0].id;
+}
