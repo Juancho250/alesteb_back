@@ -7,20 +7,27 @@ const cron  = require("node-cron");
 const { TOOLS } = require("./agent.tools");
 const db    = require("../config/db");
 const Groq  = require("groq-sdk");
+const { recordUsage } = require("./token-budget");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ── Helper: sintetizar texto con el LLM ──────────────────────────────────────
+// Usa llama3-8b-8192 (modelo ligero) para síntesis automáticas de cron.
+// Misma calidad para resúmenes ejecutivos, pero a ~1/5 del costo de tokens.
 async function synthesize(prompt, data) {
   const res = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: "llama3-8b-8192",   // ← modelo ligero para tareas automáticas
     messages: [{
       role: "user",
-      content: `${prompt}\n\nDatos: ${JSON.stringify(data).slice(0, 6000)}\n\nResponde en español. Puntos de miles. Máximo 3 párrafos.`,
+      content: `${prompt}\n\nDatos: ${JSON.stringify(data).slice(0, 4000)}\n\nResponde en español. Puntos de miles. Máximo 2 párrafos.`,
     }],
     temperature: 0.2,
-    max_tokens: 800,
+    max_tokens: 400,           // ← resúmenes de cron no necesitan más
   });
+
+  const used = res.usage?.total_tokens || 400;
+  recordUsage(used);
+
   return res.choices[0].message.content.trim();
 }
 
@@ -35,7 +42,7 @@ cron.schedule("0 * * * *", async () => {
 
     const summary = await synthesize(
       "Resume las alertas de inventario de forma ejecutiva para el dueño del negocio.",
-      { critical_out_of_stock: critical.length, low_stock: low.length, products: alerts.slice(0, 15) }
+      { critical_out_of_stock: critical.length, low_stock: low.length, products: alerts.slice(0, 10) }
     );
 
     // Notificar por WebSocket a todos los admins conectados
@@ -90,6 +97,8 @@ cron.schedule("0 8 * * 1-6", async () => {
       GROUP BY p.name ORDER BY revenue DESC LIMIT 5
     `);
 
+    // generate_report usa llama-3.3-70b internamente vía agent.tools.js
+    // Se mantiene para reportes diarios donde la calidad importa más
     const { report } = await TOOLS.generate_report({
       title: `Reporte diario — ${new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}`,
       data: { yesterday: yesterday[0], top_products: topProds, erp_context: context },
@@ -100,7 +109,7 @@ cron.schedule("0 8 * * 1-6", async () => {
       await TOOLS.notify({
         channel: "both",
         event: "daily_report",
-        payload: { title: "Reporte diario listo", summary: report.slice(0, 300) },
+        payload: { title: "Reporte diario listo", summary: report.slice(0, 200) },
         email_to: process.env.ADMIN_EMAIL,
         email_subject: `📊 Alesteb — Reporte del ${new Date().toLocaleDateString("es-CO")}`,
         email_body: `<div style="font-family:sans-serif;font-size:14px;max-width:600px">${report.replace(/\n/g, "<br>")}</div>`,
@@ -132,7 +141,13 @@ cron.schedule("0 9 * * *", async () => {
     await TOOLS.notify({
       channel: "websocket",
       event: "invoices_overdue",
-      payload: { type: "invoices_overdue", count: rows.length, summary, invoices: rows.slice(0, 5), timestamp: new Date().toISOString() },
+      payload: {
+        type: "invoices_overdue",
+        count: rows.length,
+        summary,
+        invoices: rows.slice(0, 5),
+        timestamp: new Date().toISOString(),
+      },
     });
 
     if (process.env.ADMIN_EMAIL) {

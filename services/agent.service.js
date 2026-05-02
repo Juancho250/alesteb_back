@@ -2,11 +2,24 @@
 const Groq  = require("groq-sdk");
 const db    = require("../config/db");
 const { TOOLS, TOOL_DESCRIPTIONS } = require("./agent.tools");
+const { checkBudget, recordUsage }  = require("./token-budget");
 
 const groq      = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const MAX_STEPS = 6;
 
+// ── Cache del esquema ─────────────────────────────────────────────────────────
+// El esquema de la BD casi nunca cambia; reconstruirlo en cada llamada
+// es el mayor desperdicio de tokens. Se cachea 1 hora en memoria.
+let _schemaCache     = null;
+let _schemaCachedAt  = 0;
+const SCHEMA_TTL_MS  = 60 * 60 * 1000; // 1 hora
+
 async function getFilteredSchema() {
+  const now = Date.now();
+  if (_schemaCache && now - _schemaCachedAt < SCHEMA_TTL_MS) {
+    return _schemaCache;
+  }
+
   const ALLOWED_TABLES = [
     "sales","sale_items","coupon_usage","products","product_variants",
     "product_images","product_price_history","categories",
@@ -25,8 +38,9 @@ async function getFilteredSchema() {
     "customer_phone","shipping_address","shipping_lat","shipping_lng",
     "payment_proof_url","tax_id","contact_person","device_info","token_hash",
   ];
+
   const { rows } = await db.query(`
-    SELECT table_name, column_name, data_type
+    SELECT table_name, column_name
     FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = ANY($1)
     ORDER BY table_name, ordinal_position
@@ -36,11 +50,17 @@ async function getFilteredSchema() {
   for (const r of rows) {
     if (HIDE.some(h => r.column_name.toLowerCase().includes(h))) continue;
     if (!schema[r.table_name]) schema[r.table_name] = [];
-    schema[r.table_name].push(`${r.column_name}(${r.data_type})`);
+    schema[r.table_name].push(r.column_name);
   }
-  return Object.entries(schema)
-    .map(([t, c]) => `  ${t}: ${c.join(", ")}`)
+
+  // Formato comprimido: tabla(col1,col2,...) — sin tipos, ~40% menos tokens
+  _schemaCache    = Object.entries(schema)
+    .map(([t, cols]) => `${t}(${cols.join(",")})`)
     .join("\n");
+  _schemaCachedAt = now;
+
+  console.log("[Agent] Esquema DB cacheado —", Object.keys(schema).length, "tablas/vistas");
+  return _schemaCache;
 }
 
 function buildSystemPrompt(schema) {
@@ -71,7 +91,7 @@ AUTONOMÍA:
 
 ${TOOL_DESCRIPTIONS}
 
-ESQUEMA:
+ESQUEMA (formato tabla(columnas)):
 ${schema}
 
 VISTAS DISPONIBLES: v_sales_full, v_products_full, v_profit_analysis,
@@ -79,6 +99,10 @@ v_cashflow_detailed, v_expenses_summary, v_invoices_summary, v_provider_balance`
 }
 
 async function callLLM(systemPrompt, conversation) {
+  // Verificar presupuesto antes de cada llamada al LLM
+  // Estimación conservadora: system prompt + historial + respuesta esperada
+  checkBudget(1500);
+
   const res = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [
@@ -89,8 +113,15 @@ async function callLLM(systemPrompt, conversation) {
       })),
     ],
     temperature: 0.1,
-    max_tokens: 1500,
+    // Pasos del loop ReAct solo emiten un JSON de acción — 500 tokens es suficiente.
+    // Para síntesis final usamos synthesizeFinalAnswer con su propio límite.
+    max_tokens: 500,
   });
+
+  // Registrar tokens reales consumidos
+  const used = res.usage?.total_tokens || 500;
+  recordUsage(used);
+
   return res.choices[0].message.content.trim();
 }
 
@@ -102,6 +133,8 @@ function parseStep(raw) {
 
 // Llamada final para sintetizar todo lo que el agente hizo en lenguaje natural
 async function synthesizeFinalAnswer(systemPrompt, loopConv) {
+  checkBudget(800);
+
   const res = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [
@@ -115,8 +148,12 @@ No incluyas ningún texto fuera del JSON.`,
       },
     ],
     temperature: 0.2,
-    max_tokens: 1000,
+    max_tokens: 800,
   });
+
+  const used = res.usage?.total_tokens || 800;
+  recordUsage(used);
+
   const raw    = res.choices[0].message.content.trim();
   const parsed = parseStep(raw);
   return parsed?.text || raw;
@@ -184,7 +221,8 @@ async function runAgent(messages) {
       });
       loopConv.push({
         role: "user",
-        content: `Observación de ${parsed.action}: ${JSON.stringify(observation).slice(0, 4000)}`,
+        // Truncar observaciones largas para no desperdiciar tokens de contexto
+        content: `Observación de ${parsed.action}: ${JSON.stringify(observation).slice(0, 2000)}`,
       });
 
     } else {
