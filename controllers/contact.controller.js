@@ -201,7 +201,7 @@ async function notifyAdmin({ id, name, email, subject, message }) {
         <p style="margin:0;white-space:pre-wrap;font-size:14px">${message}</p>
       </div>
       <p style="margin-top:20px">
-        <a href="${process.env.ADMIN_URL || "http://localhost:5173"}/mensajes"
+        <a href="${process.env.ADMIN_URL || "https://alestebadmin.vercel.app"}/tools/contact-messages"
            style="background:#0f172a;color:white;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:13px">
           Responder en el panel →
         </a>
