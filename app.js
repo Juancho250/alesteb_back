@@ -41,7 +41,10 @@ const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "v
 const chatRoutes          = safeRequire("./routes/chat.routes",               "chat.routes");
 const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes");
 const reportsRoutes       = safeRequire("./routes/reports.routes",            "reports.routes");
-const analyticsRoutes     = safeRequire("./routes/analytics.routes",          "analytics.routes"); // ← NUEVO
+const analyticsRoutes     = safeRequire("./routes/analytics.routes",          "analytics.routes");
+
+// Agente autónomo — tareas programadas (stock, reportes, facturas)
+require("./services/agent.cron");
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -60,7 +63,7 @@ if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes);
 if (reportsRoutes)       app.use("/api/reports",       reportsRoutes);
-if (analyticsRoutes)     app.use("/api/analytics",     analyticsRoutes);       // ← NUEVO
+if (analyticsRoutes)     app.use("/api/analytics",     analyticsRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -80,7 +83,8 @@ app.get("/api/health", (req, res) => {
     chat:          !!chatRoutes,
     wompi:         !!wompiRoutes,
     reports:       !!reportsRoutes,
-    analytics:     !!analyticsRoutes,                                           // ← NUEVO
+    analytics:     !!analyticsRoutes,
+    agent_cron:    true,
   });
 });
 

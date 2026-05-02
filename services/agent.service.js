@@ -1,225 +1,188 @@
-// npm install groq-sdk
-const Groq = require("groq-sdk");
-const db = require("../config/db");
+// services/agent.service.js  (reemplaza el anterior)
+// ── Agente ReAct con tools tipadas ─────────────────────────────────────────
+// Loop: Thought → Action → Observation → (repite hasta Answer o Confirm)
+// Máximo MAX_STEPS pasos para evitar loops infinitos.
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const Groq  = require("groq-sdk");
+const db    = require("../config/db");
+const { TOOLS, TOOL_DESCRIPTIONS } = require("./agent.tools");
 
-// ── Tablas permitidas ────────────────────────────────────────────────
-const ALLOWED_TABLES = [
-  "sales", "sale_items", "coupon_usage",
-  "products", "product_variants", "product_images",
-  "product_price_history", "categories",
-  "attribute_types", "attribute_values", "variant_attribute_values",
-  "bundle_items", "variant_images",
-  "expenses", "invoices", "invoice_items", "invoice_payments",
-  "financial_budgets", "provider_payments",
-  "providers", "purchase_orders", "purchase_order_items",
-  "discounts", "discount_coupons", "discount_targets",
-  "banners", "agent_conversations",
-  "v_sales_full", "v_products_full", "v_profit_analysis",
-  "v_cashflow_detailed", "v_expenses_summary",
-  "v_invoices_summary", "v_provider_balance",
-];
+const groq     = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const MAX_STEPS = 6;
 
-const MASK_FIELDS = [
-  "customer_phone", "shipping_address", "shipping_city",
-  "shipping_lat", "shipping_lng", "shipping_notes",
-  "payment_proof_url",
-  "phone", "email", "address", "contact_person", "tax_id",
-  "customer_email",
-];
-
-const DANGEROUS = /\b(DROP|TRUNCATE|ALTER|CREATE\s+TABLE|DELETE\s+FROM|GRANT|REVOKE|COPY\s+.*\s+TO|pg_read_file|pg_write_file|INTO\s+OUTFILE)\b/i;
-
-const ALLOWED_OPS = {
-  query:  /^\s*SELECT\s+/i,
-  mutate: /^\s*(INSERT|UPDATE)\s+/i,
-};
-
-function validateQuery(sql, action) {
-  if (DANGEROUS.test(sql))
-    throw new Error("Operación peligrosa bloqueada.");
-  if (!ALLOWED_OPS[action].test(sql))
-    throw new Error(`Solo se permiten ${action === "query" ? "SELECT" : "INSERT/UPDATE"}.`);
-  if (action === "mutate" && !/WHERE\s+/i.test(sql))
-    throw new Error("Las modificaciones deben incluir WHERE.");
-
-  const tablePattern = /\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
-  let match;
-  while ((match = tablePattern.exec(sql)) !== null) {
-    const table = match[1].toLowerCase();
-    if (!ALLOWED_TABLES.includes(table))
-      throw new Error(`Tabla '${table}' no permitida.`);
-  }
-}
-
-function sanitizeRows(rows) {
-  if (!Array.isArray(rows)) return rows;
-  return rows.map(row => {
-    const clean = { ...row };
-    for (const key of Object.keys(clean)) {
-      if (MASK_FIELDS.some(f => key.toLowerCase() === f.toLowerCase()))
-        clean[key] = "***";
-      if (/\b(cedula|documento|password|token|secret)\b/i.test(key))
-        clean[key] = "***";
-    }
-    return clean;
-  });
-}
-
+// ── Schema del ERP (solo columnas permitidas) ────────────────────────────────
 async function getFilteredSchema() {
-  const result = await db.query(`
+  const ALLOWED_TABLES = [
+    "sales","sale_items","coupon_usage","products","product_variants",
+    "product_images","product_price_history","categories",
+    "attribute_types","attribute_values","variant_attribute_values",
+    "bundle_items","variant_images","expenses","invoices","invoice_items",
+    "invoice_payments","financial_budgets","provider_payments",
+    "providers","purchase_orders","purchase_order_items",
+    "discounts","discount_coupons","discount_targets","banners",
+    "agent_conversations",
+    "v_sales_full","v_products_full","v_profit_analysis",
+    "v_cashflow_detailed","v_expenses_summary",
+    "v_invoices_summary","v_provider_balance",
+  ];
+  const HIDE = [
+    "password","token","secret","cedula","documento",
+    "customer_phone","shipping_address","shipping_lat","shipping_lng",
+    "payment_proof_url","tax_id","contact_person","device_info","token_hash",
+  ];
+  const { rows } = await db.query(`
     SELECT table_name, column_name, data_type
     FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = ANY($1)
+    WHERE table_schema = 'public' AND table_name = ANY($1)
     ORDER BY table_name, ordinal_position
   `, [ALLOWED_TABLES]);
 
-  const HIDE_COLS = [
-    "password", "token", "secret", "cedula", "documento",
-    "customer_phone", "shipping_address", "shipping_lat",
-    "shipping_lng", "payment_proof_url", "tax_id",
-    "contact_person", "device_info", "token_hash",
-  ];
-
   const schema = {};
-  for (const row of result.rows) {
-    if (HIDE_COLS.some(c => row.column_name.toLowerCase().includes(c))) continue;
-    if (!schema[row.table_name]) schema[row.table_name] = [];
-    schema[row.table_name].push(`${row.column_name} (${row.data_type})`);
+  for (const r of rows) {
+    if (HIDE.some(h => r.column_name.toLowerCase().includes(h))) continue;
+    if (!schema[r.table_name]) schema[r.table_name] = [];
+    schema[r.table_name].push(`${r.column_name}(${r.data_type})`);
   }
-
   return Object.entries(schema)
-    .map(([table, cols]) => `- ${table}: ${cols.join(", ")}`)
+    .map(([t, c]) => `  ${t}: ${c.join(", ")}`)
     .join("\n");
 }
 
-// ── Groq usa el formato estándar OpenAI: { role, content } ───────────
-// No necesita conversión especial como Gemini
-function buildGroqMessages(systemPrompt, messages) {
-  return [
-    { role: "system", content: systemPrompt },
-    ...messages.map(m => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-    })),
-  ];
-}
+// ── System prompt ─────────────────────────────────────────────────────────────
+function buildSystemPrompt(schema) {
+  return `Eres el agente inteligente del ERP "Alesteb". Tienes acceso a herramientas reales para operar el sistema.
 
-// ── Llamada a Groq ────────────────────────────────────────────────────
-async function callGroq(groqMessages) {
-  const response = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: groqMessages,
-    temperature: 0.1,
-    max_tokens: 1024,
-  });
-  return response.choices[0].message.content.trim();
-}
+MODO DE OPERACIÓN (ReAct loop):
+Piensa paso a paso. Para cada turno responde SOLO con JSON siguiendo UNO de estos formatos:
 
-// ── Agente principal ─────────────────────────────────────────────────
-async function runAgent(messages) {
-  if (!process.env.GROQ_API_KEY)
-    throw new Error("GROQ_API_KEY no está configurada en las variables de entorno");
+A) Para usar una herramienta:
+{ "thought": "razonamiento breve", "action": "nombre_tool", "args": { ...parámetros } }
 
-  const schema = await getFilteredSchema();
+B) Para responder al usuario (sin más acciones):
+{ "thought": "...", "action": "answer", "text": "respuesta en español" }
 
-  const systemPrompt = `Eres el asistente inteligente del ERP "Alesteb".
+C) Para pedir confirmación antes de mutar datos:
+{ "thought": "...", "action": "confirm", "text": "¿Confirmas que quieres...?", "pending_sql": "..." }
 
-VISTAS DISPONIBLES (úsalas siempre que puedas, ya tienen los JOINs hechos):
-- v_sales_full         → ventas con nombre cliente, vendedor, profit, items
-- v_products_full      → productos con categoría, imagen, estado de stock
-- v_profit_analysis    → rentabilidad por producto (margen, unidades vendidas)
-- v_cashflow_detailed  → flujo de caja diario (ingresos vs gastos)
-- v_expenses_summary   → resumen de gastos por mes y tipo
-- v_invoices_summary   → facturas con proveedor, días de mora
-- v_provider_balance   → balance y crédito disponible por proveedor
+REGLAS DE AUTONOMÍA:
+- query_erp, check_stock_alerts, get_erp_context, generate_report, notify → AUTÓNOMO (no pide permiso)
+- mutate_erp → siempre llama primero con confirmed=false para mostrar el plan, luego espera "sí confirmo"
+- Si el usuario ya escribió "sí confirmo" o "confirmo" en este mensaje, puedes llamar mutate_erp con confirmed=true
+- Nunca inventes datos. Si no encuentras algo, dilo.
+- Responde siempre en español. Usa puntos de miles en números.
+- No incluyas backticks ni texto fuera del JSON.
 
-ESQUEMA COMPLETO:
+${TOOL_DESCRIPTIONS}
+
+ESQUEMA DEL ERP:
 ${schema}
 
-REGLAS:
-- Responde SOLO con JSON válido, sin texto extra ni backticks
-- Para consultas:   { "action": "query",   "sql": "SELECT...", "explanation": "..." }
-- Para modificar:   { "action": "mutate",  "sql": "INSERT/UPDATE...", "explanation": "..." }
-- Para responder:   { "action": "answer",  "text": "..." }
-- Para confirmar:   { "action": "confirm", "text": "¿Estás seguro...?" }
-- NUNCA uses DELETE, DROP, TRUNCATE, ALTER, CREATE TABLE
-- NUNCA accedas a: users, refresh_tokens, user_roles, roles, chat_messages
-- Siempre usa LIMIT (máximo 100 filas)
-- Usa DATE_TRUNC, NOW(), CURRENT_DATE para filtros de fecha
-- Responde siempre en español`;
+VISTAS RECOMENDADAS:
+  v_sales_full, v_products_full, v_profit_analysis,
+  v_cashflow_detailed, v_expenses_summary, v_invoices_summary, v_provider_balance`;
+}
 
-  // Primera llamada: el modelo decide qué acción tomar
-  const raw   = await callGroq(buildGroqMessages(systemPrompt, messages));
+// ── Llamada al LLM ────────────────────────────────────────────────────────────
+async function callLLM(systemPrompt, conversation) {
+  const res = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...conversation.map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      })),
+    ],
+    temperature: 0.1,
+    max_tokens: 1500,
+  });
+  return res.choices[0].message.content.trim();
+}
+
+function parseStep(raw) {
   const clean = raw.replace(/```json|```/g, "").trim();
+  try { return JSON.parse(clean); }
+  catch { return { action: "answer", text: raw }; }
+}
 
-  let parsed;
-  try {
-    parsed = JSON.parse(clean);
-  } catch {
-    return {
-      reply:   raw,
-      history: [...messages, { role: "assistant", content: raw }],
-    };
-  }
+// ── Loop ReAct principal ───────────────────────────────────────────────────────
+async function runAgent(messages) {
+  if (!process.env.GROQ_API_KEY)
+    throw new Error("GROQ_API_KEY no configurada");
 
-  // ── Respuesta directa o confirmación ────────────────────────────
-  if (parsed.action === "answer" || parsed.action === "confirm") {
-    return {
-      reply:        parsed.text,
-      history:      [...messages, { role: "assistant", content: parsed.text }],
-      needsConfirm: parsed.action === "confirm",
-    };
-  }
+  const schema       = await getFilteredSchema();
+  const systemPrompt = buildSystemPrompt(schema);
 
-  // ── Query o mutate ───────────────────────────────────────────────
-  if (parsed.action === "query" || parsed.action === "mutate") {
-    let rows;
-    try {
-      validateQuery(parsed.sql, parsed.action);
-      const dbResult = await db.query(parsed.sql);
-      rows = dbResult.rows ?? dbResult;
-    } catch (err) {
-      console.error("[Agent Blocked]", err.message, "SQL:", parsed.sql);
-      const errMsg = `No pude ejecutar esa consulta: ${err.message}`;
-      return {
-        reply:   errMsg,
-        history: [...messages, { role: "assistant", content: errMsg }],
-      };
+  // Conversación interna del loop (incluye observaciones de tools)
+  const loopConv = [...messages];
+  let needsConfirm   = false;
+  let pendingAction  = null;
+  let finalReply     = null;
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const raw    = await callLLM(systemPrompt, loopConv);
+    const parsed = parseStep(raw);
+
+    console.log(`[Agent step ${step + 1}]`, parsed.action, parsed.thought || "");
+
+    // ── Respuesta final ───────────────────────────────────────────────────
+    if (parsed.action === "answer") {
+      finalReply = parsed.text;
+      break;
     }
 
-    const sanitized = sanitizeRows(rows);
+    // ── Pedir confirmación ────────────────────────────────────────────────
+    if (parsed.action === "confirm") {
+      needsConfirm  = true;
+      pendingAction = parsed.pending_sql;
+      finalReply    = parsed.text;
+      break;
+    }
 
-    // Segunda llamada: redactar respuesta en lenguaje natural
-    const followUpMessages = buildGroqMessages(systemPrompt, [
-      ...messages,
-      { role: "assistant", content: clean },
-      {
+    // ── Ejecutar tool ─────────────────────────────────────────────────────
+    if (parsed.action && TOOLS[parsed.action]) {
+      let observation;
+      try {
+        observation = await TOOLS[parsed.action](parsed.args || {});
+      } catch (err) {
+        observation = { error: err.message };
+        console.error(`[Tool ${parsed.action} error]`, err.message);
+      }
+
+      // Si mutate devolvió needs_confirm, cerramos el loop
+      if (observation?.status === "needs_confirm") {
+        needsConfirm  = true;
+        pendingAction = observation.sql;
+        finalReply    = `Quiero ejecutar la siguiente acción:\n\n\`\`\`sql\n${observation.sql}\n\`\`\`\n\n${observation.reason || ""}\n\n¿Confirmas? Escribe **"sí confirmo"** para proceder.`;
+        break;
+      }
+
+      // Añadir la acción y la observación al contexto del loop
+      loopConv.push({
+        role: "assistant",
+        content: JSON.stringify({ thought: parsed.thought, action: parsed.action, args: parsed.args }),
+      });
+      loopConv.push({
         role: "user",
-        content: `Resultados (${sanitized.length} filas):
-${JSON.stringify(sanitized).slice(0, 6000)}
+        content: `Observación de ${parsed.action}: ${JSON.stringify(observation).slice(0, 4000)}`,
+      });
 
-Redacta una respuesta clara en español. Formatea números con puntos de miles.
-Si hay "***" son datos privados, no los menciones.
-Sin JSON ni código, solo texto natural.`,
-      },
-    ]);
-
-    const reply = await callGroq(followUpMessages);
-
-    return {
-      reply,
-      history: [...messages, { role: "assistant", content: reply }],
-    };
+    } else {
+      // Acción desconocida → intentar responder
+      finalReply = parsed.text || raw;
+      break;
+    }
   }
 
-  // Fallback
-  return {
-    reply:   raw,
-    history: [...messages, { role: "assistant", content: raw }],
-  };
+  if (!finalReply) finalReply = "No pude completar la tarea en los pasos disponibles. Intenta reformular tu consulta.";
+
+  // Historial limpio para el frontend (solo mensajes usuario/asistente)
+  const history = [
+    ...messages,
+    { role: "assistant", content: finalReply },
+  ];
+
+  return { reply: finalReply, history, needsConfirm, pendingAction };
 }
 
 module.exports = { runAgent };
