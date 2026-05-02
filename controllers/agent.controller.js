@@ -27,10 +27,20 @@ exports.chat = async (req, res) => {
       conversationId: convId,
     });
 
-  } catch (err) {
-    console.error("[agent.controller] chat:", err.message, "\n", err.stack);
-    return res.status(500).json({ success: false, message: err.message });
-  }
+  // controllers/agent.controller.js — exports.chat
+    } catch (err) {
+      console.error("[agent.controller] chat:", err.message);
+
+      // Groq rate limit → devolver 429 para que el frontend lo distinga
+      if (err.message?.includes("rate_limit_exceeded") || err.status === 429) {
+        return res.status(429).json({
+          success: false,
+          message: "Límite de consultas de IA alcanzado. Intenta en unos minutos.",
+        });
+      }
+
+      return res.status(500).json({ success: false, message: err.message });
+    }
 };
 
 // ── POST /agent/confirm ──────────────────────────────────────────────────────
