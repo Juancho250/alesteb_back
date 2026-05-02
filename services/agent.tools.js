@@ -1,14 +1,46 @@
 // services/agent.tools.js
-// ── Definición tipada de las herramientas del agente ERP ────────────────────
-// Cada tool tiene: name, description, parameters (JSON Schema), y handler.
-// El orquestador ReAct elige cuál ejecutar en cada paso del loop.
-
-const db      = require("../config/db");
-const { io }  = require("../config/socket");          // socket.js export: { io }
-const mailer  = require("../config/emailConfig");      // nodemailer transporter
-const Groq    = require("groq-sdk");
+const db     = require("../config/db");
+const { io } = require("../config/socket");
+const Groq   = require("groq-sdk");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+// ── Brevo lazy (mismo patrón que emailConfig.js) ─────────────────────────────
+function getBrevoClient() {
+  const brevo        = require("@getbrevo/brevo");
+  const apiInstance  = new brevo.TransactionalEmailsApi();
+  const SendSmtpEmail = brevo.SendSmtpEmail;
+
+  apiInstance.setApiKey(
+    brevo.TransactionalEmailsApiApiKeys.apiKey,
+    process.env.BREVO_API_KEY
+  );
+
+  return { apiInstance, SendSmtpEmail };
+}
+
+async function sendBrevoEmail({ to, subject, body }) {
+  if (!process.env.BREVO_API_KEY) {
+    console.warn("[Agent notify] BREVO_API_KEY no configurada — email omitido");
+    return { email: "skipped: no api key" };
+  }
+
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const mail = new SendSmtpEmail();
+
+  mail.sender  = {
+    name:  "Alesteb ERP",
+    email: process.env.BREVO_SENDER_EMAIL || "softturin@gmail.com",
+  };
+  mail.to      = [{ email: to }];
+  mail.subject = subject || "Alesteb ERP — Notificación del agente";
+  mail.htmlContent = `<div style="font-family:sans-serif;font-size:14px;line-height:1.7;max-width:600px">${body}</div>`;
+  mail.textContent = body.replace(/<[^>]+>/g, "");
+
+  const data = await apiInstance.sendTransacEmail(mail);
+  console.log("[Agent notify] Email enviado:", data.messageId);
+  return { email: "sent", messageId: data.messageId };
+}
 
 // ── Tablas y campos permitidos ───────────────────────────────────────────────
 const ALLOWED_TABLES = [
@@ -65,7 +97,7 @@ function sanitize(rows) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 1 · query_erp — consulta de solo lectura
+// TOOL 1 · query_erp
 // ═══════════════════════════════════════════════════════════════════════════
 async function query_erp({ sql }) {
   validateSQL(sql, "query");
@@ -74,30 +106,24 @@ async function query_erp({ sql }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 2 · mutate_erp — INSERT / UPDATE con bandera de confirmación
-//   confirmed=false → sólo planifica, no ejecuta
-//   confirmed=true  → ejecuta y devuelve rowCount
+// TOOL 2 · mutate_erp
 // ═══════════════════════════════════════════════════════════════════════════
 async function mutate_erp({ sql, confirmed = false, reason }) {
   validateSQL(sql, "mutate");
   if (!confirmed) {
-    return {
-      status: "needs_confirm",
-      sql,
-      reason,
-      message: "Acción pendiente de confirmación humana.",
-    };
+    return { status: "needs_confirm", sql, reason, message: "Acción pendiente de confirmación humana." };
   }
   const result = await db.query(sql);
   return { status: "executed", rowCount: result.rowCount, sql };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 3 · notify — WebSocket + email opcionales
+// TOOL 3 · notify — WebSocket + Brevo email
 // ═══════════════════════════════════════════════════════════════════════════
 async function notify({ channel, event, payload, email_to, email_subject, email_body }) {
   const results = {};
 
+  // ── WebSocket ────────────────────────────────────────────────────────────
   if (channel === "websocket" || channel === "both") {
     try {
       io.emit(event || "agent_notification", payload);
@@ -107,19 +133,23 @@ async function notify({ channel, event, payload, email_to, email_subject, email_
     }
   }
 
+  // ── Email via Brevo ──────────────────────────────────────────────────────
   if ((channel === "email" || channel === "both") && email_to) {
     try {
-      await mailer.sendMail({
-        from: process.env.EMAIL_FROM || "erp@alesteb.com",
-        to: email_to,
+      // Construir body HTML si no viene explícito
+      const htmlBody = email_body || `
+        <h2 style="color:#0f172a">${email_subject || "Notificación del agente"}</h2>
+        <pre style="background:#f8fafc;padding:16px;border-radius:8px;font-size:13px">${JSON.stringify(payload, null, 2)}</pre>
+      `;
+      const emailResult = await sendBrevoEmail({
+        to:      email_to,
         subject: email_subject || "Alesteb ERP — Notificación del agente",
-        text: email_body || JSON.stringify(payload, null, 2),
-        html: email_body
-          ? `<div style="font-family:sans-serif;font-size:14px">${email_body}</div>`
-          : `<pre>${JSON.stringify(payload, null, 2)}</pre>`,
+        body:    htmlBody,
       });
-      results.email = "sent";
+      results.email = emailResult.email;
+      if (emailResult.messageId) results.messageId = emailResult.messageId;
     } catch (e) {
+      console.error("[Agent notify email error]", e.message);
       results.email = `error: ${e.message}`;
     }
   }
@@ -128,10 +158,10 @@ async function notify({ channel, event, payload, email_to, email_subject, email_
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 4 · generate_report — llama al modelo para sintetizar datos en texto
+// TOOL 4 · generate_report
 // ═══════════════════════════════════════════════════════════════════════════
 async function generate_report({ title, data, format = "text" }) {
-  const rows = Array.isArray(data) ? data : [data];
+  const rows   = Array.isArray(data) ? data : [data];
   const prompt = `Genera un reporte ejecutivo en español titulado "${title}".
 Datos: ${JSON.stringify(rows).slice(0, 8000)}
 Formato: ${format === "markdown" ? "Markdown con tablas" : "Texto plano con secciones claras"}.
@@ -147,7 +177,7 @@ Usa puntos de miles. No inventes datos. Sé conciso pero completo.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 5 · check_stock_alerts — evalúa stock bajo sin SQL manual
+// TOOL 5 · check_stock_alerts
 // ═══════════════════════════════════════════════════════════════════════════
 async function check_stock_alerts({ threshold_factor = 1.0 }) {
   const { rows } = await db.query(`
@@ -162,8 +192,7 @@ async function check_stock_alerts({ threshold_factor = 1.0 }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOOL 6 · get_erp_context — snapshot del estado actual del ERP
-//   Úsala al inicio para que el agente entienda el contexto antes de actuar
+// TOOL 6 · get_erp_context
 // ═══════════════════════════════════════════════════════════════════════════
 async function get_erp_context() {
   const [sales, stock, invoices, cashflow] = await Promise.all([
@@ -177,15 +206,15 @@ async function get_erp_context() {
               FROM v_cashflow_detailed WHERE date >= NOW() - INTERVAL '7 days'`),
   ]);
   return {
-    last_30_days: sales.rows[0],
+    last_30_days:      sales.rows[0],
     low_stock_products: stock.rows[0].low,
-    overdue_invoices: invoices.rows[0],
+    overdue_invoices:  invoices.rows[0],
     last_7_days_cashflow: cashflow.rows[0],
   };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REGISTRY — mapa de tools para el orquestador
+// REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════
 const TOOLS = {
   query_erp,
@@ -196,31 +225,29 @@ const TOOLS = {
   get_erp_context,
 };
 
-// Descriptions para el system prompt (las lee el LLM)
 const TOOL_DESCRIPTIONS = `
 HERRAMIENTAS DISPONIBLES (úsalas en tu loop Thought→Act→Observation):
 
 1. query_erp(sql)
-   → Ejecuta SELECT en el ERP. Usa las vistas (v_sales_full, v_profit_analysis, etc.).
-   → Siempre LIMIT 100. Devuelve { rows[], count }.
+   → SELECT en el ERP. Usa las vistas. Siempre LIMIT 100. Devuelve { rows[], count }.
 
 2. mutate_erp(sql, confirmed, reason)
-   → INSERT/UPDATE. Si confirmed=false, devuelve plan para confirmación humana.
-   → Si confirmed=true, ejecuta. SIEMPRE incluye WHERE.
+   → INSERT/UPDATE. confirmed=false → plan; confirmed=true → ejecuta. Siempre WHERE.
 
 3. notify(channel, event, payload, email_to?, email_subject?, email_body?)
    → channel: "websocket" | "email" | "both"
-   → Úsala para alertas de stock, reportes listos, acciones ejecutadas.
+   → email_to: dirección destino (usa process.env.ADMIN_EMAIL si no se especifica)
+   → Úsala para alertas, reportes listos, confirmaciones de acciones.
 
 4. generate_report(title, data, format?)
-   → Sintetiza datos en reporte legible. format: "text" | "markdown"
+   → Sintetiza datos en reporte. format: "text" | "markdown"
 
 5. check_stock_alerts(threshold_factor?)
-   → Devuelve productos con stock bajo o agotado. threshold_factor: 1.0 = exactamente en min_stock.
+   → Productos con stock bajo o agotado. threshold_factor=1.0 → exactamente en min_stock.
 
 6. get_erp_context()
-   → Snapshot del ERP: ventas 30d, stock bajo, facturas vencidas, cashflow 7d.
-   → Úsala SIEMPRE al inicio de conversaciones complejas.
+   → Snapshot: ventas 30d, stock bajo, facturas vencidas, cashflow 7d.
+   → Usar SIEMPRE al inicio de consultas complejas.
 `;
 
 module.exports = { TOOLS, TOOL_DESCRIPTIONS };
