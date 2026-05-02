@@ -1,16 +1,11 @@
-// services/agent.service.js  (reemplaza el anterior)
-// ── Agente ReAct con tools tipadas ─────────────────────────────────────────
-// Loop: Thought → Action → Observation → (repite hasta Answer o Confirm)
-// Máximo MAX_STEPS pasos para evitar loops infinitos.
-
+// services/agent.service.js
 const Groq  = require("groq-sdk");
 const db    = require("../config/db");
 const { TOOLS, TOOL_DESCRIPTIONS } = require("./agent.tools");
 
-const groq     = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq      = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const MAX_STEPS = 6;
 
-// ── Schema del ERP (solo columnas permitidas) ────────────────────────────────
 async function getFilteredSchema() {
   const ALLOWED_TABLES = [
     "sales","sale_items","coupon_usage","products","product_variants",
@@ -48,41 +43,41 @@ async function getFilteredSchema() {
     .join("\n");
 }
 
-// ── System prompt ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(schema) {
-  return `Eres el agente inteligente del ERP "Alesteb". Tienes acceso a herramientas reales para operar el sistema.
+  return `Eres el agente inteligente del ERP "Alesteb". Operas el sistema con herramientas reales.
 
-MODO DE OPERACIÓN (ReAct loop):
-Piensa paso a paso. Para cada turno responde SOLO con JSON siguiendo UNO de estos formatos:
+MODO DE OPERACIÓN — loop ReAct:
+En cada turno debes responder ÚNICAMENTE con un objeto JSON válido. Ningún texto fuera del JSON.
 
-A) Para usar una herramienta:
-{ "thought": "razonamiento breve", "action": "nombre_tool", "args": { ...parámetros } }
+FORMATOS PERMITIDOS (elige solo uno por turno):
 
-B) Para responder al usuario (sin más acciones):
-{ "thought": "...", "action": "answer", "text": "respuesta en español" }
+Usar herramienta:
+{"thought":"razonamiento corto","action":"nombre_tool","args":{}}
 
-C) Para pedir confirmación antes de mutar datos:
-{ "thought": "...", "action": "confirm", "text": "¿Confirmas que quieres...?", "pending_sql": "..." }
+Responder al usuario (OBLIGATORIO como último paso):
+{"thought":"...","action":"answer","text":"respuesta completa en español"}
 
-REGLAS DE AUTONOMÍA:
-- query_erp, check_stock_alerts, get_erp_context, generate_report, notify → AUTÓNOMO (no pide permiso)
-- mutate_erp → siempre llama primero con confirmed=false para mostrar el plan, luego espera "sí confirmo"
-- Si el usuario ya escribió "sí confirmo" o "confirmo" en este mensaje, puedes llamar mutate_erp con confirmed=true
-- Nunca inventes datos. Si no encuentras algo, dilo.
-- Responde siempre en español. Usa puntos de miles en números.
-- No incluyas backticks ni texto fuera del JSON.
+Pedir confirmación antes de mutar:
+{"thought":"...","action":"confirm","text":"descripción de la acción","pending_sql":"..."}
+
+REGLA CRÍTICA: Cuando ya tienes toda la información necesaria, SIEMPRE termina con action=answer.
+Nunca termines el loop en una herramienta. El usuario solo ve el campo "text" de action=answer.
+Si usaste notify o generate_report, confirma al usuario qué hiciste en el text final.
+
+AUTONOMÍA:
+- query_erp, check_stock_alerts, get_erp_context, generate_report, notify → ejecuta sin pedir permiso
+- mutate_erp → primero confirmed=false para mostrar plan, luego espera "sí confirmo"
+- Si el usuario escribió "sí confirmo", usa mutate_erp con confirmed=true directamente
 
 ${TOOL_DESCRIPTIONS}
 
-ESQUEMA DEL ERP:
+ESQUEMA:
 ${schema}
 
-VISTAS RECOMENDADAS:
-  v_sales_full, v_products_full, v_profit_analysis,
-  v_cashflow_detailed, v_expenses_summary, v_invoices_summary, v_provider_balance`;
+VISTAS DISPONIBLES: v_sales_full, v_products_full, v_profit_analysis,
+v_cashflow_detailed, v_expenses_summary, v_invoices_summary, v_provider_balance`;
 }
 
-// ── Llamada al LLM ────────────────────────────────────────────────────────────
 async function callLLM(systemPrompt, conversation) {
   const res = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
@@ -102,36 +97,63 @@ async function callLLM(systemPrompt, conversation) {
 function parseStep(raw) {
   const clean = raw.replace(/```json|```/g, "").trim();
   try { return JSON.parse(clean); }
-  catch { return { action: "answer", text: raw }; }
+  catch { return null; }
 }
 
-// ── Loop ReAct principal ───────────────────────────────────────────────────────
+// Llamada final para sintetizar todo lo que el agente hizo en lenguaje natural
+async function synthesizeFinalAnswer(systemPrompt, loopConv) {
+  const res = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...loopConv,
+      {
+        role: "user",
+        content: `Basándote en todo lo que hiciste arriba, responde ahora al usuario con un resumen claro en español.
+Responde SOLO con este JSON: {"thought":"síntesis","action":"answer","text":"tu respuesta aquí"}
+No incluyas ningún texto fuera del JSON.`,
+      },
+    ],
+    temperature: 0.2,
+    max_tokens: 1000,
+  });
+  const raw    = res.choices[0].message.content.trim();
+  const parsed = parseStep(raw);
+  return parsed?.text || raw;
+}
+
 async function runAgent(messages) {
   if (!process.env.GROQ_API_KEY)
     throw new Error("GROQ_API_KEY no configurada");
 
   const schema       = await getFilteredSchema();
   const systemPrompt = buildSystemPrompt(schema);
+  const loopConv     = [...messages];
 
-  // Conversación interna del loop (incluye observaciones de tools)
-  const loopConv = [...messages];
-  let needsConfirm   = false;
-  let pendingAction  = null;
-  let finalReply     = null;
+  let needsConfirm  = false;
+  let pendingAction = null;
+  let finalReply    = null;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const raw    = await callLLM(systemPrompt, loopConv);
     const parsed = parseStep(raw);
 
-    console.log(`[Agent step ${step + 1}]`, parsed.action, parsed.thought || "");
+    // Si el LLM devolvió algo que no es JSON válido, sintetizar con lo que tenemos
+    if (!parsed) {
+      console.warn(`[Agent step ${step + 1}] respuesta no-JSON, sintetizando...`);
+      finalReply = await synthesizeFinalAnswer(systemPrompt, loopConv);
+      break;
+    }
 
-    // ── Respuesta final ───────────────────────────────────────────────────
+    console.log(`[Agent step ${step + 1}]`, parsed.action, "-", parsed.thought || "");
+
+    // ── Respuesta final ───────────────────────────────────────────────
     if (parsed.action === "answer") {
       finalReply = parsed.text;
       break;
     }
 
-    // ── Pedir confirmación ────────────────────────────────────────────────
+    // ── Confirmación requerida ────────────────────────────────────────
     if (parsed.action === "confirm") {
       needsConfirm  = true;
       pendingAction = parsed.pending_sql;
@@ -139,7 +161,7 @@ async function runAgent(messages) {
       break;
     }
 
-    // ── Ejecutar tool ─────────────────────────────────────────────────────
+    // ── Ejecutar tool ─────────────────────────────────────────────────
     if (parsed.action && TOOLS[parsed.action]) {
       let observation;
       try {
@@ -149,7 +171,6 @@ async function runAgent(messages) {
         console.error(`[Tool ${parsed.action} error]`, err.message);
       }
 
-      // Si mutate devolvió needs_confirm, cerramos el loop
       if (observation?.status === "needs_confirm") {
         needsConfirm  = true;
         pendingAction = observation.sql;
@@ -157,7 +178,6 @@ async function runAgent(messages) {
         break;
       }
 
-      // Añadir la acción y la observación al contexto del loop
       loopConv.push({
         role: "assistant",
         content: JSON.stringify({ thought: parsed.thought, action: parsed.action, args: parsed.args }),
@@ -168,21 +188,29 @@ async function runAgent(messages) {
       });
 
     } else {
-      // Acción desconocida → intentar responder
-      finalReply = parsed.text || raw;
+      // Acción desconocida — sintetizar con lo acumulado
+      console.warn(`[Agent] acción desconocida: ${parsed.action}`);
+      finalReply = await synthesizeFinalAnswer(systemPrompt, loopConv);
       break;
+    }
+
+    // Último paso del loop — forzar síntesis
+    if (step === MAX_STEPS - 1) {
+      console.log("[Agent] MAX_STEPS alcanzado, sintetizando respuesta final...");
+      finalReply = await synthesizeFinalAnswer(systemPrompt, loopConv);
     }
   }
 
-  if (!finalReply) finalReply = "No pude completar la tarea en los pasos disponibles. Intenta reformular tu consulta.";
+  if (!finalReply) {
+    finalReply = await synthesizeFinalAnswer(systemPrompt, loopConv);
+  }
 
-  // Historial limpio para el frontend (solo mensajes usuario/asistente)
-  const history = [
-    ...messages,
-    { role: "assistant", content: finalReply },
-  ];
-
-  return { reply: finalReply, history, needsConfirm, pendingAction };
+  return {
+    reply:   finalReply,
+    history: [...messages, { role: "assistant", content: finalReply }],
+    needsConfirm,
+    pendingAction,
+  };
 }
 
 module.exports = { runAgent };
