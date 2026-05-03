@@ -40,7 +40,6 @@ const agentRoutes         = safeRequire("./routes/agent.routes",              "a
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "variants_bundles.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",               "chat.routes");
 const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes");
-const reportsRoutes       = safeRequire("./routes/reports.routes",            "reports.routes");
 const analyticsRoutes     = safeRequire("./routes/analytics.routes",          "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 
@@ -63,7 +62,6 @@ if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes);
-if (reportsRoutes)       app.use("/api/reports",       reportsRoutes);
 if (analyticsRoutes)     app.use("/api/analytics",     analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 
@@ -84,7 +82,6 @@ app.get("/api/health", (req, res) => {
     stats:         !!statsRoutes,
     chat:          !!chatRoutes,
     wompi:         !!wompiRoutes,
-    reports:       !!reportsRoutes,
     analytics:     !!analyticsRoutes,
       contact:       !!contactRoutes,
     agent_cron:    true,
