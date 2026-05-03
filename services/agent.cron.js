@@ -1,28 +1,22 @@
 // services/agent.cron.js
-// ── Tareas programadas del agente ──────────────────────────────────────────
-// Requiere: npm install node-cron
-// Inicializar en app.js:  require('./services/agent.cron');
-
 const cron  = require("node-cron");
 const { TOOLS } = require("./agent.tools");
 const db    = require("../config/db");
 const Groq  = require("groq-sdk");
 const { recordUsage } = require("./token-budget");
+const { sendAgentReportEmail } = require("../config/emailConfig");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ── Helper: sintetizar texto con el LLM ──────────────────────────────────────
-// Usa llama3-8b-8192 (modelo ligero) para síntesis automáticas de cron.
-// Misma calidad para resúmenes ejecutivos, pero a ~1/5 del costo de tokens.
 async function synthesize(prompt, data) {
   const res = await groq.chat.completions.create({
-    model: "llama3-8b-8192",   // ← modelo ligero para tareas automáticas
+    model: "llama3-8b-8192",
     messages: [{
       role: "user",
       content: `${prompt}\n\nDatos: ${JSON.stringify(data).slice(0, 4000)}\n\nResponde en español. Puntos de miles. Máximo 2 párrafos.`,
     }],
     temperature: 0.2,
-    max_tokens: 400,           // ← resúmenes de cron no necesitan más
+    max_tokens: 400,
   });
 
   const used = res.usage?.total_tokens || 400;
@@ -45,7 +39,6 @@ cron.schedule("0 * * * *", async () => {
       { critical_out_of_stock: critical.length, low_stock: low.length, products: alerts.slice(0, 10) }
     );
 
-    // Notificar por WebSocket a todos los admins conectados
     await TOOLS.notify({
       channel: "websocket",
       event: "stock_alert",
@@ -59,7 +52,6 @@ cron.schedule("0 * * * *", async () => {
       },
     });
 
-    // Email solo si hay productos agotados
     if (critical.length > 0 && process.env.ADMIN_EMAIL) {
       const productList = critical.map(p => `- ${p.name} (SKU: ${p.sku || "N/A"}): AGOTADO`).join("\n");
       await TOOLS.notify({
@@ -83,13 +75,11 @@ cron.schedule("0 8 * * 1-6", async () => {
   try {
     const context = await TOOLS.get_erp_context();
 
-    // Ventas de ayer
     const { rows: yesterday } = await db.query(`
       SELECT COUNT(*) as orders, SUM(total) as revenue, SUM(CASE WHEN payment_status='paid' THEN total END) as collected
       FROM sales WHERE DATE(sale_date) = CURRENT_DATE - 1
     `);
 
-    // Top productos ayer
     const { rows: topProds } = await db.query(`
       SELECT p.name, SUM(si.quantity) as units, SUM(si.subtotal) as revenue
       FROM sale_items si JOIN products p ON p.id = si.product_id
@@ -97,23 +87,24 @@ cron.schedule("0 8 * * 1-6", async () => {
       GROUP BY p.name ORDER BY revenue DESC LIMIT 5
     `);
 
-    // generate_report usa llama-3.3-70b internamente vía agent.tools.js
-    // Se mantiene para reportes diarios donde la calidad importa más
+    const title = `Reporte diario — ${new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}`;
+
     const { report } = await TOOLS.generate_report({
-      title: `Reporte diario — ${new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}`,
+      title,
       data: { yesterday: yesterday[0], top_products: topProds, erp_context: context },
       format: "markdown",
     });
 
+    // WebSocket
+    await TOOLS.notify({
+      channel: "websocket",
+      event: "daily_report",
+      payload: { title: "Reporte diario listo", summary: report.slice(0, 200) },
+    });
+
+    // Email con plantilla branded
     if (process.env.ADMIN_EMAIL) {
-      await TOOLS.notify({
-        channel: "both",
-        event: "daily_report",
-        payload: { title: "Reporte diario listo", summary: report.slice(0, 200) },
-        email_to: process.env.ADMIN_EMAIL,
-        email_subject: `📊 Alesteb — Reporte del ${new Date().toLocaleDateString("es-CO")}`,
-        email_body: `<div style="font-family:sans-serif;font-size:14px;max-width:600px">${report.replace(/\n/g, "<br>")}</div>`,
-      });
+      await sendAgentReportEmail(process.env.ADMIN_EMAIL, title, report);
     }
 
     console.log("[Cron daily] Reporte diario enviado");
@@ -183,21 +174,24 @@ cron.schedule("0 9 * * 0", async () => {
       FROM v_profit_analysis ORDER BY realized_profit DESC LIMIT 10
     `);
 
+    const title = "Reporte semanal de rendimiento";
+
     const { report } = await TOOLS.generate_report({
-      title: "Reporte semanal de rendimiento",
+      title,
       data: { sales_by_day: weekSales, top_profit_products: topProfit },
       format: "markdown",
     });
 
+    // WebSocket
+    await TOOLS.notify({
+      channel: "websocket",
+      event: "weekly_report",
+      payload: { title: "Reporte semanal listo" },
+    });
+
+    // Email con plantilla branded
     if (process.env.ADMIN_EMAIL) {
-      await TOOLS.notify({
-        channel: "both",
-        event: "weekly_report",
-        payload: { title: "Reporte semanal listo" },
-        email_to: process.env.ADMIN_EMAIL,
-        email_subject: `📈 Alesteb — Reporte semanal`,
-        email_body: `<div style="font-family:sans-serif;font-size:14px;max-width:600px">${report.replace(/\n/g, "<br>")}</div>`,
-      });
+      await sendAgentReportEmail(process.env.ADMIN_EMAIL, title, report);
     }
 
     console.log("[Cron weekly] Reporte semanal enviado");

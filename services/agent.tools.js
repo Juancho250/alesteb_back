@@ -2,13 +2,14 @@
 const db     = require("../config/db");
 const { io } = require("../config/socket");
 const Groq   = require("groq-sdk");
+const { sendAgentReportEmail } = require("../config/emailConfig");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ── Brevo lazy (mismo patrón que emailConfig.js) ─────────────────────────────
+// ── Brevo lazy ────────────────────────────────────────────────────────────────
 function getBrevoClient() {
-  const brevo        = require("@getbrevo/brevo");
-  const apiInstance  = new brevo.TransactionalEmailsApi();
+  const brevo         = require("@getbrevo/brevo");
+  const apiInstance   = new brevo.TransactionalEmailsApi();
   const SendSmtpEmail = brevo.SendSmtpEmail;
 
   apiInstance.setApiKey(
@@ -28,18 +29,21 @@ async function sendBrevoEmail({ to, subject, body }) {
   const { apiInstance, SendSmtpEmail } = getBrevoClient();
   const mail = new SendSmtpEmail();
 
-  mail.sender  = {
-    name:  "Alesteb ERP",
-    email: process.env.BREVO_SENDER_EMAIL || "softturin@gmail.com",
-  };
-  mail.to      = [{ email: to }];
-  mail.subject = subject || "Alesteb ERP — Notificación del agente";
+  mail.sender      = { name: "Alesteb ERP", email: process.env.BREVO_SENDER_EMAIL || "softturin@gmail.com" };
+  mail.to          = [{ email: to }];
+  mail.subject     = subject || "Alesteb ERP — Notificación del agente";
   mail.htmlContent = `<div style="font-family:sans-serif;font-size:14px;line-height:1.7;max-width:600px">${body}</div>`;
   mail.textContent = body.replace(/<[^>]+>/g, "");
 
   const data = await apiInstance.sendTransacEmail(mail);
   console.log("[Agent notify] Email enviado:", data.messageId);
   return { email: "sent", messageId: data.messageId };
+}
+
+// ── Detectar si el contenido es markdown con tablas/encabezados ──────────────
+function isMarkdownReport(text) {
+  if (!text) return false;
+  return /^#{1,3}\s/m.test(text) || /^\|.+\|$/m.test(text);
 }
 
 // ── Tablas y campos permitidos ───────────────────────────────────────────────
@@ -136,18 +140,47 @@ async function notify({ channel, event, payload, email_to, email_subject, email_
   // ── Email via Brevo ──────────────────────────────────────────────────────
   if ((channel === "email" || channel === "both") && email_to) {
     try {
-      // Construir body HTML si no viene explícito
-      const htmlBody = email_body || `
-        <h2 style="color:#0f172a">${email_subject || "Notificación del agente"}</h2>
-        <pre style="background:#f8fafc;padding:16px;border-radius:8px;font-size:13px">${JSON.stringify(payload, null, 2)}</pre>
-      `;
-      const emailResult = await sendBrevoEmail({
-        to:      email_to,
-        subject: email_subject || "Alesteb ERP — Notificación del agente",
-        body:    htmlBody,
-      });
-      results.email = emailResult.email;
-      if (emailResult.messageId) results.messageId = emailResult.messageId;
+      // Si el body es markdown (reporte), usar plantilla branded completa
+      if (isMarkdownReport(email_body)) {
+        await sendAgentReportEmail(
+          email_to,
+          email_subject || "Reporte del Agente IA",
+          email_body
+        );
+        results.email = "sent";
+
+      } else {
+        // Alerta corta — plantilla simple pero con marca ALESTEB
+        const htmlBody = email_body || `
+          <pre style="background:#f8fafc;padding:16px;border-radius:8px;font-size:13px">
+            ${JSON.stringify(payload, null, 2)}
+          </pre>
+        `;
+        const branded = `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <div style="background:#0A0A0A;padding:24px;border-radius:12px 12px 0 0;text-align:center;">
+              <div style="color:white;font-size:26px;font-weight:900;letter-spacing:-1px;">ALESTEB</div>
+              <div style="width:30px;height:3px;background:#FF9900;margin:8px auto 0;border-radius:2px;"></div>
+            </div>
+            <div style="background:white;padding:32px;border:1px solid #e2e8f0;">
+              <h2 style="color:#0f172a;font-size:17px;margin:0 0 16px;border-left:4px solid #FF9900;padding-left:12px;">
+                ${email_subject || "Notificación del Agente IA"}
+              </h2>
+              <div style="font-size:14px;color:#475569;line-height:1.7;">${htmlBody}</div>
+            </div>
+            <div style="background:#0A0A0A;padding:16px;border-radius:0 0 12px 12px;text-align:center;">
+              <div style="color:#555;font-size:11px;">© 2026 Alesteb ERP · Alerta automática del sistema</div>
+            </div>
+          </div>
+        `;
+        const emailResult = await sendBrevoEmail({
+          to:      email_to,
+          subject: email_subject || "Alesteb ERP — Notificación del agente",
+          body:    branded,
+        });
+        results.email = emailResult.email;
+        if (emailResult.messageId) results.messageId = emailResult.messageId;
+      }
     } catch (e) {
       console.error("[Agent notify email error]", e.message);
       results.email = `error: ${e.message}`;
@@ -206,9 +239,9 @@ async function get_erp_context() {
               FROM v_cashflow_detailed WHERE date >= NOW() - INTERVAL '7 days'`),
   ]);
   return {
-    last_30_days:      sales.rows[0],
-    low_stock_products: stock.rows[0].low,
-    overdue_invoices:  invoices.rows[0],
+    last_30_days:         sales.rows[0],
+    low_stock_products:   stock.rows[0].low,
+    overdue_invoices:     invoices.rows[0],
     last_7_days_cashflow: cashflow.rows[0],
   };
 }
@@ -237,10 +270,12 @@ HERRAMIENTAS DISPONIBLES (úsalas en tu loop Thought→Act→Observation):
 3. notify(channel, event, payload, email_to?, email_subject?, email_body?)
    → channel: "websocket" | "email" | "both"
    → email_to: dirección destino (usa process.env.ADMIN_EMAIL si no se especifica)
+   → Si email_body contiene markdown con tablas o encabezados, se renderiza con plantilla branded ALESTEB.
    → Úsala para alertas, reportes listos, confirmaciones de acciones.
 
 4. generate_report(title, data, format?)
    → Sintetiza datos en reporte. format: "text" | "markdown"
+   → Para enviar por email, usa format:"markdown" y luego notify con ese contenido.
 
 5. check_stock_alerts(threshold_factor?)
    → Productos con stock bajo o agotado. threshold_factor=1.0 → exactamente en min_stock.

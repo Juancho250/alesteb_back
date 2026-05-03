@@ -387,10 +387,122 @@ const verifyEmailConfig = () => {
 };
 
 verifyEmailConfig();
+// ============================================
+// 📊 REPORTE DEL AGENTE IA — HTML branded
+// ============================================
+function markdownToHtml(md) {
+  return md
+    // Tablas markdown → <table>
+    .replace(/^\|(.+)\|$/gm, (line) => {
+      const cells = line.split("|").filter((_, i, a) => i > 0 && i < a.length - 1);
+      return `<tr>${cells.map(c => `<td style="padding:10px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155;">${c.trim()}</td>`).join("")}</tr>`;
+    })
+    .replace(/^\|[-| ]+\|$/gm, "") // eliminar fila separadora
+    .replace(/(<tr>.*?<\/tr>)/gs, (match, _, offset, str) => {
+      // Primera fila → thead
+      const allRows = str.match(/<tr>.*?<\/tr>/gs) || [];
+      if (allRows[0] === match) {
+        const header = match.replace(/<td/g, '<td style="padding:10px 14px;background:#0f172a;color:white;font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;"');
+        return `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:20px;border-collapse:collapse;"><thead>${header}</thead><tbody>`;
+      }
+      return match;
+    })
+    .replace(/(<\/tr>)(?![\s\S]*<tr>)/, "$1</tbody></table>")
+    // Encabezados
+    .replace(/^### (.+)$/gm, '<h3 style="font-size:14px;font-weight:800;color:#0f172a;margin:24px 0 8px;">$1</h3>')
+    .replace(/^## (.+)$/gm,  '<h2 style="font-size:17px;font-weight:800;color:#0f172a;margin:28px 0 10px;border-left:4px solid #FF9900;padding-left:12px;">$1</h2>')
+    .replace(/^# (.+)$/gm,   '<h1 style="font-size:22px;font-weight:900;color:#0f172a;margin:0 0 20px;">$1</h1>')
+    // Negrita
+    .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0f172a;">$1</strong>')
+    // Saltos de línea
+    .replace(/\n\n/g, '</p><p style="font-size:14px;color:#475569;line-height:1.7;margin:0 0 12px;">')
+    .replace(/\n/g, "<br>");
+}
+
+const sendAgentReportEmail = async (email, title, markdownContent) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const sendSmtpEmail = new SendSmtpEmail();
+
+  const htmlBody = markdownToHtml(markdownContent);
+  const dateStr  = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+
+  sendSmtpEmail.subject     = `📊 ${title} — Alesteb ERP`;
+  sendSmtpEmail.to          = [{ email, name: "Administrador" }];
+  sendSmtpEmail.sender      = SENDER;
+  sendSmtpEmail.htmlContent = `
+    <!DOCTYPE html><html lang="es">
+    <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+    <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+        <tr><td align="center">
+          <table width="620" cellpadding="0" cellspacing="0" style="max-width:620px;width:100%;">
+
+            <!-- HEADER -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#0A0A0A 0%,#1a0d00 100%);padding:40px;border-radius:20px 20px 0 0;text-align:center;">
+                <div style="color:white;font-size:36px;font-weight:900;letter-spacing:-1px;text-transform:uppercase;margin:0;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:#FF9900;margin:12px auto 16px;border-radius:2px;"></div>
+                <div style="background:rgba(255,153,0,0.15);border:1px solid rgba(255,153,0,0.4);border-radius:50px;display:inline-block;padding:8px 24px;">
+                  <span style="color:#FF9900;font-size:12px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">📊 AGENTE IA — REPORTE</span>
+                </div>
+              </td>
+            </tr>
+
+            <!-- META -->
+            <tr>
+              <td style="background:#FF9900;padding:12px 40px;display:flex;justify-content:space-between;">
+                <table width="100%"><tr>
+                  <td style="font-size:12px;font-weight:800;color:#0A0A0A;">${title.toUpperCase()}</td>
+                  <td style="font-size:12px;color:#0A0A0A;text-align:right;">${dateStr}</td>
+                </tr></table>
+              </td>
+            </tr>
+
+            <!-- BODY -->
+            <tr>
+              <td style="background:white;padding:40px;">
+                <p style="font-size:14px;color:#475569;line-height:1.7;margin:0 0 24px;">
+                  Tu agente IA completó el análisis solicitado. A continuación el reporte generado automáticamente.
+                </p>
+                <div style="border-left:4px solid #FF9900;padding-left:20px;margin-bottom:28px;">
+                  ${htmlBody}
+                </div>
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff8ec;border:1px solid #fde68a;border-radius:12px;margin-top:32px;">
+                  <tr><td style="padding:16px 20px;font-size:12px;color:#92400e;line-height:1.6;">
+                    🤖 <strong>Generado por el Agente IA de ALESTEB</strong> — Este reporte fue creado automáticamente.
+                    Los datos reflejan el estado de tu ERP al momento de la ejecución.
+                  </td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- FOOTER -->
+            <tr>
+              <td style="background:#0A0A0A;padding:24px 40px;border-radius:0 0 20px 20px;text-align:center;">
+                <div style="color:#555;font-size:11px;">© 2026 Alesteb ERP · Reporte automático del sistema</div>
+              </td>
+            </tr>
+
+          </table>
+        </td></tr>
+      </table>
+    </body></html>
+  `;
+
+  try {
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log("✅ Reporte IA enviado:", data.messageId);
+    return true;
+  } catch (err) {
+    console.error("❌ Error enviando reporte IA:", err.message);
+    return false;
+  }
+};
 
 module.exports = {
   generateVerificationCode,
   sendVerificationEmail,
   sendOrderConfirmationEmail,
   sendPaymentConfirmedEmail,
+  sendAgentReportEmail,
 };
