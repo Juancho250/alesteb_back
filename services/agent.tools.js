@@ -269,10 +269,11 @@ HERRAMIENTAS DISPONIBLES (úsalas en tu loop Thought→Act→Observation):
 
 3. notify(channel, event, payload, email_to?, email_subject?, email_body?)
    → channel: "websocket" | "email" | "both"
-   → email_to: dirección destino (usa process.env.ADMIN_EMAIL si no se especifica)
-   → Si email_body contiene markdown con tablas o encabezados, se renderiza con plantilla branded ALESTEB.
-   → Úsala para alertas, reportes listos, confirmaciones de acciones.
-
+   → email_to: usa process.env.ADMIN_EMAIL si el usuario no especificó otra dirección
+   → email_body: si viene de generate_report, pasa el markdown directamente — se renderiza automáticamente
+   → IMPORTANTE: esta herramienta SÍ envía el email. Debes llamarla para que el email llegue.
+   → Devuelve { email: "sent" } si fue exitoso.
+   
 4. generate_report(title, data, format?)
    → Sintetiza datos en reporte. format: "text" | "markdown"
    → Para enviar por email, usa format:"markdown" y luego notify con ese contenido.

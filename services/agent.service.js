@@ -5,7 +5,8 @@ const { TOOLS, TOOL_DESCRIPTIONS } = require("./agent.tools");
 const { checkBudget, recordUsage }  = require("./token-budget");
 
 const groq      = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const MAX_STEPS = 6;
+// Línea 13 — cambiar MAX_STEPS
+const MAX_STEPS = 10;  // era 6
 
 // ── Cache del esquema ─────────────────────────────────────────────────────────
 // El esquema de la BD casi nunca cambia; reconstruirlo en cada llamada
@@ -88,6 +89,20 @@ AUTONOMÍA:
 - query_erp, check_stock_alerts, get_erp_context, generate_report, notify → ejecuta sin pedir permiso
 - mutate_erp → primero confirmed=false para mostrar plan, luego espera "sí confirmo"
 - Si el usuario escribió "sí confirmo", usa mutate_erp con confirmed=true directamente
+
+REGLA DE EMAIL — MUY IMPORTANTE:
+Si el usuario pidió "notifícame por email", "envíame un correo" o similar:
+1. DEBES llamar notify con channel="email" o channel="both" ANTES de responder
+2. Solo DESPUÉS de que notify devuelva un resultado, usa action=answer
+3. NUNCA digas que enviaste un email sin haber llamado la herramienta notify
+4. En el action=answer confirma el resultado real de notify (éxito o error)
+
+REGLA DE REPORTE + EMAIL:
+Cuando el usuario pide reporte por email, el flujo OBLIGATORIO es:
+  paso 1 → query_erp (obtener datos)
+  paso 2 → generate_report (format: "markdown")  
+  paso 3 → notify (channel: "email", email_body: <el reporte markdown>)
+  paso 4 → answer (confirmar lo que hiciste)
 
 ${TOOL_DESCRIPTIONS}
 
