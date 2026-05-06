@@ -41,10 +41,11 @@ const variantsRoutes      = safeRequire("./routes/variants_bundles.routes",   "v
 const chatRoutes          = safeRequire("./routes/chat.routes",               "chat.routes");
 const wompiRoutes         = safeRequire("./routes/wompi.routes",              "wompi.routes");
 const analyticsRoutes     = safeRequire("./routes/analytics.routes",          "analytics.routes");
-const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
+const contactRoutes       = safeRequire("./routes/contact.routes",            "contact.routes");
 
-// Agente autónomo — tareas programadas (stock, reportes, facturas)
-require("./services/agent.cron");
+// Tareas programadas
+require("./services/agent.cron");                  // Agente autónomo (stock, reportes, facturas)
+require("./services/notificationScheduler");       // Push notifications automáticas
 
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 if (usersRoutes)         app.use("/api/users",         usersRoutes);
@@ -67,24 +68,25 @@ if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({
-    auth:          !!authRoutes,
-    users:         !!usersRoutes,
-    roles:         !!rolesRoutes,
-    providers:     !!providersRoutes,
-    products:      !!productsRoutes,
-    categories:    !!categoriesRoutes,
-    sales:         !!salesRoutes,
-    discounts:     !!discountsRoutes,
-    banners:       !!bannersRoutes,
-    finance:       !!financeRoutes,
-    notifications: !!notificationsRoutes,
-    variants:      !!variantsRoutes,
-    stats:         !!statsRoutes,
-    chat:          !!chatRoutes,
-    wompi:         !!wompiRoutes,
-    analytics:     !!analyticsRoutes,
-      contact:       !!contactRoutes,
-    agent_cron:    true,
+    auth:                  !!authRoutes,
+    users:                 !!usersRoutes,
+    roles:                 !!rolesRoutes,
+    providers:             !!providersRoutes,
+    products:              !!productsRoutes,
+    categories:            !!categoriesRoutes,
+    sales:                 !!salesRoutes,
+    discounts:             !!discountsRoutes,
+    banners:               !!bannersRoutes,
+    finance:               !!financeRoutes,
+    notifications:         !!notificationsRoutes,
+    variants:              !!variantsRoutes,
+    stats:                 !!statsRoutes,
+    chat:                  !!chatRoutes,
+    wompi:                 !!wompiRoutes,
+    analytics:             !!analyticsRoutes,
+    contact:               !!contactRoutes,
+    agent_cron:            true,
+    notification_scheduler: true,
   });
 });
 
