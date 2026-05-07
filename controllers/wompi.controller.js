@@ -1,71 +1,13 @@
 // controllers/wompi.controller.js
 const crypto = require("crypto");
-const pool   = require("../config/db"); // ajusta si tu pool se importa distinto
-
-const WOMPI_BASE =
-  process.env.WOMPI_ENV === "prod"
-    ? "https://production.wompi.co/v1"
-    : "https://sandbox.wompi.co/v1";
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Genera la firma de integridad que exige Wompi
-   chain = reference + amount_in_cents + currency + integrity_secret
-   ───────────────────────────────────────────────────────────────────────── */
-// controllers/wompi.controller.js — SOLO cambia buildSignature y getSession
+const pool   = require("../config/db");
 
 function buildSignature(reference, amountInCents, currency = "COP") {
-  // ✅ amountInCents DEBE ser string entero — exactamente igual al valor que
-  //    irá en la URL. Sin decimales, sin puntos.
   const amountStr = String(Math.round(Number(amountInCents)));
   const chain = `${reference}${amountStr}${currency}${process.env.WOMPI_INTEGRITY_SECRET}`;
   return crypto.createHash("sha256").update(chain).digest("hex");
 }
 
-const getSession = async (req, res) => {
-  try {
-    const { sale_id } = req.params;
-
-    const { rows } = await pool.query(
-      "SELECT id, sale_number, total, payment_status FROM sales WHERE id = $1",
-      [sale_id]
-    );
-
-    if (!rows.length)
-      return res.status(404).json({ success: false, message: "Venta no encontrada" });
-
-    const sale = rows[0];
-
-    if (sale.payment_status === "paid")
-      return res.status(400).json({ success: false, message: "Esta venta ya fue pagada" });
-
-    const reference     = sale.sale_number;
-    // ✅ Entero exacto — sin Math.round anidado sobre parseFloat que puede derivar
-    const amountInCents = Math.round(parseFloat(sale.total) * 100);
-    const currency      = "COP";
-    // ✅ Se pasa el mismo valor numérico; buildSignature lo convierte a string internamente
-    const signature     = buildSignature(reference, amountInCents, currency);
-
-    return res.json({
-      success: true,
-      data: {
-        public_key:      process.env.WOMPI_PUBLIC_KEY,
-        reference,
-        amount_in_cents: amountInCents,   // número entero
-        currency,
-        signature,
-        redirect_url: `${process.env.FRONTEND_URL}/order-success`,
-      },
-    });
-  } catch (err) {
-    console.error("[wompi] getSession error:", err);
-    return res.status(500).json({ success: false, message: "Error interno" });
-  }
-};
-
-/* ─────────────────────────────────────────────────────────────────────────
-   GET /api/wompi/session/:sale_id
-   Devuelve todo lo necesario para armar el redirect a Wompi Hosted Checkout
-   ───────────────────────────────────────────────────────────────────────── */
 const getSession = async (req, res) => {
   try {
     const { sale_id } = req.params;
@@ -105,21 +47,14 @@ const getSession = async (req, res) => {
   }
 };
 
-/* ─────────────────────────────────────────────────────────────────────────
-   POST /api/wompi/webhook
-   Wompi llama este endpoint cuando cambia el estado de una transacción.
-   Sin autenticación JWT — verificamos con firma Wompi.
-   ───────────────────────────────────────────────────────────────────────── */
 const handleWebhook = async (req, res) => {
   try {
     const { event, data, timestamp, signature } = req.body;
 
-    // ── 1. Verificar firma ────────────────────────────────────────────────
     if (signature?.properties && signature?.checksum) {
       const transaction = data?.transaction ?? {};
       const valuesStr   = signature.properties
         .map((prop) => {
-          // e.g. "transaction.id" → transaction["id"]
           const key = prop.replace("transaction.", "");
           return transaction[key] ?? "";
         })
@@ -134,7 +69,6 @@ const handleWebhook = async (req, res) => {
       }
     }
 
-    // ── 2. Solo procesamos transaction.updated ────────────────────────────
     if (event === "transaction.updated") {
       const tx = data?.transaction ?? {};
       const { reference, status } = tx;
@@ -156,7 +90,6 @@ const handleWebhook = async (req, res) => {
 
       if (status === "APPROVED") {
         console.log(`[wompi] ✅ Pago aprobado: ${reference}`);
-        // Aquí puedes disparar notificaciones, reducir stock extra, etc.
       }
     }
 
@@ -167,11 +100,6 @@ const handleWebhook = async (req, res) => {
   }
 };
 
-/* ─────────────────────────────────────────────────────────────────────────
-   GET /api/wompi/verify/:reference
-   El frontend puede consultar si la transacción fue aprobada
-   (útil al regresar del hosted checkout)
-   ───────────────────────────────────────────────────────────────────────── */
 const verifyByReference = async (req, res) => {
   try {
     const { reference } = req.params;
