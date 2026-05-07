@@ -27,7 +27,7 @@ async function syncPaymentStatus(client, saleId) {
   else                   status = "paid";
 
   await client.query(
-    "UPDATE sales SET amount_paid = $1, payment_status = $2, updated_at = NOW() WHERE id = $3",
+    "UPDATE sales SET amount_paid = $1, payment_status = $2 WHERE id = $3",
     [paid, status, saleId]
   );
   return { paid, status };
