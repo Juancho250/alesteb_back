@@ -2,23 +2,21 @@
 const express = require("express");
 const router  = express.Router();
 
-const salesController = require("../controllers/sales.controller");
+const ctrl              = require("../controllers/sales.controller");
 const { auth, requireManager } = require("../middleware/auth.middleware");
 
-// ── Rutas estáticas primero (antes de /:id) ──────────────────────────────────
+// ── Rutas estáticas primero ──────────────────────────────────
+router.get("/",             auth, ctrl.getAllSales);
+router.get("/user/history", auth, ctrl.getUserOrderHistory);
+router.get("/user/stats",   auth, ctrl.getUserStats);
 
-router.get("/",             auth, salesController.getAllSales);
-router.get("/user/history", auth, salesController.getUserOrderHistory);
-router.get("/user/stats",   auth, salesController.getUserStats);
+router.post("/",         auth, ctrl.createOrder);
+router.post("/checkout", auth, ctrl.createOrder);
 
-router.post("/",            auth, salesController.createOrder);
-router.post("/checkout",    auth, salesController.createOrder);
-
-// ── Rutas con :id ────────────────────────────────────────────────────────────
-// Cancelar pedido (cliente)
-router.post("/:id/cancel", auth, salesController.cancelOrder);
-
-// Detalle de pedido — siempre al final
-router.get("/:id", auth, salesController.getOrderDetail);
+// ── Rutas con :id ────────────────────────────────────────────
+router.get( "/:id/payments", auth,                     ctrl.getSalePayments);   // historial de pagos
+router.post("/:id/payments", auth, requireManager,     ctrl.registerPayment);   // registrar abono
+router.post("/:id/cancel",   auth,                     ctrl.cancelOrder);       // cancelar
+router.get( "/:id",          auth,                     ctrl.getOrderDetail);    // ítems
 
 module.exports = router;
