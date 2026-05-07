@@ -2,7 +2,6 @@
 const db = require("../config/db");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 
-// ── Helpers internos ────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 
 /**
@@ -153,11 +152,11 @@ exports.createOrder = async (req, res) => {
     items,
     discount_amount      = 0,
     tax_amount           = 0,
-    sale_type            = "online",   // online | fisica
-    payment_method       = "cash",     // cash | transfer | credit | check | fiado
-    credit_due_date      = null,       // solo fiado: fecha límite de pago
-    credit_notes         = null,       // solo fiado: notas del acuerdo
-    initial_payment      = 0,          // solo fiado: abono inicial (puede ser 0)
+    sale_type            = "online",
+    payment_method       = "cash",
+    credit_due_date      = null,
+    credit_notes         = null,
+    initial_payment      = 0,
     shipping_address,
     shipping_city,
     shipping_notes,
@@ -172,7 +171,10 @@ exports.createOrder = async (req, res) => {
 
   // Fiado requiere fecha límite
   if (isFiado && !credit_due_date)
-    return res.status(400).json({ success: false, message: "Se requiere fecha límite de pago para ventas a crédito" });
+    return res.status(400).json({
+      success: false,
+      message: "Se requiere fecha límite de pago para ventas a crédito",
+    });
 
   const client = await db.connect();
 
@@ -201,9 +203,11 @@ exports.createOrder = async (req, res) => {
         throw new Error(`Producto ${item.product_id} no encontrado o inactivo`);
       const product = prodRows[0];
 
-      let variantId = null, unitPrice = Number(product.sale_price),
-          unitCost  = Number(product.purchase_price ?? 0),
-          availStock = Number(product.stock), variantSku = null;
+      let variantId  = null;
+      let unitPrice  = Number(product.sale_price);
+      let unitCost   = Number(product.purchase_price ?? 0);
+      let availStock = Number(product.stock);
+      let variantSku = null;
 
       if (item.variant_id) {
         const { rows: varRows } = await client.query(
@@ -222,7 +226,9 @@ exports.createOrder = async (req, res) => {
       }
 
       if (availStock < item.quantity)
-        throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${availStock}`);
+        throw new Error(
+          `Stock insuficiente para "${product.name}". Disponible: ${availStock}`
+        );
 
       const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
@@ -237,32 +243,46 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    const total = subtotal - Number(discount_amount) + Number(tax_amount);
+    const total    = subtotal - Number(discount_amount) + Number(tax_amount);
+    const initPay  = Math.min(Number(initial_payment) || 0, total);
 
     // ── Determinar estado de pago ─────────────────────────────
     let finalPaymentStatus;
     let dbPaymentMethod;
-    const initPay = Math.min(Number(initial_payment) || 0, total);
+    let amountPaidInitial;
 
     if (isOnline) {
-      // Wompi maneja la confirmación vía webhook
+      // Wompi: queda pendiente hasta que el webhook confirme
       finalPaymentStatus = "pending";
       dbPaymentMethod    = "credit";
+      amountPaidInitial  = 0;
+
     } else if (isFiado) {
+      // Crédito con posible abono inicial
       dbPaymentMethod = "credit";
-      if (initPay <= 0)        finalPaymentStatus = "pending";
-      else if (initPay < total) finalPaymentStatus = "partial";
-      else                     finalPaymentStatus = "paid";
+      if (initPay <= 0) {
+        finalPaymentStatus = "pending";
+        amountPaidInitial  = 0;
+      } else if (initPay < total) {
+        finalPaymentStatus = "partial";
+        amountPaidInitial  = initPay;
+      } else {
+        finalPaymentStatus = "paid";
+        amountPaidInitial  = total;
+      }
+
     } else {
-      // Local en efectivo/transferencia/tarjeta → pagado inmediatamente
+      // ✅ Venta local (admin): siempre queda pagada de inmediato
       finalPaymentStatus = "paid";
-      dbPaymentMethod    = ["cash","transfer","credit","check"].includes(payment_method)
+      dbPaymentMethod    = ["cash", "transfer", "credit", "check"].includes(payment_method)
         ? payment_method : "cash";
+      amountPaidInitial  = total;
     }
 
     // ── Número de venta ───────────────────────────────────────
     const { rows: numRows } = await client.query(
-      "SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 5) AS INTEGER)), 0) + 1 AS n FROM sales WHERE sale_number LIKE 'VEN-%'"
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 5) AS INTEGER)), 0) + 1 AS n
+       FROM sales WHERE sale_number LIKE 'VEN-%'`
     );
     const saleNumber = `VEN-${String(numRows[0].n).padStart(6, "0")}`;
 
@@ -278,7 +298,7 @@ exports.createOrder = async (req, res) => {
       [
         saleNumber, customer_id, subtotal, tax_amount, discount_amount,
         total,
-        isLocal && !isFiado ? total : (isFiado ? initPay : 0), // amount_paid inicial
+        amountPaidInitial,
         dbPaymentMethod,
         finalPaymentStatus,
         sale_type,
@@ -297,9 +317,11 @@ exports.createOrder = async (req, res) => {
           sale_id, product_id, variant_id, quantity, unit_price, unit_cost,
           subtotal, profit_per_unit, total_profit
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [saleId, item.product_id, item.variant_id ?? null,
-         item.quantity, item.unit_price, item.unit_cost,
-         item.subtotal, item.profit_per_unit, item.total_profit]
+        [
+          saleId, item.product_id, item.variant_id ?? null,
+          item.quantity, item.unit_price, item.unit_cost,
+          item.subtotal, item.profit_per_unit, item.total_profit,
+        ]
       );
 
       if (item.variant_id) {
@@ -322,20 +344,16 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // ── Registrar pago automático ────────────────────────────
-    // Para ventas locales pagadas completo o abono inicial de fiado
-    const paymentToRecord = isLocal && !isFiado ? total : (isFiado && initPay > 0 ? initPay : 0);
-    if (paymentToRecord > 0) {
+    // ── Registrar pago automático (local o abono fiado) ───────
+    if (amountPaidInitial > 0) {
+      const payNote = isFiado
+        ? `Abono inicial sobre crédito`
+        : `Pago completo en tienda`;
+
       await client.query(
         `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, created_by)
          VALUES ($1, $2, $3, $4, $5)`,
-        [
-          saleId,
-          paymentToRecord,
-          dbPaymentMethod,
-          isFiado ? `Abono inicial` : `Pago completo en tienda`,
-          req.user?.id ?? null,
-        ]
+        [saleId, amountPaidInitial, dbPaymentMethod, payNote, req.user?.id ?? null]
       );
     }
 
@@ -345,7 +363,7 @@ exports.createOrder = async (req, res) => {
 
     // ── Emails (best-effort) ─────────────────────────────────
     if (customer.email) {
-      if (finalPaymentStatus === "paid") {
+      if (finalPaymentStatus === "paid" && !isFiado) {
         sendPaymentConfirmedEmail?.(customer.email, customer.name, {
           orderCode, total, items: validatedItems,
         }).catch(() => {});
@@ -353,10 +371,10 @@ exports.createOrder = async (req, res) => {
         sendOrderConfirmationEmail(customer.email, customer.name, {
           orderCode, total, items: validatedItems,
           shippingAddress: shipping_address, shippingCity: shipping_city,
-          shippingNotes: shipping_notes,
-          paymentMethod: isFiado ? "fiado" : "wompi",
-          creditDueDate: credit_due_date,
-          initialPayment: initPay,
+          shippingNotes:   shipping_notes,
+          paymentMethod:   isFiado ? "fiado" : "wompi",
+          creditDueDate:   credit_due_date,
+          initialPayment:  initPay,
         }).catch(() => {});
       }
     }
@@ -369,8 +387,12 @@ exports.createOrder = async (req, res) => {
           ? `Venta a crédito registrada${initPay > 0 ? `. Abono de $${fmt(initPay)} registrado.` : ""}`
           : "Venta registrada y pagada ✓",
       data: {
-        sale_id: saleId, sale_number: saleNumber, order_code: orderCode,
-        total, amount_paid: paymentToRecord, payment_status: finalPaymentStatus,
+        sale_id:        saleId,
+        sale_number:    saleNumber,
+        order_code:     orderCode,
+        total,
+        amount_paid:    amountPaidInitial,
+        payment_status: finalPaymentStatus,
       },
     });
 
@@ -378,6 +400,116 @@ exports.createOrder = async (req, res) => {
     await client.query("ROLLBACK");
     console.error("CREATE ORDER ERROR:", err);
     res.status(500).json({ success: false, message: err.message || "Error al crear la venta" });
+  } finally {
+    client.release();
+  }
+};
+
+// ============================================
+// 💳 WEBHOOK WOMPI — confirmar pago online
+// ============================================
+/**
+ * POST /api/sales/wompi-webhook
+ * Wompi envía un evento cuando el pago se aprueba.
+ * Debes verificar la firma antes de procesar.
+ *
+ * Variables de entorno:
+ *   WOMPI_EVENTS_SECRET — para verificar la firma HMAC-SHA256
+ */
+exports.wompiWebhook = async (req, res) => {
+  // ── 1. Verificar firma ────────────────────────────────────
+  const crypto   = require("crypto");
+  const secret   = process.env.WOMPI_EVENTS_SECRET ?? "";
+  const sigHeader = req.headers["x-event-checksum"] ?? "";
+
+  // Wompi firma: sha256( timestamp + properties + secret )
+  // Asegúrate de recibir el body como raw buffer para verificar
+  const bodyStr   = JSON.stringify(req.body);
+  const timestamp = req.headers["x-event-timestamp"] ?? "";
+  const signature = crypto
+    .createHash("sha256")
+    .update(`${timestamp}${bodyStr}${secret}`)
+    .digest("hex");
+
+  if (secret && signature !== sigHeader) {
+    console.warn("WOMPI WEBHOOK: firma inválida");
+    return res.status(401).json({ success: false, message: "Firma inválida" });
+  }
+
+  const { event, data } = req.body ?? {};
+
+  // Solo nos interesan transacciones aprobadas
+  if (event !== "transaction.updated") return res.sendStatus(200);
+  if (data?.transaction?.status !== "APPROVED") return res.sendStatus(200);
+
+  // Wompi devuelve en reference el sale_number (configúralo en el checkout)
+  const reference = data.transaction?.reference ?? "";   // e.g. "VEN-000042"
+  const amountCents = Number(data.transaction?.amount_in_cents ?? 0);
+  const amountCOP   = amountCents / 100;
+
+  if (!reference || !amountCOP) return res.sendStatus(200);
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Buscar la venta por sale_number
+    const { rows: saleRows } = await client.query(
+      "SELECT id, total, payment_status FROM sales WHERE sale_number = $1",
+      [reference]
+    );
+
+    if (!saleRows.length) {
+      console.warn(`WOMPI WEBHOOK: venta ${reference} no encontrada`);
+      await client.query("ROLLBACK");
+      return res.sendStatus(200);
+    }
+
+    const sale = saleRows[0];
+
+    if (sale.payment_status === "paid") {
+      // Ya estaba pagada (idempotencia)
+      await client.query("ROLLBACK");
+      return res.sendStatus(200);
+    }
+
+    // Registrar el pago
+    await client.query(
+      `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, created_by)
+       VALUES ($1, $2, 'credit', 'Pago aprobado por Wompi', NULL)
+       ON CONFLICT DO NOTHING`,
+      [sale.id, amountCOP]
+    );
+
+    // Sincronizar estado
+    const { status } = await syncPaymentStatus(client, sale.id);
+
+    await client.query("COMMIT");
+    console.log(`WOMPI WEBHOOK: venta ${reference} → ${status}`);
+
+    // Enviar email de confirmación (best-effort)
+    if (status === "paid") {
+      const { rows: info } = await db.query(
+        `SELECT s.id, s.total, u.name, u.email,
+                s.sale_number
+         FROM sales s JOIN users u ON u.id = s.customer_id
+         WHERE s.id = $1`,
+        [sale.id]
+      );
+      if (info[0]?.email) {
+        sendPaymentConfirmedEmail?.(info[0].email, info[0].name, {
+          orderCode: `AL-${info[0].sale_number?.slice(4)}`,
+          total: info[0].total,
+          items: [],
+        }).catch(() => {});
+      }
+    }
+
+    return res.sendStatus(200);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("WOMPI WEBHOOK ERROR:", err);
+    return res.sendStatus(500);
   } finally {
     client.release();
   }
@@ -398,7 +530,6 @@ exports.registerPayment = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Verificar venta
     const { rows: saleRows } = await client.query(
       "SELECT id, total, amount_paid, payment_status FROM sales WHERE id = $1",
       [id]
@@ -415,16 +546,18 @@ exports.registerPayment = async (req, res) => {
     }
 
     const pending = Number(sale.total) - Number(sale.amount_paid);
-    const payAmt  = Math.min(Number(amount), pending); // no sobrepagar
+    const payAmt  = Math.min(Number(amount), pending);
 
-    // Insertar pago
     await client.query(
       `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, payment_date, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, payAmt, payment_method, notes, payment_date ?? new Date().toISOString().slice(0, 10), req.user?.id ?? null]
+      [
+        id, payAmt, payment_method, notes,
+        payment_date ?? new Date().toISOString().slice(0, 10),
+        req.user?.id ?? null,
+      ]
     );
 
-    // Recalcular status
     const { paid, status } = await syncPaymentStatus(client, id);
 
     await client.query("COMMIT");
@@ -452,10 +585,10 @@ exports.registerPayment = async (req, res) => {
 exports.getSalePayments = async (req, res) => {
   const { id } = req.params;
   try {
-    // Info de la venta
     const { rows: saleRows } = await db.query(
       `SELECT s.id, s.sale_number, s.total, s.amount_paid, s.payment_status,
               s.payment_method, s.credit_due_date, s.credit_notes, s.sale_type,
+              s.subtotal, s.discount_amount, s.tax_amount,
               u.name AS customer_name
        FROM sales s LEFT JOIN users u ON u.id = s.customer_id
        WHERE s.id = $1`,
@@ -466,9 +599,9 @@ exports.getSalePayments = async (req, res) => {
 
     const sale = saleRows[0];
 
-    // Pagos
     const { rows: payments } = await db.query(
-      `SELECT sp.id, sp.amount, sp.payment_method, sp.notes, sp.payment_date, sp.created_at,
+      `SELECT sp.id, sp.amount, sp.payment_method, sp.notes,
+              sp.payment_date, sp.created_at,
               u.name AS recorded_by
        FROM sale_payments sp
        LEFT JOIN users u ON u.id = sp.created_by
@@ -537,7 +670,7 @@ exports.getOrderDetail = async (req, res) => {
 };
 
 // ============================================
-// ❌ CANCELAR PEDIDO (solo pendientes)
+// ❌ CANCELAR PEDIDO (solo pendientes / parciales)
 // ============================================
 exports.cancelOrder = async (req, res) => {
   const { id }      = req.params;
@@ -557,7 +690,10 @@ exports.cancelOrder = async (req, res) => {
     }
     const order = rows[0];
 
-    const isAdmin = req.user?.roles?.includes("admin") || req.user?.roles?.includes("gerente");
+    const isAdmin =
+      req.user?.roles?.includes("admin") ||
+      req.user?.roles?.includes("gerente");
+
     if (order.customer_id !== parseInt(user_id) && !isAdmin) {
       await client.query("ROLLBACK");
       return res.status(403).json({ success: false, message: "Sin permiso para cancelar este pedido" });
@@ -565,7 +701,10 @@ exports.cancelOrder = async (req, res) => {
 
     if (!["pending", "partial"].includes(order.payment_status)) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ success: false, message: "Solo se pueden cancelar pedidos pendientes o parciales" });
+      return res.status(400).json({
+        success: false,
+        message: "Solo se pueden cancelar pedidos pendientes o parciales",
+      });
     }
 
     // Restaurar stock
