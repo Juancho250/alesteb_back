@@ -11,10 +11,56 @@ const WOMPI_BASE =
    Genera la firma de integridad que exige Wompi
    chain = reference + amount_in_cents + currency + integrity_secret
    ───────────────────────────────────────────────────────────────────────── */
+// controllers/wompi.controller.js — SOLO cambia buildSignature y getSession
+
 function buildSignature(reference, amountInCents, currency = "COP") {
-  const chain = `${reference}${amountInCents}${currency}${process.env.WOMPI_INTEGRITY_SECRET}`;
+  // ✅ amountInCents DEBE ser string entero — exactamente igual al valor que
+  //    irá en la URL. Sin decimales, sin puntos.
+  const amountStr = String(Math.round(Number(amountInCents)));
+  const chain = `${reference}${amountStr}${currency}${process.env.WOMPI_INTEGRITY_SECRET}`;
   return crypto.createHash("sha256").update(chain).digest("hex");
 }
+
+const getSession = async (req, res) => {
+  try {
+    const { sale_id } = req.params;
+
+    const { rows } = await pool.query(
+      "SELECT id, sale_number, total, payment_status FROM sales WHERE id = $1",
+      [sale_id]
+    );
+
+    if (!rows.length)
+      return res.status(404).json({ success: false, message: "Venta no encontrada" });
+
+    const sale = rows[0];
+
+    if (sale.payment_status === "paid")
+      return res.status(400).json({ success: false, message: "Esta venta ya fue pagada" });
+
+    const reference     = sale.sale_number;
+    // ✅ Entero exacto — sin Math.round anidado sobre parseFloat que puede derivar
+    const amountInCents = Math.round(parseFloat(sale.total) * 100);
+    const currency      = "COP";
+    // ✅ Se pasa el mismo valor numérico; buildSignature lo convierte a string internamente
+    const signature     = buildSignature(reference, amountInCents, currency);
+
+    return res.json({
+      success: true,
+      data: {
+        public_key:      process.env.WOMPI_PUBLIC_KEY,
+        reference,
+        amount_in_cents: amountInCents,   // número entero
+        currency,
+        signature,
+        redirect_url: `${process.env.FRONTEND_URL}/order-success`,
+      },
+    });
+  } catch (err) {
+    console.error("[wompi] getSession error:", err);
+    return res.status(500).json({ success: false, message: "Error interno" });
+  }
+};
 
 /* ─────────────────────────────────────────────────────────────────────────
    GET /api/wompi/session/:sale_id
