@@ -202,25 +202,33 @@ exports.createOrder = async (req, res) => {
       if (!prodRows.length)
         throw new Error(`Producto ${item.product_id} no encontrado o inactivo`);
       const product = prodRows[0];
-
       let variantId  = null;
-      let unitPrice  = Number(product.sale_price);
       let unitCost   = Number(product.purchase_price ?? 0);
       let availStock = Number(product.stock);
       let variantSku = null;
 
+      // ✅ Usa el precio que mandó el frontend (ya tiene descuento aplicado).
+      //    Si no viene, cae al precio de DB como respaldo.
+      let unitPrice = item.unit_price != null
+        ? Number(item.unit_price)
+        : Number(product.sale_price);
+
       if (item.variant_id) {
         const { rows: varRows } = await client.query(
           `SELECT id, sku, sale_price, stock
-           FROM product_variants
-           WHERE id = $1 AND product_id = $2 AND is_active = true`,
+          FROM product_variants
+          WHERE id = $1 AND product_id = $2 AND is_active = true`,
           [item.variant_id, item.product_id]
         );
         if (!varRows.length)
           throw new Error(`Variante ${item.variant_id} no encontrada o inactiva`);
         const v = varRows[0];
         variantId = v.id; variantSku = v.sku; availStock = Number(v.stock);
-        if (v.sale_price != null) unitPrice = Number(v.sale_price);
+
+        // Solo pisa el precio de variante si el frontend NO mandó uno explícito
+        if (item.unit_price == null && v.sale_price != null) {
+          unitPrice = Number(v.sale_price);
+        }
       } else if (product.has_variants) {
         throw new Error(`"${product.name}" tiene variantes — selecciona una`);
       }
