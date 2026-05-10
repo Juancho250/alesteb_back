@@ -854,3 +854,80 @@ exports.updateProfile = async (req, res) => {
     client.release();
   }
 };
+
+// controllers/auth.controller.js
+// — Agregado al final del archivo existente —
+// Pega este método dentro del archivo auth.controller.js que ya tienes.
+
+// ============================================
+// 🔑 CAMBIAR CONTRASEÑA PROPIA
+// ============================================
+exports.changePassword = async (req, res) => {
+  const client = await db.connect();
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Contraseña actual y nueva son requeridas",
+        code: "MISSING_FIELDS",
+      });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "La nueva contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas y números",
+        code: "WEAK_PASSWORD",
+      });
+    }
+
+    const userRes = await client.query(
+      "SELECT password FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userRes.rowCount === 0) {
+      return res.status(404).json({ success: false, message: "Usuario no encontrado" });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, userRes.rows[0].password);
+    if (!valid) {
+      return res.status(401).json({
+        success: false,
+        message: "La contraseña actual es incorrecta",
+        code: "INVALID_CURRENT_PASSWORD",
+      });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    await client.query(
+      "UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2",
+      [hashed, userId]
+    );
+
+    // Revocar todos los refresh tokens para forzar re-login en otros dispositivos
+    await client.query(
+      "UPDATE refresh_tokens SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND revoked = false",
+      [userId]
+    );
+
+    console.log(`[CHANGE PASSWORD] Usuario ID: ${userId}`);
+
+    return res.json({
+      success: true,
+      message: "Contraseña actualizada. Por seguridad, inicia sesión de nuevo en otros dispositivos.",
+    });
+  } catch (error) {
+    console.error("[CHANGE PASSWORD ERROR]", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error al cambiar contraseña",
+      code: "SERVER_ERROR",
+    });
+  } finally {
+    client.release();
+  }
+};

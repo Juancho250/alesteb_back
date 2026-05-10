@@ -1,42 +1,28 @@
-const express = require('express');
-const router = express.Router();
-const usersController = require('../controllers/users.controller'); 
+// routes/users.routes.js
+// Cada admin gestiona únicamente sus propios usuarios.
+// El superadmin puede operar sobre todos (bypass en middleware).
+const express      = require("express");
+const router       = express.Router();
+const usersCtrl    = require("../controllers/users.controller");
+const { auth, requireAdmin } = require("../middleware/auth.middleware");
 
-// Middleware de autenticación y roles (SIN requirePermission)
-const { auth, requireAdmin } = require('../middleware/auth.middleware');
+// Todas las rutas requieren autenticación como mínimo admin
+router.use(auth, requireAdmin);
 
-// ============================================
-// 👥 RUTAS DE GESTIÓN DE USUARIOS
-// ============================================
+// ─── CRUD ────────────────────────────────────────────────────
+// GET    /api/users          → Lista usuarios del admin (o todos si superadmin)
+router.get("/", usersCtrl.getUsers);
 
-/**
- * @route   GET /api/users
- * @desc    Obtener todos los usuarios con sus roles
- * @access  Private (Solo Admin)
- */
-router.get('/', auth, requireAdmin, usersController.getUsers);
+// POST   /api/users          → Crear usuario vinculado al admin autenticado
+router.post("/", usersCtrl.createUser);
 
-/**
- * @route   POST /api/users
- * @desc    Crear nuevo usuario
- * @access  Private (Solo Admin)
- * @body    { email, password, name, cedula, phone, role_id }
- */
-router.post('/', auth, requireAdmin, usersController.createUser);
+// PUT    /api/users/:id      → Actualizar datos del usuario (solo propios)
+router.put("/:id", usersCtrl.updateUser);
 
-/**
- * @route   PUT /api/users/:id
- * @desc    Actualizar usuario
- * @access  Private (Solo Admin)
- * @body    { name, email, phone, cedula, city, address, role_id, password? }
- */
-router.put('/:id', auth, requireAdmin, usersController.updateUser);
+// PATCH  /api/users/:id/toggle → Activar / desactivar (solo propios)
+router.patch("/:id/toggle", usersCtrl.toggleUserStatus);
 
-/**
- * @route   DELETE /api/users/:id
- * @desc    Eliminar usuario
- * @access  Private (Solo Admin)
- */
-router.delete('/:id', auth, requireAdmin, usersController.deleteUser);
+// DELETE /api/users/:id      → Eliminar usuario (solo propios)
+router.delete("/:id", usersCtrl.deleteUser);
 
 module.exports = router;
