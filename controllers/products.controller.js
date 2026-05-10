@@ -1,13 +1,12 @@
-// src/controllers/products.controller.js
+// controllers/products.controller.js
 const db         = require("../config/db");
 const cloudinary = require("../config/cloudinary");
-const { emitDataUpdate }  = require("../config/socket");
-const { scopeByOwner, assertOwnership } = require("../middleware/adminScope");
+const { emitDataUpdate }              = require("../config/socket");
+const { assertOwnership }             = require("../middleware/adminScope");
 
 // ─────────────────────────────────────────────
 // Helpers internos
 // ─────────────────────────────────────────────
-
 const fetchFullProduct = async (id) => {
   const result = await db.query(`
     SELECT
@@ -75,13 +74,11 @@ const validateProductData = (data, isUpdate = false) => {
 };
 
 // ─────────────────────────────────────────────
-// GET /products  — lista paginada
+// GET /products
 // ─────────────────────────────────────────────
 exports.getAll = async (req, res) => {
   try {
-    const user         = req.user;
-    const isSuperAdmin = req.isSuperAdmin ?? user?.roles?.includes("superadmin") ?? false;
-    const isAuthed     = !!user;
+    const { isSuperAdmin, adminId } = req;
 
     const { categoria, search, min_price, max_price } = req.query;
     const page   = Math.max(1, parseInt(req.query.page)  || 1);
@@ -89,18 +86,14 @@ exports.getAll = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const queryParams = [];
-    let   pi          = 1;
+    let pi = 1;
 
-    // ── Scope de tenant ──────────────────────────────────────────────────────
     let tenantClause = "";
-    if (isAuthed && !isSuperAdmin) {
-      // scopeByOwner devuelve params=[adminId], pero aquí construimos manualmente
-      // porque tenemos un pi dinámico
+    if (!isSuperAdmin) {
       tenantClause = `AND p.owner_admin_id = $${pi++}`;
-      queryParams.push(user.id);
+      queryParams.push(adminId);
     }
 
-    // ── Filtros adicionales ──────────────────────────────────────────────────
     let filtersClause = "";
     if (categoria) {
       filtersClause += ` AND c.slug = $${pi++}`;
@@ -167,19 +160,18 @@ exports.getAll = async (req, res) => {
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
-    // ── Count (mismos filtros, sin LIMIT/OFFSET) ─────────────────────────────
+    // Count
     const countParams = [];
-    let   ci          = 1;
-    let   countTenant = "";
-
-    if (isAuthed && !isSuperAdmin) {
-      countTenant = `AND p.owner_admin_id = $${ci++}`;
-      countParams.push(user.id);
-    }
-
+    let ci = 1;
+    let countTenant  = "";
     let countFilters = "";
-    if (categoria) { countFilters += ` AND c.slug = $${ci++}`;        countParams.push(categoria); }
-    if (search)    {
+
+    if (!isSuperAdmin) {
+      countTenant = `AND p.owner_admin_id = $${ci++}`;
+      countParams.push(adminId);
+    }
+    if (categoria) { countFilters += ` AND c.slug = $${ci++}`; countParams.push(categoria); }
+    if (search) {
       countFilters += ` AND (p.name ILIKE $${ci} OR p.description ILIKE $${ci})`;
       countParams.push(`%${search}%`); ci++;
     }
@@ -226,13 +218,12 @@ exports.getAll = async (req, res) => {
 exports.getById = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!id || isNaN(id)) return res.status(400).json({ success: false, message: "ID inválido" });
+    if (!id || isNaN(id))
+      return res.status(400).json({ success: false, message: "ID inválido" });
 
-    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
-    const isAuthed     = !!req.user;
-
-    const ownerClause = (isAuthed && !isSuperAdmin) ? "AND p.owner_admin_id = $2" : "";
-    const queryParams = (isAuthed && !isSuperAdmin) ? [id, req.user.id] : [id];
+    const { isSuperAdmin, adminId } = req;
+    const ownerClause = isSuperAdmin ? "" : "AND p.owner_admin_id = $2";
+    const queryParams = isSuperAdmin ? [id] : [id, adminId];
 
     const result = await db.query(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug,
@@ -336,9 +327,8 @@ exports.create = async (req, res) => {
     if (images.length === 0 && !(has_variants === "true" || has_variants === true))
       return res.status(400).json({ success: false, message: "Sube al menos una imagen" });
 
-    // superadmin crea sin tenant (owner_admin_id = null)
-    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
-    const ownerAdminId = isSuperAdmin ? null : req.user.id;
+    const { isSuperAdmin, adminId } = req;
+    const ownerAdminId = isSuperAdmin ? null : adminId;
 
     await client.query("BEGIN");
 
@@ -403,11 +393,10 @@ exports.update = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
+    const { isSuperAdmin, adminId } = req;
 
-    // Verificar existencia y propiedad en un solo query
     if (!isSuperAdmin) {
-      const owned = await assertOwnership(client, "products", id, req.user.id, "owner_admin_id");
+      const owned = await assertOwnership(client, "products", id, adminId, "owner_admin_id");
       if (!owned) {
         await client.query("ROLLBACK");
         const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
@@ -461,7 +450,6 @@ exports.update = async (req, res) => {
        description?.trim() ?? null, id]
     );
 
-    // Eliminar imágenes marcadas y destruirlas en Cloudinary
     for (const img of currentImages.filter(
       img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id)
     )) {
@@ -486,7 +474,6 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Garantizar imagen principal
     const hasMain = await client.query(
       "SELECT id FROM product_images WHERE product_id = $1 AND is_main = true LIMIT 1", [id]
     );
@@ -530,10 +517,10 @@ exports.remove = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
+    const { isSuperAdmin, adminId } = req;
 
     if (!isSuperAdmin) {
-      const owned = await assertOwnership(client, "products", id, req.user.id, "owner_admin_id");
+      const owned = await assertOwnership(client, "products", id, adminId, "owner_admin_id");
       if (!owned) {
         await client.query("ROLLBACK");
         const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
