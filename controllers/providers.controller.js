@@ -1,5 +1,30 @@
 const db = require("../config/db");
 
+// ── Helper tenant ─────────────────────────────────────────────────────────────
+// superadmin → sin filtro   admin/gerente → solo los suyos
+const isSA = (req) => req.user?.roles?.includes("superadmin");
+
+// Devuelve { clause, params, nextIdx }
+// startIdx = primer $N disponible DESPUÉS de los params ya usados
+const tenantClause = (req, alias, startIdx = 1) => {
+  if (isSA(req)) return { clause: "", params: [], nextIdx: startIdx };
+  return {
+    clause:  `AND ${alias}.owner_admin_id = $${startIdx}`,
+    params:  [req.user.id],
+    nextIdx: startIdx + 1,
+  };
+};
+
+// Versión para queries donde el alias ES la tabla (sin punto)
+const tenantClauseCol = (req, col, startIdx = 1) => {
+  if (isSA(req)) return { clause: "", params: [], nextIdx: startIdx };
+  return {
+    clause:  `AND ${col} = $${startIdx}`,
+    params:  [req.user.id],
+    nextIdx: startIdx + 1,
+  };
+};
+
 // ============================================================
 // OBTENER TODOS LOS PROVEEDORES
 // ============================================================
@@ -7,20 +32,28 @@ exports.getAll = async (req, res) => {
   const { is_active, category } = req.query;
 
   try {
-    let query = "SELECT * FROM v_provider_balance WHERE 1=1";
-    const params = [];
-    let idx = 1;
+    // v_provider_balance no tiene alias de tabla, usamos la columna directa
+    const tc = tenantClauseCol(req, "owner_admin_id", 1);
+    let idx = tc.nextIdx;
+
+    let query = `
+      SELECT vpb.*, u.name AS owner_admin_name
+      FROM v_provider_balance vpb
+      LEFT JOIN users u ON u.id = vpb.owner_admin_id
+      WHERE 1=1 ${tc.clause}
+    `;
+    const params = [...tc.params];
 
     if (is_active !== undefined) {
-      query += ` AND is_active = $${idx++}`;
+      query += ` AND vpb.is_active = $${idx++}`;
       params.push(is_active === "true");
     }
     if (category) {
-      query += ` AND category = $${idx++}`;
+      query += ` AND vpb.category = $${idx++}`;
       params.push(category);
     }
 
-    query += " ORDER BY name ASC";
+    query += " ORDER BY vpb.name ASC";
 
     const result = await db.query(query, params);
     res.json(result.rows);
@@ -32,19 +65,27 @@ exports.getAll = async (req, res) => {
 
 // ============================================================
 // OBTENER PROVEEDOR POR ID
-// → Usa v_provider_balance (que ya incluye todos los campos
-//   después del fix de migración)
 // ============================================================
 exports.getById = async (req, res) => {
   const { id } = req.params;
 
   try {
+    const tc = tenantClauseCol(req, "owner_admin_id", 2);
+
     const result = await db.query(
-      "SELECT * FROM v_provider_balance WHERE id = $1",
-      [id]
+      `SELECT vpb.*, u.name AS owner_admin_name
+       FROM v_provider_balance vpb
+       LEFT JOIN users u ON u.id = vpb.owner_admin_id
+       WHERE vpb.id = $1 ${tc.clause}`,
+      [id, ...tc.params]
     );
 
     if (result.rowCount === 0) {
+      // Distinguimos 404 de 403
+      if (!isSA(req)) {
+        const exists = await db.query("SELECT id FROM providers WHERE id = $1", [id]);
+        if (exists.rowCount) return res.status(403).json({ message: "No autorizado" });
+      }
       return res.status(404).json({ message: "Proveedor no encontrado" });
     }
 
@@ -68,18 +109,22 @@ exports.create = async (req, res) => {
     return res.status(400).json({ message: "El nombre del proveedor es obligatorio." });
   }
 
+  // superadmin crea globalmente (null); admin lo marca como suyo
+  const ownerAdminId = isSA(req) ? null : req.user.id;
+
   try {
     const result = await db.query(
       `INSERT INTO providers
          (name, category, phone, email, address, contact_person, tax_id,
-          credit_limit, payment_terms_days, lead_time_days, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          credit_limit, payment_terms_days, lead_time_days, notes, owner_admin_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
       [
         name.trim(), category, phone || null, email || null,
         address || null, contact_person || null, tax_id || null,
         credit_limit || 0, payment_terms_days || 30,
         lead_time_days || 7, notes || null,
+        ownerAdminId,
       ]
     );
 
@@ -109,6 +154,11 @@ exports.update = async (req, res) => {
   }
 
   try {
+    // Verificar pertenencia antes de modificar
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado para modificar este proveedor" });
+
     const result = await db.query(
       `UPDATE providers SET
          name               = $1,
@@ -137,10 +187,6 @@ exports.update = async (req, res) => {
       ]
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Proveedor no encontrado" });
-    }
-
     res.json({
       message: "Proveedor actualizado exitosamente",
       provider: result.rows[0],
@@ -158,6 +204,10 @@ exports.toggleActive = async (req, res) => {
   const { id } = req.params;
 
   try {
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
+
     const result = await db.query(
       `UPDATE providers
          SET is_active = NOT is_active, updated_at = NOW()
@@ -165,10 +215,6 @@ exports.toggleActive = async (req, res) => {
        RETURNING id, name, is_active`,
       [id]
     );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Proveedor no encontrado" });
-    }
 
     const { name, is_active } = result.rows[0];
     res.json({
@@ -188,6 +234,10 @@ exports.remove = async (req, res) => {
   const { id } = req.params;
 
   try {
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado para eliminar este proveedor" });
+
     const ordersCheck = await db.query(
       "SELECT COUNT(*) AS count FROM purchase_orders WHERE provider_id = $1",
       [id]
@@ -195,20 +245,11 @@ exports.remove = async (req, res) => {
 
     if (parseInt(ordersCheck.rows[0].count) > 0) {
       return res.status(400).json({
-        message:
-          "No se puede eliminar: el proveedor tiene órdenes de compra asociadas. Considere desactivarlo.",
+        message: "No se puede eliminar: el proveedor tiene órdenes de compra asociadas. Considere desactivarlo.",
       });
     }
 
-    const result = await db.query(
-      "DELETE FROM providers WHERE id = $1 RETURNING *",
-      [id]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Proveedor no encontrado" });
-    }
-
+    await db.query("DELETE FROM providers WHERE id = $1", [id]);
     res.json({ message: "Proveedor eliminado exitosamente" });
   } catch (error) {
     console.error("DELETE PROVIDER ERROR:", error);
@@ -231,23 +272,29 @@ exports.registerPayment = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Verificar proveedor y saldo actual
+    // Verificar proveedor + pertenencia + saldo (con FOR UPDATE para concurrencia)
+    const ownerClause = isSA(req) ? "" : "AND owner_admin_id = $2";
+    const checkParams = isSA(req) ? [provider_id] : [provider_id, req.user.id];
+
     const providerRes = await client.query(
-      "SELECT id, name, balance FROM providers WHERE id = $1 FOR UPDATE",
-      [provider_id]
+      `SELECT id, name, balance FROM providers WHERE id = $1 ${ownerClause} FOR UPDATE`,
+      checkParams
     );
 
     if (providerRes.rowCount === 0) {
-      throw { status: 404, message: "Proveedor no encontrado" };
+      // Distinguir 404 de 403
+      const exists = await client.query("SELECT id FROM providers WHERE id = $1", [provider_id]);
+      throw {
+        status:  exists.rowCount ? 403 : 404,
+        message: exists.rowCount ? "No autorizado para operar con este proveedor" : "Proveedor no encontrado",
+      };
     }
 
     const currentBalance = parseFloat(providerRes.rows[0].balance);
-
     if (parseFloat(amount) > currentBalance) {
       throw { status: 400, message: "El monto excede el saldo pendiente del proveedor" };
     }
 
-    // Registrar pago
     await client.query(
       `INSERT INTO provider_payments
          (provider_id, purchase_order_id, amount, payment_method,
@@ -259,13 +306,11 @@ exports.registerPayment = async (req, res) => {
       ]
     );
 
-    // Descontar saldo
     await client.query(
       "UPDATE providers SET balance = balance - $1, updated_at = NOW() WHERE id = $2",
       [amount, provider_id]
     );
 
-    // Actualizar estado de pago de la OC si fue especificada
     if (purchase_order_id) {
       const orderRes = await client.query(
         "SELECT total_cost FROM purchase_orders WHERE id = $1",
@@ -274,14 +319,12 @@ exports.registerPayment = async (req, res) => {
 
       if (orderRes.rowCount > 0) {
         const totalCost = parseFloat(orderRes.rows[0].total_cost);
-        const paidRes = await client.query(
+        const paidRes   = await client.query(
           "SELECT COALESCE(SUM(amount),0) AS total_paid FROM provider_payments WHERE purchase_order_id = $1",
           [purchase_order_id]
         );
-        const totalPaid = parseFloat(paidRes.rows[0].total_paid);
-
-        const newStatus =
-          totalPaid >= totalCost ? "paid" : totalPaid > 0 ? "partial" : "pending";
+        const totalPaid  = parseFloat(paidRes.rows[0].total_paid);
+        const newStatus  = totalPaid >= totalCost ? "paid" : totalPaid > 0 ? "partial" : "pending";
 
         await client.query(
           "UPDATE purchase_orders SET payment_status = $1 WHERE id = $2",
@@ -293,14 +336,13 @@ exports.registerPayment = async (req, res) => {
     await client.query("COMMIT");
 
     res.json({
-      message: "Pago registrado exitosamente",
+      message:     "Pago registrado exitosamente",
       new_balance: currentBalance - parseFloat(amount),
     });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("REGISTER PAYMENT ERROR:", error);
-    const status = error.status || 500;
-    res.status(status).json({ message: error.message || "Error al registrar pago" });
+    res.status(error.status || 500).json({ message: error.message || "Error al registrar pago" });
   } finally {
     client.release();
   }
@@ -314,6 +356,11 @@ exports.getPaymentHistory = async (req, res) => {
   const { start_date, end_date } = req.query;
 
   try {
+    // Verificar acceso al proveedor primero
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
+
     let query = `
       SELECT
         pp.*,
@@ -348,6 +395,12 @@ exports.getPurchaseHistory = async (req, res) => {
   const { start_date, end_date, status } = req.query;
 
   try {
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
+
+    // v_purchase_orders_summary hereda del proveedor — filtrar por provider_id ya es suficiente
+    // porque el proveedor ya fue validado arriba
     let query = `
       SELECT * FROM v_purchase_orders_summary
       WHERE provider_id = $1
@@ -380,6 +433,9 @@ exports.getPriceComparison = async (req, res) => {
   }
 
   try {
+    // Solo muestra proveedores del propio admin (o todos si es superadmin)
+    const tc  = tenantClause(req, "prov", 2);
+
     const result = await db.query(
       `SELECT
          prov.id              AS provider_id,
@@ -398,10 +454,11 @@ exports.getPriceComparison = async (req, res) => {
          ON po.provider_id = prov.id AND po.status != 'cancelled'
        JOIN purchase_order_items poi
          ON poi.purchase_order_id = po.id AND poi.product_id = $1
+       WHERE 1=1 ${tc.clause}
        GROUP BY prov.id, prov.name, prov.category, prov.reliability_score,
                 prov.lead_time_days, poi.unit_cost, po.order_date
        ORDER BY prov.name, po.order_date DESC`,
-      [product_id]
+      [product_id, ...tc.params]
     );
 
     res.json(result.rows);
@@ -413,15 +470,16 @@ exports.getPriceComparison = async (req, res) => {
 
 // ============================================================
 // ESTADÍSTICAS DEL PROVEEDOR
-// Bug fix: queries separadas para evitar multiplicación cartesiana
-// (órdenes × pagos en un solo JOIN infla los montos)
 // ============================================================
 exports.getStats = async (req, res) => {
   const { id } = req.params;
 
   try {
+    const owns = await _checkOwnership(req, id);
+    if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
+    if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
+
     const [ordersRes, paymentsRes, topProductsRes] = await Promise.all([
-      // Órdenes: sin JOIN a pagos para evitar multiplicación
       db.query(
         `SELECT
            COUNT(DISTINCT po.id)                                              AS total_orders,
@@ -433,8 +491,6 @@ exports.getStats = async (req, res) => {
          WHERE po.provider_id = $1`,
         [id]
       ),
-
-      // Pagos: query independiente
       db.query(
         `SELECT
            COALESCE(SUM(amount), 0) AS total_paid,
@@ -443,15 +499,13 @@ exports.getStats = async (req, res) => {
          WHERE provider_id = $1`,
         [id]
       ),
-
-      // Top productos
       db.query(
         `SELECT
            p.id, p.name, p.sku,
            SUM(poi.quantity)  AS total_quantity,
            AVG(poi.unit_cost) AS avg_cost
          FROM purchase_order_items poi
-         JOIN products p        ON p.id  = poi.product_id
+         JOIN products p         ON p.id  = poi.product_id
          JOIN purchase_orders po ON po.id = poi.purchase_order_id
          WHERE po.provider_id = $1 AND po.status != 'cancelled'
          GROUP BY p.id, p.name, p.sku
@@ -464,8 +518,8 @@ exports.getStats = async (req, res) => {
     res.json({
       summary: {
         ...ordersRes.rows[0],
-        total_paid:       paymentsRes.rows[0].total_paid,
-        current_balance:  paymentsRes.rows[0].current_balance,
+        total_paid:      paymentsRes.rows[0].total_paid,
+        current_balance: paymentsRes.rows[0].current_balance,
       },
       top_products: topProductsRes.rows,
     });
@@ -473,6 +527,25 @@ exports.getStats = async (req, res) => {
     console.error("GET PROVIDER STATS ERROR:", error);
     res.status(500).json({ message: "Error al obtener estadísticas" });
   }
+};
+
+// ============================================================
+// HELPER PRIVADO — verifica existencia y pertenencia
+// Retorna: "ok" | "not_found" | "forbidden"
+// ============================================================
+const _checkOwnership = async (req, id) => {
+  if (isSA(req)) {
+    const r = await db.query("SELECT id FROM providers WHERE id = $1", [id]);
+    return r.rowCount ? "ok" : "not_found";
+  }
+
+  const r = await db.query(
+    "SELECT id, owner_admin_id FROM providers WHERE id = $1",
+    [id]
+  );
+  if (!r.rowCount) return "not_found";
+  if (String(r.rows[0].owner_admin_id) !== String(req.user.id)) return "forbidden";
+  return "ok";
 };
 
 module.exports = exports;

@@ -1,22 +1,44 @@
 // src/controllers/products.controller.js
-const db = require("../config/db");
-const cloudinary = require("../config/cloudinary");
+const db          = require("../config/db");
+const cloudinary  = require("../config/cloudinary");
 const { emitDataUpdate } = require("../config/socket");
 
+// ── Helper: retorna el filtro de tenant para WHERE ────────────────────────────
+// superadmin  → {}            (sin restricción)
+// admin/otros → { owner_admin_id: req.user.id }
+const tenantWhere = (req) => {
+  if (req.user?.roles?.includes("superadmin")) return { clause: "", params: [], nextIndex: (n) => n };
+  return {
+    clause: (startIdx) => `AND p.owner_admin_id = $${startIdx}`,
+    params: [req.user.id],
+    nextIndex: (n) => n + 1,
+  };
+};
+
+// Versión simple para queries sin alias "p"
+const tenantWhereSimple = (req, alias = "owner_admin_id") => {
+  if (req.user?.roles?.includes("superadmin")) return { clause: "", params: [] };
+  return {
+    clause: `AND ${alias} = $`,
+    params: [req.user.id],
+  };
+};
+
 // ── Helper: construye un producto completo para emitir por socket ─────────────
-// Mismo shape que devuelve getAll → el frontend puede usarlo directamente
 const fetchFullProduct = async (id) => {
   const result = await db.query(`
     SELECT
       p.*,
-      c.name AS category_name,
-      c.slug AS category_slug,
+      c.name  AS category_name,
+      c.slug  AS category_slug,
+      u.name  AS owner_admin_name,
       (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
       best_discount.type  AS discount_type,
       best_discount.value AS discount_value,
       COALESCE(best_discount.final_price, p.sale_price) AS final_price
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN users      u ON u.id = p.owner_admin_id
     LEFT JOIN LATERAL (
       SELECT d.type, d.value,
         CASE
@@ -26,8 +48,8 @@ const fetchFullProduct = async (id) => {
         END AS final_price
       FROM discount_targets dt
       JOIN discounts d ON d.id = dt.discount_id
-      WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
-         OR  (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+      WHERE ((dt.target_type = 'product'  AND dt.target_id = p.id::text)
+          OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
         AND d.active = true AND NOW() BETWEEN d.starts_at AND d.ends_at
       ORDER BY final_price ASC LIMIT 1
     ) best_discount ON true
@@ -35,7 +57,6 @@ const fetchFullProduct = async (id) => {
   `, [id]);
 
   if (!result.rows.length) return null;
-
   return {
     ...result.rows[0],
     has_variants: result.rows[0].has_variants ?? false,
@@ -80,17 +101,49 @@ exports.getAll = async (req, res) => {
     const limit  = parseInt(req.query.limit) || 12;
     const offset = (page - 1) * limit;
 
-    let queryText = `
+    const isSuperAdmin = req.user?.roles?.includes("superadmin");
+    const queryParams  = [];
+    let   pi           = 1; // índice de parámetro
+
+    // Cláusula de tenant
+    let tenantClause = "";
+    if (!isSuperAdmin) {
+      tenantClause = `AND p.owner_admin_id = $${pi++}`;
+      queryParams.push(req.user.id);
+    }
+
+    let filtersClause = "";
+    if (categoria) {
+      filtersClause += ` AND c.slug = $${pi++}`;
+      queryParams.push(categoria);
+    }
+    if (search) {
+      filtersClause += ` AND (p.name ILIKE $${pi} OR p.description ILIKE $${pi})`;
+      queryParams.push(`%${search}%`);
+      pi++;
+    }
+    if (min_price) {
+      filtersClause += ` AND p.sale_price >= $${pi++}`;
+      queryParams.push(Number(min_price));
+    }
+    if (max_price) {
+      filtersClause += ` AND p.sale_price <= $${pi++}`;
+      queryParams.push(Number(max_price));
+    }
+
+    const queryText = `
       SELECT
         p.*,
-        c.name AS category_name,
-        c.slug AS category_slug,
+        c.name  AS category_name,
+        c.slug  AS category_slug,
+        u.name  AS owner_admin_name,
         (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         best_discount.type  AS discount_type,
         best_discount.value AS discount_value,
         COALESCE(best_discount.final_price, p.sale_price) AS final_price
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN users      u ON u.id = p.owner_admin_id
       LEFT JOIN LATERAL (
         SELECT d.type, d.value,
           CASE
@@ -100,52 +153,29 @@ exports.getAll = async (req, res) => {
           END AS final_price
         FROM discount_targets dt
         JOIN discounts d ON d.id = dt.discount_id
-        WHERE ((dt.target_type = 'product' AND dt.target_id = p.id::text)
-           OR  (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
+        WHERE ((dt.target_type = 'product'  AND dt.target_id = p.id::text)
+            OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
           AND d.active = true AND NOW() BETWEEN d.starts_at AND d.ends_at
         ORDER BY final_price ASC LIMIT 1
       ) best_discount ON true
       WHERE p.is_active = true
+        ${tenantClause}
+        ${filtersClause}
+      ORDER BY p.created_at DESC
+      LIMIT $${pi} OFFSET $${pi + 1}
     `;
-
-    const queryParams = [];
-    let paramIndex = 1;
-
-    if (categoria) {
-      queryText += ` AND c.slug = $${paramIndex++}`;
-      queryParams.push(categoria);
-    }
-    if (search) {
-      queryText += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-    if (min_price) {
-      queryText += ` AND p.sale_price >= $${paramIndex++}`;
-      queryParams.push(Number(min_price));
-    }
-    if (max_price) {
-      queryText += ` AND p.sale_price <= $${paramIndex++}`;
-      queryParams.push(Number(max_price));
-    }
-
-    queryText += ` ORDER BY p.created_at DESC`;
-    queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     queryParams.push(limit, offset);
 
-    // Count con los mismos filtros
-    const countParams = [];
-    let countWhere = "WHERE p.is_active = true";
-    let ci = 1;
+    // Count — mismos filtros, sin LIMIT/OFFSET
+    const countParams = isSuperAdmin ? [] : [req.user.id];
+    let   ci          = isSuperAdmin ? 1 : 2;
+    const countTenant = isSuperAdmin ? "" : `AND p.owner_admin_id = $1`;
+    let   countFilters = "";
 
-    if (categoria) {
-      countWhere += ` AND c.slug = $${ci++}`;
-      countParams.push(categoria);
-    }
-    if (search) {
-      countWhere += ` AND (p.name ILIKE $${ci} OR p.description ILIKE $${ci})`;
-      countParams.push(`%${search}%`);
-      ci++;
+    if (categoria) { countFilters += ` AND c.slug = $${ci++}`;  countParams.push(categoria); }
+    if (search)    {
+      countFilters += ` AND (p.name ILIKE $${ci} OR p.description ILIKE $${ci})`;
+      countParams.push(`%${search}%`); ci++;
     }
 
     const [result, countResult] = await Promise.all([
@@ -153,7 +183,7 @@ exports.getAll = async (req, res) => {
       db.query(
         `SELECT COUNT(*) FROM products p
          LEFT JOIN categories c ON p.category_id = c.id
-         ${countWhere}`,
+         WHERE p.is_active = true ${countTenant} ${countFilters}`,
         countParams
       ),
     ]);
@@ -186,15 +216,22 @@ exports.getAll = async (req, res) => {
 
 // ============================================
 // 🔍 OBTENER PRODUCTO POR ID
+// Verifica pertenencia antes de devolver
 // ============================================
 exports.getById = async (req, res) => {
   try {
     const { id } = req.params;
     if (!id || isNaN(id)) return res.status(400).json({ success: false, message: "ID inválido" });
 
+    const isSuperAdmin = req.user?.roles?.includes("superadmin");
+
+    const ownerClause = isSuperAdmin ? "" : "AND p.owner_admin_id = $2";
+    const queryParams = isSuperAdmin ? [id] : [id, req.user.id];
+
     const result = await db.query(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug,
-        d.name AS discount_name, d.type AS discount_type, d.value AS discount_value,
+        u.name  AS owner_admin_name,
+        d.name  AS discount_name, d.type AS discount_type, d.value AS discount_value,
         CASE
           WHEN d.type = 'percentage' THEN ROUND((p.sale_price - (p.sale_price * (d.value/100)))::numeric,2)
           WHEN d.type = 'fixed'      THEN p.sale_price - d.value
@@ -202,13 +239,15 @@ exports.getById = async (req, res) => {
         END AS final_price
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN users      u ON u.id = p.owner_admin_id
       LEFT JOIN discount_targets dt ON (
         (dt.target_type='product'  AND dt.target_id=p.id::text) OR
         (dt.target_type='category' AND dt.target_id=p.category_id::text)
       )
       LEFT JOIN discounts d ON dt.discount_id=d.id AND d.active=true AND NOW() BETWEEN d.starts_at AND d.ends_at
-      WHERE p.id = $1 LIMIT 1
-    `, [id]);
+      WHERE p.id = $1 ${ownerClause}
+      LIMIT 1
+    `, queryParams);
 
     if (!result.rows.length) return res.status(404).json({ success: false, message: "Producto no encontrado" });
 
@@ -232,16 +271,14 @@ exports.getById = async (req, res) => {
             ) AS attributes
           FROM product_variants pv
           LEFT JOIN variant_attribute_values vav ON vav.variant_id=pv.id
-          LEFT JOIN attribute_values av  ON av.id=vav.attribute_value_id
-          LEFT JOIN attribute_types  at  ON at.id=av.attribute_type_id
+          LEFT JOIN attribute_values av ON av.id=vav.attribute_value_id
+          LEFT JOIN attribute_types  at ON at.id=av.attribute_type_id
           WHERE pv.product_id=$1
           GROUP BY pv.id ORDER BY pv.id
         `, [id]);
         variants = vResult.rows;
       }
-    } catch (e) {
-      console.warn("[VARIANTS] Tabla no disponible aún:", e.message);
-    }
+    } catch (e) { console.warn("[VARIANTS]", e.message); }
 
     let bundleItems = [];
     try {
@@ -256,9 +293,7 @@ exports.getById = async (req, res) => {
         `, [id]);
         bundleItems = bResult.rows;
       }
-    } catch (e) {
-      console.warn("[BUNDLE ITEMS] Tabla no disponible aún:", e.message);
-    }
+    } catch (e) { console.warn("[BUNDLE ITEMS]", e.message); }
 
     res.json({
       success: true,
@@ -272,8 +307,7 @@ exports.getById = async (req, res) => {
 
 // ============================================
 // ➕ CREAR PRODUCTO
-// Patrón Chat: emitimos el producto completo →
-// el frontend parchea state sin hacer HTTP
+// Inyecta owner_admin_id del token
 // ============================================
 exports.create = async (req, res) => {
   const client = await db.connect();
@@ -288,20 +322,22 @@ exports.create = async (req, res) => {
     if (images.length === 0 && !(has_variants === "true" || has_variants === true))
       return res.status(400).json({ success: false, message: "Sube al menos una imagen" });
 
+    // superadmin crea sin owner (visible para todos); admin crea con su id
+    const ownerAdminId = req.user?.roles?.includes("superadmin") ? null : req.user.id;
+
     await client.query("BEGIN");
 
     const productResult = await client.query(
-      `INSERT INTO products (name, sale_price, stock, category_id, description)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [name.trim(), Number(sale_price), Number(stock), category_id, description?.trim() || null]
+      `INSERT INTO products (name, sale_price, stock, category_id, description, owner_admin_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [name.trim(), Number(sale_price), Number(stock), category_id, description?.trim() || null,
+       ownerAdminId, req.user.id]
     );
     const productId = productResult.rows[0].id;
 
-    try {
-      if (has_variants === "true" || has_variants === true) {
-        await client.query(`UPDATE products SET has_variants = true WHERE id = $1`, [productId]);
-      }
-    } catch (e) { /* columna aún no existe */ }
+    if (has_variants === "true" || has_variants === true) {
+      await client.query(`UPDATE products SET has_variants = true WHERE id = $1`, [productId]);
+    }
 
     for (let i = 0; i < images.length; i++) {
       await client.query(
@@ -312,15 +348,11 @@ exports.create = async (req, res) => {
 
     await client.query("COMMIT");
 
-    // ── Emitir producto COMPLETO (patrón Chat) ──────────────────────────────
-    // fetchFullProduct hace la query con joins → el frontend recibe todo
-    // el objeto listo y NO necesita hacer un GET adicional
     try {
       const fullProduct = await fetchFullProduct(productId);
       emitDataUpdate("products", "created", { id: productId, product: fullProduct });
     } catch (emitErr) {
-      // Si falla la query de socket, no bloqueamos la respuesta HTTP
-      console.warn("[Socket] No se pudo emitir producto completo:", emitErr.message);
+      console.warn("[Socket] emit fallback:", emitErr.message);
       emitDataUpdate("products", "created", { id: productId, product: null });
     }
 
@@ -335,7 +367,7 @@ exports.create = async (req, res) => {
 
 // ============================================
 // ✏️ ACTUALIZAR PRODUCTO
-// Mismo patrón: emitimos el producto completo
+// Verifica pertenencia antes de modificar
 // ============================================
 exports.update = async (req, res) => {
   const client = await db.connect();
@@ -352,10 +384,22 @@ exports.update = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const productExists = await client.query("SELECT id FROM products WHERE id=$1", [id]);
+    // ── Verificar existencia + pertenencia ──────────────────────────────────
+    const isSuperAdmin = req.user?.roles?.includes("superadmin");
+    const ownerClause  = isSuperAdmin ? "" : "AND owner_admin_id = $2";
+    const checkParams  = isSuperAdmin ? [id] : [id, req.user.id];
+
+    const productExists = await client.query(
+      `SELECT id FROM products WHERE id = $1 ${ownerClause}`,
+      checkParams
+    );
     if (!productExists.rowCount) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: "Producto no encontrado" });
+      // Distinguimos 404 (no existe) de 403 (existe pero no es tuyo)
+      const exists = await client.query("SELECT id FROM products WHERE id = $1", [id]);
+      return exists.rowCount
+        ? res.status(403).json({ success: false, message: "No autorizado para modificar este producto" })
+        : res.status(404).json({ success: false, message: "Producto no encontrado" });
     }
 
     const currentImages = (await client.query("SELECT id, url FROM product_images WHERE product_id=$1", [id])).rows;
@@ -365,26 +409,34 @@ exports.update = async (req, res) => {
       catch { return res.status(400).json({ success: false, message: "deleted_image_ids inválido" }); }
     }
 
-    const remaining = currentImages.filter(img => !idsToDelete.includes(img.id.toString()) && !idsToDelete.includes(img.id)).length;
+    const remaining = currentImages.filter(img =>
+      !idsToDelete.includes(img.id.toString()) && !idsToDelete.includes(img.id)
+    ).length;
     if (remaining + newImages.length < 1) {
       await client.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "El producto debe tener al menos una imagen" });
     }
 
     await client.query(
-      `UPDATE products SET name=$1, sale_price=$2, stock=$3, category_id=$4, description=$5, updated_at=NOW() WHERE id=$6`,
+      `UPDATE products
+       SET name=$1, sale_price=$2, stock=$3, category_id=$4, description=$5, updated_at=NOW()
+       WHERE id=$6`,
       [name?.trim() || null, sale_price ? Number(sale_price) : null,
        stock !== undefined ? Number(stock) : null, category_id || null, description?.trim() || null, id]
     );
 
-    for (const img of currentImages.filter(img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id))) {
+    for (const img of currentImages.filter(img =>
+      idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id)
+    )) {
       const publicId = getPublicIdFromUrl(img.url);
       if (publicId) { try { await cloudinary.uploader.destroy(publicId); } catch {} }
       await client.query("DELETE FROM product_images WHERE id=$1", [img.id]);
     }
 
     if (newImages.length > 0) {
-      const maxOrder = (await client.query("SELECT COALESCE(MAX(display_order),-1) as m FROM product_images WHERE product_id=$1", [id])).rows[0].m;
+      const maxOrder = (await client.query(
+        "SELECT COALESCE(MAX(display_order),-1) as m FROM product_images WHERE product_id=$1", [id]
+      )).rows[0].m;
       for (let i = 0; i < newImages.length; i++) {
         await client.query(
           `INSERT INTO product_images (product_id, url, is_main, display_order) VALUES ($1,$2,$3,$4)`,
@@ -393,21 +445,23 @@ exports.update = async (req, res) => {
       }
     }
 
-    const hasMain = await client.query("SELECT id FROM product_images WHERE product_id=$1 AND is_main=true LIMIT 1", [id]);
+    const hasMain = await client.query(
+      "SELECT id FROM product_images WHERE product_id=$1 AND is_main=true LIMIT 1", [id]
+    );
     if (!hasMain.rowCount) {
       await client.query(
-        `UPDATE product_images SET is_main=true WHERE id=(SELECT id FROM product_images WHERE product_id=$1 ORDER BY display_order LIMIT 1)`, [id]
+        `UPDATE product_images SET is_main=true
+         WHERE id=(SELECT id FROM product_images WHERE product_id=$1 ORDER BY display_order LIMIT 1)`, [id]
       );
     }
 
     await client.query("COMMIT");
 
-    // ── Emitir producto COMPLETO (patrón Chat) ──────────────────────────────
     try {
       const fullProduct = await fetchFullProduct(parseInt(id));
       emitDataUpdate("products", "updated", { id: parseInt(id), product: fullProduct });
     } catch (emitErr) {
-      console.warn("[Socket] No se pudo emitir producto completo:", emitErr.message);
+      console.warn("[Socket] emit fallback:", emitErr.message);
       emitDataUpdate("products", "updated", { id: parseInt(id), product: null });
     }
 
@@ -422,6 +476,7 @@ exports.update = async (req, res) => {
 
 // ============================================
 // 🗑️ ELIMINAR PRODUCTO
+// Verifica pertenencia antes de borrar
 // ============================================
 exports.remove = async (req, res) => {
   const client = await db.connect();
@@ -431,10 +486,21 @@ exports.remove = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const productExists = await client.query("SELECT id FROM products WHERE id=$1", [id]);
+    // ── Verificar existencia + pertenencia ──────────────────────────────────
+    const isSuperAdmin = req.user?.roles?.includes("superadmin");
+    const ownerClause  = isSuperAdmin ? "" : "AND owner_admin_id = $2";
+    const checkParams  = isSuperAdmin ? [id] : [id, req.user.id];
+
+    const productExists = await client.query(
+      `SELECT id FROM products WHERE id = $1 ${ownerClause}`,
+      checkParams
+    );
     if (!productExists.rowCount) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: "Producto no encontrado" });
+      const exists = await client.query("SELECT id FROM products WHERE id = $1", [id]);
+      return exists.rowCount
+        ? res.status(403).json({ success: false, message: "No autorizado para eliminar este producto" })
+        : res.status(404).json({ success: false, message: "Producto no encontrado" });
     }
 
     const imgs = await client.query("SELECT url FROM product_images WHERE product_id=$1", [id]);
@@ -445,7 +511,7 @@ exports.remove = async (req, res) => {
 
     await client.query("DELETE FROM products WHERE id=$1", [id]);
     await client.query("COMMIT");
-    // Delete: solo necesitamos el id, no hay nada que emitir completo
+
     emitDataUpdate("products", "deleted", { id: parseInt(id) });
 
     res.json({ success: true, message: "Producto eliminado correctamente" });
