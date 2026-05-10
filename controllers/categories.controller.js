@@ -1,22 +1,28 @@
+// controllers/categories.controller.js
 const db = require("../config/db");
 const { emitDataUpdate } = require("../config/socket");
 
+// Helper reutilizable (mismo patrón que products.controller.js)
+const isSA = (req) => req.user?.roles?.includes("superadmin");
+
 // ============================================
-// 🌳 OBTENER CATEGORÍAS CON ESTRUCTURA JERÁRQUICA
+// 🌳 OBTENER CATEGORÍAS (árbol jerárquico)
 // ============================================
 exports.getAll = async (req, res) => {
   try {
+    const tenantClause = isSA(req) ? "" : "AND owner_admin_id = $1";
+    const params       = isSA(req) ? [] : [req.user.id];
+
     const result = await db.query(`
       SELECT id, name, slug, description, image_url, parent_id, is_active, created_at, updated_at
       FROM categories
-      WHERE is_active = true
+      WHERE is_active = true ${tenantClause}
       ORDER BY name
-    `);
+    `, params);
 
-    // Normalizar parent_id a número o null para evitar problemas de tipo
     const rows = result.rows.map(r => ({
       ...r,
-      id: Number(r.id),
+      id:        Number(r.id),
       parent_id: r.parent_id != null ? Number(r.parent_id) : null,
     }));
 
@@ -33,21 +39,23 @@ exports.getAll = async (req, res) => {
 };
 
 // ============================================
-// 📋 ENDPOINT FLAT — Lista plana para selects
+// 📋 LISTA PLANA para selects
 // ============================================
 exports.getFlat = async (req, res) => {
   try {
+    const tenantClause = isSA(req) ? "" : "AND owner_admin_id = $1";
+    const params       = isSA(req) ? [] : [req.user.id];
+
     const result = await db.query(`
       WITH RECURSIVE category_paths AS (
-        SELECT id, name, slug, parent_id,
-               CAST(name AS TEXT) AS full_path,
-               1 AS level
+        SELECT id, name, slug, parent_id, owner_admin_id,
+               CAST(name AS TEXT) AS full_path, 1 AS level
         FROM categories
-        WHERE parent_id IS NULL AND is_active = true
+        WHERE parent_id IS NULL AND is_active = true ${tenantClause}
 
         UNION ALL
 
-        SELECT c.id, c.name, c.slug, c.parent_id,
+        SELECT c.id, c.name, c.slug, c.parent_id, c.owner_admin_id,
                CAST(cp.full_path || ' > ' || c.name AS TEXT),
                cp.level + 1
         FROM categories c
@@ -57,7 +65,7 @@ exports.getFlat = async (req, res) => {
       SELECT id, name, slug, parent_id, full_path, level
       FROM category_paths
       ORDER BY full_path
-    `);
+    `, params);
 
     res.json(result.rows);
   } catch (error) {
@@ -68,12 +76,28 @@ exports.getFlat = async (req, res) => {
 
 // ============================================
 // ➕ CREAR CATEGORÍA
+// Inyecta owner_admin_id y created_by del token
 // ============================================
 exports.create = async (req, res) => {
   const { name, slug, description, image_url, parent_id } = req.body;
 
   if (!name?.trim()) {
     return res.status(400).json({ success: false, message: "El nombre es obligatorio" });
+  }
+
+  // Si el parent_id proporcionado le pertenece al admin, OK; si no, rechazar
+  if (parent_id && !isSA(req)) {
+    const parentOwned = await db.query(
+      "SELECT id FROM categories WHERE id = $1 AND owner_admin_id = $2",
+      [parent_id, req.user.id]
+    );
+    if (parentOwned.rowCount === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "La categoría padre no te pertenece",
+        code: "FORBIDDEN",
+      });
+    }
   }
 
   try {
@@ -84,11 +108,15 @@ exports.create = async (req, res) => {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
+    // superadmin crea global (owner_admin_id = null); admin crea con su id
+    const ownerAdminId = isSA(req) ? null : req.user.id;
+
     const result = await db.query(
-      `INSERT INTO categories (name, slug, description, image_url, parent_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO categories (name, slug, description, image_url, parent_id, created_by, owner_admin_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [name.trim(), finalSlug, description || null, image_url || null, parent_id || null]
+      [name.trim(), finalSlug, description || null, image_url || null,
+       parent_id || null, req.user.id, ownerAdminId]
     );
 
     const newCategory = result.rows[0];
@@ -106,15 +134,29 @@ exports.create = async (req, res) => {
 
 // ============================================
 // ✏️ ACTUALIZAR CATEGORÍA
+// Verifica propiedad antes de modificar
 // ============================================
 exports.update = async (req, res) => {
   const { id } = req.params;
   const { name, slug, description, image_url, parent_id, is_active } = req.body;
-  const categoryId = Number(id);
+  const categoryId  = Number(id);
   const newParentId = parent_id ? Number(parent_id) : null;
 
   try {
-    // Evitar que sea padre de sí misma
+    // Verificar que la categoría le pertenece al admin
+    if (!isSA(req)) {
+      const owned = await db.query(
+        "SELECT id FROM categories WHERE id = $1 AND owner_admin_id = $2",
+        [categoryId, req.user.id]
+      );
+      if (owned.rowCount === 0) {
+        const exists = await db.query("SELECT id FROM categories WHERE id = $1", [categoryId]);
+        return exists.rowCount
+          ? res.status(403).json({ success: false, message: "No tienes permisos sobre esta categoría", code: "FORBIDDEN" })
+          : res.status(404).json({ success: false, message: "Categoría no encontrada" });
+      }
+    }
+
     if (newParentId && newParentId === categoryId) {
       return res.status(400).json({
         success: false,
@@ -122,7 +164,6 @@ exports.update = async (req, res) => {
       });
     }
 
-    // ✅ Detectar ciclos: el nuevo padre no puede ser descendiente de esta categoría
     if (newParentId) {
       const cycleCheck = await db.query(`
         WITH RECURSIVE descendants AS (
@@ -155,10 +196,8 @@ exports.update = async (req, res) => {
       return res.status(404).json({ success: false, message: "Categoría no encontrada" });
     }
 
-    const updated = result.rows[0];
-    emitDataUpdate("categories", "updated", updated);
-
-    res.json(updated);
+    emitDataUpdate("categories", "updated", result.rows[0]);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error("UPDATE CATEGORY ERROR:", error);
     if (error.code === "23505") {
@@ -170,11 +209,26 @@ exports.update = async (req, res) => {
 
 // ============================================
 // 🗑️ ELIMINAR CATEGORÍA
+// Verifica propiedad antes de borrar
 // ============================================
 exports.remove = async (req, res) => {
   const { id } = req.params;
 
   try {
+    // Verificar propiedad
+    if (!isSA(req)) {
+      const owned = await db.query(
+        "SELECT id FROM categories WHERE id = $1 AND owner_admin_id = $2",
+        [id, req.user.id]
+      );
+      if (owned.rowCount === 0) {
+        const exists = await db.query("SELECT id FROM categories WHERE id = $1", [id]);
+        return exists.rowCount
+          ? res.status(403).json({ success: false, message: "No tienes permisos sobre esta categoría", code: "FORBIDDEN" })
+          : res.status(404).json({ success: false, message: "Categoría no encontrada" });
+      }
+    }
+
     const checkChildren = await db.query(
       "SELECT COUNT(*) AS count FROM categories WHERE parent_id = $1 AND is_active = true",
       [id]
@@ -207,7 +261,6 @@ exports.remove = async (req, res) => {
     }
 
     emitDataUpdate("categories", "deleted", { id: parseInt(id) });
-
     res.json({ success: true, message: "Categoría eliminada correctamente" });
   } catch (error) {
     console.error("DELETE CATEGORY ERROR:", error);
