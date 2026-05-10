@@ -1,16 +1,14 @@
 // controllers/banners.controller.js
 const db = require("../config/db");
-const { emitDataUpdate } = require("../config/socket");
+const { emitDataUpdate }  = require("../config/socket");
+const { assertOwnership } = require("../middleware/adminScope");
 
-// Cache para la ruta pública del storefront
 const CACHE_CONTROL_PUBLIC =
   "public, max-age=60, s-maxage=120, stale-while-revalidate=300";
 
 const bannerController = {
 
   // ── GET /banners — público (storefront) ──────────────────────────────────
-  // Devuelve TODOS los banners activos (sin filtro de tenant).
-  // Si en el futuro quieres banners por admin, agrega owner_admin_id a la tabla.
   getAll: async (req, res) => {
     try {
       const result = await db.query(`
@@ -30,14 +28,14 @@ const bannerController = {
     }
   },
 
-  // ── GET /banners/admin — panel admin (todos, sin caché) ──────────────────
-  // Permite al admin ver sus propios banners por created_by.
-  // El superadmin ve todos.
+  // ── GET /banners/admin — panel (autenticado) ─────────────────────────────
   getAllAdmin: async (req, res) => {
     try {
-      const isSuperAdmin = req.user?.roles?.includes("superadmin");
-      const tenantClause = isSuperAdmin ? "" : "AND created_by = $1";
-      const params       = isSuperAdmin ? [] : [req.user.id];
+      const { isSuperAdmin, adminId } = req;
+
+      // created_by = quien creó el banner (no tiene owner_admin_id en la tabla)
+      const tenantClause = isSuperAdmin ? "" : "AND b.created_by = $1";
+      const params       = isSuperAdmin ? [] : [adminId];
 
       const result = await db.query(`
         SELECT b.id, b.title, b.description, b.image_url, b.button_text,
@@ -59,7 +57,6 @@ const bannerController = {
 
   // ── POST /banners ─────────────────────────────────────────────────────────
   create: async (req, res) => {
-    // ✅ FIX: eliminado 'label' que no existe en la tabla
     const { title, description, button_text, button_link, display_order } = req.body;
     const image_url = req.file ? req.file.path : "";
 
@@ -83,7 +80,7 @@ const bannerController = {
           button_text?.trim() || "Ver más",
           button_link?.trim() || "/productos",
           display_order ? parseInt(display_order) : 0,
-          req.user.id,   // ✅ created_by
+          req.user.id,
         ]
       );
 
@@ -105,72 +102,60 @@ const bannerController = {
   // ── PUT /banners/:id ──────────────────────────────────────────────────────
   update: async (req, res) => {
     const { id } = req.params;
-    // ✅ FIX: eliminado 'label', añadido updated_at
     const { title, description, button_text, button_link, is_active, display_order } = req.body;
     const image_url = req.file ? req.file.path : null;
+    const { isSuperAdmin, adminId } = req;
 
     try {
-      // Verificar propiedad (superadmin puede editar cualquiera)
-      const isSuperAdmin = req.user?.roles?.includes("superadmin");
+      // Verificar propiedad — banners usa created_by como columna de ownership
       if (!isSuperAdmin) {
-        const owned = await db.query(
-          "SELECT id FROM banners WHERE id = $1 AND created_by = $2",
-          [id, req.user.id]
-        );
-        if (owned.rowCount === 0) {
-          const exists = await db.query("SELECT id FROM banners WHERE id = $1", [id]);
-          return exists.rowCount
+        const owned = await assertOwnership(db, "banners", id, adminId, "created_by");
+        if (!owned) {
+          const exists = (await db.query("SELECT id FROM banners WHERE id = $1", [id])).rowCount;
+          return exists
             ? res.status(403).json({ success: false, error: "No tienes permisos sobre este banner" })
             : res.status(404).json({ success: false, error: "Banner no encontrado" });
         }
       }
 
       let result;
+      const baseParams = [
+        title?.trim() || null,
+        description?.trim() ?? null,
+        button_text?.trim() || null,
+        button_link?.trim() || null,
+        is_active ?? null,
+        display_order !== undefined ? parseInt(display_order) : null,
+      ];
+
       if (image_url) {
         result = await db.query(
           `UPDATE banners
-           SET title        = COALESCE($1, title),
-               description  = $2,
-               button_text  = COALESCE($3, button_text),
-               button_link  = COALESCE($4, button_link),
-               is_active    = COALESCE($5, is_active),
+           SET title         = COALESCE($1, title),
+               description   = $2,
+               button_text   = COALESCE($3, button_text),
+               button_link   = COALESCE($4, button_link),
+               is_active     = COALESCE($5, is_active),
                display_order = COALESCE($6, display_order),
-               image_url    = $7,
-               updated_at   = NOW()
+               image_url     = $7,
+               updated_at    = NOW()
            WHERE id = $8
            RETURNING *`,
-          [
-            title?.trim() || null,
-            description?.trim() ?? null,
-            button_text?.trim() || null,
-            button_link?.trim() || null,
-            is_active ?? null,
-            display_order !== undefined ? parseInt(display_order) : null,
-            image_url,
-            id,
-          ]
+          [...baseParams, image_url, id]
         );
       } else {
         result = await db.query(
           `UPDATE banners
-           SET title        = COALESCE($1, title),
-               description  = $2,
-               button_text  = COALESCE($3, button_text),
-               button_link  = COALESCE($4, button_link),
-               is_active    = COALESCE($5, is_active),
+           SET title         = COALESCE($1, title),
+               description   = $2,
+               button_text   = COALESCE($3, button_text),
+               button_link   = COALESCE($4, button_link),
+               is_active     = COALESCE($5, is_active),
                display_order = COALESCE($6, display_order),
-               updated_at   = NOW()
+               updated_at    = NOW()
            WHERE id = $7
            RETURNING *`,
-          [
-            title?.trim() || null,
-            description?.trim() ?? null,
-            button_text?.trim() || null,
-            button_link?.trim() || null,
-            is_active ?? null,
-            display_order !== undefined ? parseInt(display_order) : null,
-            id,
-          ]
+          [...baseParams, id]
         );
       }
 
@@ -189,24 +174,20 @@ const bannerController = {
   // ── DELETE /banners/:id ───────────────────────────────────────────────────
   delete: async (req, res) => {
     const { id } = req.params;
+    const { isSuperAdmin, adminId } = req;
+
     try {
-      const isSuperAdmin = req.user?.roles?.includes("superadmin");
       if (!isSuperAdmin) {
-        const owned = await db.query(
-          "SELECT id FROM banners WHERE id = $1 AND created_by = $2",
-          [id, req.user.id]
-        );
-        if (owned.rowCount === 0) {
-          const exists = await db.query("SELECT id FROM banners WHERE id = $1", [id]);
-          return exists.rowCount
+        const owned = await assertOwnership(db, "banners", id, adminId, "created_by");
+        if (!owned) {
+          const exists = (await db.query("SELECT id FROM banners WHERE id = $1", [id])).rowCount;
+          return exists
             ? res.status(403).json({ success: false, error: "No tienes permisos sobre este banner" })
             : res.status(404).json({ success: false, error: "Banner no encontrado" });
         }
       }
 
-      const result = await db.query(
-        "DELETE FROM banners WHERE id = $1 RETURNING id", [id]
-      );
+      const result = await db.query("DELETE FROM banners WHERE id = $1 RETURNING id", [id]);
       if (result.rowCount === 0) {
         return res.status(404).json({ success: false, error: "Banner no encontrado" });
       }

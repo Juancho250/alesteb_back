@@ -1,5 +1,6 @@
 const express = require("express");
 const { auth, requireRole } = require("../middleware/auth.middleware");
+const { adminScope } = require("../middleware/adminScope");
 const { uploadProduct } = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");
 const db   = require("../config/db");
@@ -7,40 +8,54 @@ const db   = require("../config/db");
 const router = express.Router();
 
 // ── Públicas ──────────────────────────────────────────────────────────────────
-router.get("/", ctrl.getAll);
+router.get("/",    ctrl.getAll);
 router.get("/:id", ctrl.getById);
 
-// ── Protegidas ────────────────────────────────────────────────────────────────
+// ── Privadas ──────────────────────────────────────────────────────────────────
 router.post(
   "/",
-  auth, requireRole(["admin", "gerente"]),
+  auth, adminScope, requireRole(["admin", "gerente"]),
   uploadProduct.array("images", 6),
   ctrl.create
 );
 
 router.put(
   "/:id",
-  auth, requireRole(["admin", "gerente"]),
+  auth, adminScope, requireRole(["admin", "gerente"]),
   uploadProduct.array("images", 6),
   ctrl.update
 );
 
 router.delete(
   "/:id",
-  auth, requireRole(["admin", "gerente"]),
+  auth, adminScope, requireRole(["admin", "gerente"]),
   ctrl.remove
 );
 
+// PATCH stock — no necesita scope de tenant porque sólo toca un campo numérico
+// y el controller ya verifica propiedad antes de escribir.
+// Si quieres añadir scope aquí igual, agrega adminScope entre auth y requireRole.
 router.patch(
   "/:id/stock",
-  auth, requireRole(["admin", "gerente"]),
+  auth, adminScope, requireRole(["admin", "gerente"]),
   async (req, res) => {
     try {
       const { stock } = req.body;
       if (stock === undefined || stock < 0)
         return res.status(400).json({ success: false, message: "Stock debe ser un número positivo" });
 
-      await db.query("UPDATE products SET stock = $1 WHERE id = $2", [stock, req.params.id]);
+      // Verificar propiedad antes de actualizar
+      const { isSuperAdmin, adminId } = req;
+      const ownerClause = isSuperAdmin ? "" : "AND owner_admin_id = $2";
+      const params      = isSuperAdmin ? [req.params.id] : [req.params.id, adminId];
+
+      const check = await db.query(
+        `SELECT id FROM products WHERE id = $1 ${ownerClause}`, params
+      );
+      if (!check.rowCount)
+        return res.status(403).json({ success: false, message: "No autorizado o producto no encontrado" });
+
+      await db.query("UPDATE products SET stock = $1, updated_at = NOW() WHERE id = $2", [stock, req.params.id]);
       res.json({ success: true, message: "Stock actualizado correctamente" });
     } catch (err) {
       console.error("UPDATE STOCK ERROR:", err);
@@ -51,16 +66,29 @@ router.patch(
 
 router.patch(
   "/:id/main-image",
-  auth, requireRole(["admin", "gerente"]),
+  auth, adminScope, requireRole(["admin", "gerente"]),
   async (req, res) => {
     const { image_id } = req.body;
     if (!image_id)
       return res.status(400).json({ success: false, message: "image_id es requerido" });
 
+    // Verificar propiedad del producto antes de tocar sus imágenes
+    const { isSuperAdmin, adminId } = req;
+    const ownerClause = isSuperAdmin ? "" : "AND owner_admin_id = $2";
+    const checkParams = isSuperAdmin ? [req.params.id] : [req.params.id, adminId];
+
+    const check = await db.query(
+      `SELECT id FROM products WHERE id = $1 ${ownerClause}`, checkParams
+    );
+    if (!check.rowCount)
+      return res.status(403).json({ success: false, message: "No autorizado o producto no encontrado" });
+
     const client = await db.connect();
     try {
       await client.query("BEGIN");
-      await client.query("UPDATE product_images SET is_main = false WHERE product_id = $1", [req.params.id]);
+      await client.query(
+        "UPDATE product_images SET is_main = false WHERE product_id = $1", [req.params.id]
+      );
       const result = await client.query(
         "UPDATE product_images SET is_main = true WHERE id = $1 AND product_id = $2",
         [image_id, req.params.id]

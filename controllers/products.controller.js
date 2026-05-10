@@ -1,7 +1,12 @@
 // src/controllers/products.controller.js
 const db         = require("../config/db");
 const cloudinary = require("../config/cloudinary");
-const { emitDataUpdate } = require("../config/socket");
+const { emitDataUpdate }  = require("../config/socket");
+const { scopeByOwner, assertOwnership } = require("../middleware/adminScope");
+
+// ─────────────────────────────────────────────
+// Helpers internos
+// ─────────────────────────────────────────────
 
 const fetchFullProduct = async (id) => {
   const result = await db.query(`
@@ -69,16 +74,13 @@ const validateProductData = (data, isUpdate = false) => {
   return { isValid: errors.length === 0, errors };
 };
 
-// ============================================
-// 📋 OBTENER TODOS LOS PRODUCTOS
-// ============================================
+// ─────────────────────────────────────────────
+// GET /products  — lista paginada
+// ─────────────────────────────────────────────
 exports.getAll = async (req, res) => {
   try {
-    // ✅ FIX: si no hay req.user (ruta pública) el optional chaining devuelve
-    //    undefined → isSuperAdmin = false → pero req.user.id tiraría error.
-    //    Ahora lo manejamos explícitamente.
-    const user         = req.user;                        // puede ser undefined
-    const isSuperAdmin = user?.roles?.includes("superadmin") ?? false;
+    const user         = req.user;
+    const isSuperAdmin = req.isSuperAdmin ?? user?.roles?.includes("superadmin") ?? false;
     const isAuthed     = !!user;
 
     const { categoria, search, min_price, max_price } = req.query;
@@ -89,9 +91,11 @@ exports.getAll = async (req, res) => {
     const queryParams = [];
     let   pi          = 1;
 
-    // ── Cláusula tenant ──────────────────────────────────────────────────────
+    // ── Scope de tenant ──────────────────────────────────────────────────────
     let tenantClause = "";
     if (isAuthed && !isSuperAdmin) {
+      // scopeByOwner devuelve params=[adminId], pero aquí construimos manualmente
+      // porque tenemos un pi dinámico
       tenantClause = `AND p.owner_admin_id = $${pi++}`;
       queryParams.push(user.id);
     }
@@ -163,7 +167,7 @@ exports.getAll = async (req, res) => {
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
-    // ── Count (mismos filtros) ───────────────────────────────────────────────
+    // ── Count (mismos filtros, sin LIMIT/OFFSET) ─────────────────────────────
     const countParams = [];
     let   ci          = 1;
     let   countTenant = "";
@@ -211,28 +215,24 @@ exports.getAll = async (req, res) => {
       },
     });
   } catch (error) {
-    // ✅ FIX: loguear el error real para poder diagnosticar en servidor
-    console.error("[GET PRODUCTS ERROR]", error.message);
-    console.error(error.stack);
+    console.error("[GET PRODUCTS ERROR]", error.message, error.stack);
     res.status(500).json({ success: false, message: "Error al obtener productos" });
   }
 };
 
-// ============================================
-// 🔍 OBTENER PRODUCTO POR ID
-// ============================================
+// ─────────────────────────────────────────────
+// GET /products/:id
+// ─────────────────────────────────────────────
 exports.getById = async (req, res) => {
   try {
     const { id } = req.params;
     if (!id || isNaN(id)) return res.status(400).json({ success: false, message: "ID inválido" });
 
-    const user         = req.user;
-    const isSuperAdmin = user?.roles?.includes("superadmin") ?? false;
-    const isAuthed     = !!user;
+    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
+    const isAuthed     = !!req.user;
 
-    // Sin auth → producto público (sin filtro de tenant)
     const ownerClause = (isAuthed && !isSuperAdmin) ? "AND p.owner_admin_id = $2" : "";
-    const queryParams = (isAuthed && !isSuperAdmin) ? [id, user.id] : [id];
+    const queryParams = (isAuthed && !isSuperAdmin) ? [id, req.user.id] : [id];
 
     const result = await db.query(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug,
@@ -315,15 +315,14 @@ exports.getById = async (req, res) => {
       data: { ...product, images: imagesResult.rows, variants, bundle_items: bundleItems },
     });
   } catch (error) {
-    console.error("[GET PRODUCT BY ID ERROR]", error.message);
-    console.error(error.stack);
+    console.error("[GET PRODUCT BY ID ERROR]", error.message, error.stack);
     res.status(500).json({ success: false, message: "Error al obtener producto" });
   }
 };
 
-// ============================================
-// ➕ CREAR PRODUCTO
-// ============================================
+// ─────────────────────────────────────────────
+// POST /products
+// ─────────────────────────────────────────────
 exports.create = async (req, res) => {
   const client = await db.connect();
   try {
@@ -337,7 +336,9 @@ exports.create = async (req, res) => {
     if (images.length === 0 && !(has_variants === "true" || has_variants === true))
       return res.status(400).json({ success: false, message: "Sube al menos una imagen" });
 
-    const ownerAdminId = req.user?.roles?.includes("superadmin") ? null : req.user.id;
+    // superadmin crea sin tenant (owner_admin_id = null)
+    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
+    const ownerAdminId = isSuperAdmin ? null : req.user.id;
 
     await client.query("BEGIN");
 
@@ -346,15 +347,8 @@ exports.create = async (req, res) => {
          (name, sale_price, stock, category_id, description, owner_admin_id, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [
-        name.trim(),
-        Number(sale_price),
-        Number(stock),
-        category_id,
-        description?.trim() || null,
-        ownerAdminId,
-        req.user.id,
-      ]
+      [name.trim(), Number(sale_price), Number(stock), category_id,
+       description?.trim() || null, ownerAdminId, req.user.id]
     );
     const productId = productResult.rows[0].id;
 
@@ -380,24 +374,19 @@ exports.create = async (req, res) => {
       emitDataUpdate("products", "created", { id: productId, product: null });
     }
 
-    res.status(201).json({
-      success: true,
-      message: "Producto creado correctamente",
-      data: { id: productId },
-    });
+    res.status(201).json({ success: true, message: "Producto creado correctamente", data: { id: productId } });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("[CREATE PRODUCT ERROR]", error.message);
-    console.error(error.stack);
+    console.error("[CREATE PRODUCT ERROR]", error.message, error.stack);
     if (error.code === "23503")
       return res.status(400).json({ success: false, message: "Categoría no existe" });
     res.status(500).json({ success: false, message: "Error al crear producto" });
   } finally { client.release(); }
 };
 
-// ============================================
-// ✏️ ACTUALIZAR PRODUCTO
-// ============================================
+// ─────────────────────────────────────────────
+// PUT /products/:id
+// ─────────────────────────────────────────────
 exports.update = async (req, res) => {
   const client = await db.connect();
   try {
@@ -414,20 +403,24 @@ exports.update = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const isSuperAdmin = req.user?.roles?.includes("superadmin");
-    const ownerClause  = isSuperAdmin ? "" : "AND owner_admin_id = $2";
-    const checkParams  = isSuperAdmin ? [id] : [id, req.user.id];
+    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
 
-    const productExists = await client.query(
-      `SELECT id FROM products WHERE id = $1 ${ownerClause}`,
-      checkParams
-    );
-    if (!productExists.rowCount) {
-      await client.query("ROLLBACK");
-      const exists = await client.query("SELECT id FROM products WHERE id = $1", [id]);
-      return exists.rowCount
-        ? res.status(403).json({ success: false, message: "No autorizado para modificar este producto" })
-        : res.status(404).json({ success: false, message: "Producto no encontrado" });
+    // Verificar existencia y propiedad en un solo query
+    if (!isSuperAdmin) {
+      const owned = await assertOwnership(client, "products", id, req.user.id, "owner_admin_id");
+      if (!owned) {
+        await client.query("ROLLBACK");
+        const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
+        return exists
+          ? res.status(403).json({ success: false, message: "No autorizado para modificar este producto" })
+          : res.status(404).json({ success: false, message: "Producto no encontrado" });
+      }
+    } else {
+      const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
+      if (!exists) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ success: false, message: "Producto no encontrado" });
+      }
     }
 
     const currentImages = (
@@ -456,23 +449,19 @@ exports.update = async (req, res) => {
 
     await client.query(
       `UPDATE products
-       SET name = COALESCE($1, name),
+       SET name        = COALESCE($1, name),
            sale_price  = COALESCE($2, sale_price),
            stock       = COALESCE($3, stock),
            category_id = COALESCE($4, category_id),
            description = $5,
            updated_at  = NOW()
        WHERE id = $6`,
-      [
-        name?.trim() || null,
-        sale_price !== undefined ? Number(sale_price) : null,
-        stock !== undefined ? Number(stock) : null,
-        category_id || null,
-        description?.trim() ?? null,
-        id,
-      ]
+      [name?.trim() || null, sale_price !== undefined ? Number(sale_price) : null,
+       stock !== undefined ? Number(stock) : null, category_id || null,
+       description?.trim() ?? null, id]
     );
 
+    // Eliminar imágenes marcadas y destruirlas en Cloudinary
     for (const img of currentImages.filter(
       img => idsToDelete.includes(img.id.toString()) || idsToDelete.includes(img.id)
     )) {
@@ -484,8 +473,7 @@ exports.update = async (req, res) => {
     if (newImages.length > 0) {
       const maxOrder = (
         await client.query(
-          "SELECT COALESCE(MAX(display_order), -1) AS m FROM product_images WHERE product_id = $1",
-          [id]
+          "SELECT COALESCE(MAX(display_order), -1) AS m FROM product_images WHERE product_id = $1", [id]
         )
       ).rows[0].m;
 
@@ -498,16 +486,14 @@ exports.update = async (req, res) => {
       }
     }
 
-    // Garantizar que haya siempre una imagen principal
+    // Garantizar imagen principal
     const hasMain = await client.query(
       "SELECT id FROM product_images WHERE product_id = $1 AND is_main = true LIMIT 1", [id]
     );
     if (!hasMain.rowCount) {
       await client.query(
         `UPDATE product_images SET is_main = true
-         WHERE id = (
-           SELECT id FROM product_images WHERE product_id = $1 ORDER BY display_order LIMIT 1
-         )`,
+         WHERE id = (SELECT id FROM product_images WHERE product_id = $1 ORDER BY display_order LIMIT 1)`,
         [id]
       );
     }
@@ -525,17 +511,16 @@ exports.update = async (req, res) => {
     res.json({ success: true, message: "Producto actualizado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("[UPDATE PRODUCT ERROR]", error.message);
-    console.error(error.stack);
+    console.error("[UPDATE PRODUCT ERROR]", error.message, error.stack);
     if (error.code === "23503")
       return res.status(400).json({ success: false, message: "Categoría no existe" });
     res.status(500).json({ success: false, message: "Error al actualizar producto" });
   } finally { client.release(); }
 };
 
-// ============================================
-// 🗑️ ELIMINAR PRODUCTO
-// ============================================
+// ─────────────────────────────────────────────
+// DELETE /products/:id
+// ─────────────────────────────────────────────
 exports.remove = async (req, res) => {
   const client = await db.connect();
   try {
@@ -545,25 +530,20 @@ exports.remove = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const isSuperAdmin = req.user?.roles?.includes("superadmin");
-    const ownerClause  = isSuperAdmin ? "" : "AND owner_admin_id = $2";
-    const checkParams  = isSuperAdmin ? [id] : [id, req.user.id];
+    const isSuperAdmin = req.isSuperAdmin ?? req.user?.roles?.includes("superadmin") ?? false;
 
-    const productExists = await client.query(
-      `SELECT id FROM products WHERE id = $1 ${ownerClause}`,
-      checkParams
-    );
-    if (!productExists.rowCount) {
-      await client.query("ROLLBACK");
-      const exists = await client.query("SELECT id FROM products WHERE id = $1", [id]);
-      return exists.rowCount
-        ? res.status(403).json({ success: false, message: "No autorizado para eliminar este producto" })
-        : res.status(404).json({ success: false, message: "Producto no encontrado" });
+    if (!isSuperAdmin) {
+      const owned = await assertOwnership(client, "products", id, req.user.id, "owner_admin_id");
+      if (!owned) {
+        await client.query("ROLLBACK");
+        const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
+        return exists
+          ? res.status(403).json({ success: false, message: "No autorizado para eliminar este producto" })
+          : res.status(404).json({ success: false, message: "Producto no encontrado" });
+      }
     }
 
-    const imgs = await client.query(
-      "SELECT url FROM product_images WHERE product_id = $1", [id]
-    );
+    const imgs = await client.query("SELECT url FROM product_images WHERE product_id = $1", [id]);
     for (const img of imgs.rows) {
       const publicId = getPublicIdFromUrl(img.url);
       if (publicId) { try { await cloudinary.uploader.destroy(publicId); } catch {} }
@@ -576,13 +556,9 @@ exports.remove = async (req, res) => {
     res.json({ success: true, message: "Producto eliminado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("[DELETE PRODUCT ERROR]", error.message);
-    console.error(error.stack);
+    console.error("[DELETE PRODUCT ERROR]", error.message, error.stack);
     if (error.code === "23503")
-      return res.status(400).json({
-        success: false,
-        message: "No se puede eliminar: tiene ventas asociadas",
-      });
+      return res.status(400).json({ success: false, message: "No se puede eliminar: tiene ventas asociadas" });
     res.status(500).json({ success: false, message: "Error al eliminar producto" });
   } finally { client.release(); }
 };
