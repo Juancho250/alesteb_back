@@ -6,31 +6,18 @@ const { emitDataUpdate }  = require("../config/socket");
 const { assertOwnership } = require("../middleware/adminScope");
 
 // ─────────────────────────────────────────────
-// Helper: extrae scope de forma segura.
-// Las rutas GET / y /flat son públicas → adminScope no corre
-// → req.isSuperAdmin === undefined → tratamos como público (sin filtro de tenant).
-// Las rutas privadas (POST/PUT/DELETE) siempre tienen adminScope antes.
-// ─────────────────────────────────────────────
-const getScope = (req) => {
-  // Si adminScope no corrió, req.isSuperAdmin es undefined → ruta pública
-  if (req.isSuperAdmin === undefined) {
-    return { isSuperAdmin: true, adminId: null }; // sin filtro de tenant
-  }
-  return { isSuperAdmin: req.isSuperAdmin, adminId: req.adminId };
-};
-
-// ─────────────────────────────────────────────
 // GET /categories  — árbol jerárquico
 // ─────────────────────────────────────────────
 exports.getAll = async (req, res) => {
   try {
-    const { isSuperAdmin, adminId } = getScope(req);
+    const { isSuperAdmin, adminId } = req;
 
     const tenantClause = isSuperAdmin ? "" : "AND owner_admin_id = $1";
     const params       = isSuperAdmin ? [] : [adminId];
 
     const result = await db.query(`
-      SELECT id, name, slug, description, image_url, parent_id, is_active, created_at, updated_at
+      SELECT id, name, slug, description, image_url, parent_id,
+             is_active, created_at, updated_at
       FROM categories
       WHERE is_active = true ${tenantClause}
       ORDER BY name
@@ -59,7 +46,7 @@ exports.getAll = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getFlat = async (req, res) => {
   try {
-    const { isSuperAdmin, adminId } = getScope(req);
+    const { isSuperAdmin, adminId } = req;
 
     const tenantClause = isSuperAdmin ? "" : "AND owner_admin_id = $1";
     const params       = isSuperAdmin ? [] : [adminId];
@@ -93,18 +80,17 @@ exports.getFlat = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// POST /categories  — siempre autenticado + adminScope
+// POST /categories
 // ─────────────────────────────────────────────
 exports.create = async (req, res) => {
   const { name, slug, description, image_url, parent_id } = req.body;
-  const { isSuperAdmin, adminId } = req; // adminScope garantizado en esta ruta
+  const { isSuperAdmin, adminId } = req;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ success: false, message: "El nombre es obligatorio" });
   }
 
   try {
-    // Verificar que el parent_id pertenece al admin (sólo no-superadmin)
     if (parent_id && !isSuperAdmin) {
       const parentOwned = await db.query(
         "SELECT id FROM categories WHERE id = $1 AND owner_admin_id = $2",
@@ -131,7 +117,8 @@ exports.create = async (req, res) => {
     const ownerAdminId = isSuperAdmin ? null : adminId;
 
     const result = await db.query(
-      `INSERT INTO categories (name, slug, description, image_url, parent_id, created_by, owner_admin_id)
+      `INSERT INTO categories
+         (name, slug, description, image_url, parent_id, created_by, owner_admin_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
@@ -147,7 +134,10 @@ exports.create = async (req, res) => {
   } catch (error) {
     console.error("CREATE CATEGORY ERROR:", error);
     if (error.code === "23505") {
-      return res.status(400).json({ success: false, message: "El slug ya existe. Elige uno diferente." });
+      return res.status(400).json({
+        success: false,
+        message: "El slug ya existe. Elige uno diferente.",
+      });
     }
     res.status(500).json({ success: false, message: "Error al crear categoría" });
   }
@@ -167,7 +157,9 @@ exports.update = async (req, res) => {
     if (!isSuperAdmin) {
       const owned = await assertOwnership(db, "categories", categoryId, adminId, "owner_admin_id");
       if (!owned) {
-        const exists = (await db.query("SELECT id FROM categories WHERE id = $1", [categoryId])).rowCount;
+        const exists = (await db.query(
+          "SELECT id FROM categories WHERE id = $1", [categoryId]
+        )).rowCount;
         return exists
           ? res.status(403).json({ success: false, message: "No tienes permisos sobre esta categoría", code: "FORBIDDEN" })
           : res.status(404).json({ success: false, message: "Categoría no encontrada" });
@@ -175,7 +167,10 @@ exports.update = async (req, res) => {
     }
 
     if (newParentId && newParentId === categoryId) {
-      return res.status(400).json({ success: false, message: "Una categoría no puede ser padre de sí misma" });
+      return res.status(400).json({
+        success: false,
+        message: "Una categoría no puede ser padre de sí misma",
+      });
     }
 
     if (newParentId) {
@@ -199,11 +194,13 @@ exports.update = async (req, res) => {
 
     const result = await db.query(
       `UPDATE categories
-       SET name      = $1, slug      = $2, description = $3, image_url = $4,
-           parent_id = $5, is_active = $6, updated_at  = CURRENT_TIMESTAMP
+       SET name        = $1, slug      = $2, description = $3,
+           image_url   = $4, parent_id = $5, is_active   = $6,
+           updated_at  = CURRENT_TIMESTAMP
        WHERE id = $7
        RETURNING *`,
-      [name, slug, description || null, image_url || null, newParentId, is_active ?? true, categoryId]
+      [name, slug, description || null, image_url || null,
+       newParentId, is_active ?? true, categoryId]
     );
 
     if (result.rowCount === 0) {
@@ -215,7 +212,10 @@ exports.update = async (req, res) => {
   } catch (error) {
     console.error("UPDATE CATEGORY ERROR:", error);
     if (error.code === "23505") {
-      return res.status(400).json({ success: false, message: "El slug ya existe. Elige uno diferente." });
+      return res.status(400).json({
+        success: false,
+        message: "El slug ya existe. Elige uno diferente.",
+      });
     }
     res.status(500).json({ success: false, message: "Error al actualizar categoría" });
   }
@@ -232,7 +232,9 @@ exports.remove = async (req, res) => {
     if (!isSuperAdmin) {
       const owned = await assertOwnership(db, "categories", id, adminId, "owner_admin_id");
       if (!owned) {
-        const exists = (await db.query("SELECT id FROM categories WHERE id = $1", [id])).rowCount;
+        const exists = (await db.query(
+          "SELECT id FROM categories WHERE id = $1", [id]
+        )).rowCount;
         return exists
           ? res.status(403).json({ success: false, message: "No tienes permisos sobre esta categoría", code: "FORBIDDEN" })
           : res.status(404).json({ success: false, message: "Categoría no encontrada" });
@@ -245,7 +247,10 @@ exports.remove = async (req, res) => {
       )).rows[0].count
     );
     if (childCount > 0) {
-      return res.status(400).json({ success: false, message: "No se puede eliminar. Esta categoría tiene subcategorías asociadas" });
+      return res.status(400).json({
+        success: false,
+        message: "No se puede eliminar. Esta categoría tiene subcategorías asociadas",
+      });
     }
 
     const productCount = parseInt(
@@ -254,10 +259,15 @@ exports.remove = async (req, res) => {
       )).rows[0].count
     );
     if (productCount > 0) {
-      return res.status(400).json({ success: false, message: "No se puede eliminar. Esta categoría tiene productos asociados" });
+      return res.status(400).json({
+        success: false,
+        message: "No se puede eliminar. Esta categoría tiene productos asociados",
+      });
     }
 
-    const result = await db.query("DELETE FROM categories WHERE id = $1 RETURNING id", [id]);
+    const result = await db.query(
+      "DELETE FROM categories WHERE id = $1 RETURNING id", [id]
+    );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ success: false, message: "Categoría no encontrada" });
