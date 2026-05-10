@@ -1,59 +1,71 @@
+// controllers/providers.controller.js
+"use strict";
+
 const db = require("../config/db");
 
-// ── Helper tenant ─────────────────────────────────────────────────────────────
-// superadmin → sin filtro   admin/gerente → solo los suyos
-const isSA = (req) => req.user?.roles?.includes("superadmin");
+// ─────────────────────────────────────────────
+// Helpers de scope
+// Todas las rutas de providers pasan por auth + adminScope,
+// así que req.isSuperAdmin y req.adminId siempre existen.
+// ─────────────────────────────────────────────
 
 // Devuelve { clause, params, nextIdx }
 // startIdx = primer $N disponible DESPUÉS de los params ya usados
 const tenantClause = (req, alias, startIdx = 1) => {
-  if (isSA(req)) return { clause: "", params: [], nextIdx: startIdx };
-  return {
-    clause:  `AND ${alias}.owner_admin_id = $${startIdx}`,
-    params:  [req.user.id],
-    nextIdx: startIdx + 1,
-  };
-};
-
-// Versión para queries donde el alias ES la tabla (sin punto)
-const tenantClauseCol = (req, col, startIdx = 1) => {
-  if (isSA(req)) return { clause: "", params: [], nextIdx: startIdx };
+  if (req.isSuperAdmin) return { clause: "", params: [], nextIdx: startIdx };
+  const col = alias ? `${alias}.owner_admin_id` : "owner_admin_id";
   return {
     clause:  `AND ${col} = $${startIdx}`,
-    params:  [req.user.id],
+    params:  [req.adminId],
     nextIdx: startIdx + 1,
   };
 };
 
-// ============================================================
-// OBTENER TODOS LOS PROVEEDORES
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers
+// ─────────────────────────────────────────────
+// IMPORTANTE: v_provider_balance NO tiene owner_admin_id.
+// Filtramos sobre la tabla providers directamente y replicamos
+// los cálculos de la vista con JOINs.
 exports.getAll = async (req, res) => {
   const { is_active, category } = req.query;
 
   try {
-    // v_provider_balance no tiene alias de tabla, usamos la columna directa
-    const tc = tenantClauseCol(req, "owner_admin_id", 1);
+    const tc = tenantClause(req, "p", 1);
     let idx = tc.nextIdx;
 
     let query = `
-      SELECT vpb.*, u.name AS owner_admin_name
-      FROM v_provider_balance vpb
-      LEFT JOIN users u ON u.id = vpb.owner_admin_id
+      SELECT
+        p.id, p.name, p.category, p.phone, p.email, p.address,
+        p.contact_person, p.tax_id, p.balance, p.credit_limit,
+        p.payment_terms_days, p.reliability_score, p.lead_time_days,
+        p.is_active, p.notes, p.created_at, p.updated_at, p.owner_admin_id,
+        p.credit_limit - p.balance                              AS available_credit,
+        COALESCE(SUM(po.total_cost), 0)                         AS total_purchases,
+        COALESCE(COUNT(DISTINCT po.id), 0)                      AS total_orders,
+        COALESCE(SUM(pp.amount), 0)                             AS total_payments,
+        u.name                                                  AS owner_admin_name
+      FROM providers p
+      LEFT JOIN purchase_orders po
+        ON po.provider_id = p.id AND po.status <> 'cancelled'
+      LEFT JOIN provider_payments pp
+        ON pp.provider_id = p.id
+      LEFT JOIN users u
+        ON u.id = p.owner_admin_id
       WHERE 1=1 ${tc.clause}
     `;
     const params = [...tc.params];
 
     if (is_active !== undefined) {
-      query += ` AND vpb.is_active = $${idx++}`;
+      query += ` AND p.is_active = $${idx++}`;
       params.push(is_active === "true");
     }
     if (category) {
-      query += ` AND vpb.category = $${idx++}`;
+      query += ` AND p.category = $${idx++}`;
       params.push(category);
     }
 
-    query += " ORDER BY vpb.name ASC";
+    query += " GROUP BY p.id, u.name ORDER BY p.name ASC";
 
     const result = await db.query(query, params);
     res.json(result.rows);
@@ -63,26 +75,39 @@ exports.getAll = async (req, res) => {
   }
 };
 
-// ============================================================
-// OBTENER PROVEEDOR POR ID
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers/:id
+// ─────────────────────────────────────────────
 exports.getById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const tc = tenantClauseCol(req, "owner_admin_id", 2);
+    const tc = tenantClause(req, "p", 2);
 
-    const result = await db.query(
-      `SELECT vpb.*, u.name AS owner_admin_name
-       FROM v_provider_balance vpb
-       LEFT JOIN users u ON u.id = vpb.owner_admin_id
-       WHERE vpb.id = $1 ${tc.clause}`,
-      [id, ...tc.params]
-    );
+    const result = await db.query(`
+      SELECT
+        p.id, p.name, p.category, p.phone, p.email, p.address,
+        p.contact_person, p.tax_id, p.balance, p.credit_limit,
+        p.payment_terms_days, p.reliability_score, p.lead_time_days,
+        p.is_active, p.notes, p.created_at, p.updated_at, p.owner_admin_id,
+        p.credit_limit - p.balance                              AS available_credit,
+        COALESCE(SUM(po.total_cost), 0)                         AS total_purchases,
+        COALESCE(COUNT(DISTINCT po.id), 0)                      AS total_orders,
+        COALESCE(SUM(pp.amount), 0)                             AS total_payments,
+        u.name                                                  AS owner_admin_name
+      FROM providers p
+      LEFT JOIN purchase_orders po
+        ON po.provider_id = p.id AND po.status <> 'cancelled'
+      LEFT JOIN provider_payments pp
+        ON pp.provider_id = p.id
+      LEFT JOIN users u
+        ON u.id = p.owner_admin_id
+      WHERE p.id = $1 ${tc.clause}
+      GROUP BY p.id, u.name
+    `, [id, ...tc.params]);
 
     if (result.rowCount === 0) {
-      // Distinguimos 404 de 403
-      if (!isSA(req)) {
+      if (!req.isSuperAdmin) {
         const exists = await db.query("SELECT id FROM providers WHERE id = $1", [id]);
         if (exists.rowCount) return res.status(403).json({ message: "No autorizado" });
       }
@@ -96,9 +121,9 @@ exports.getById = async (req, res) => {
   }
 };
 
-// ============================================================
-// CREAR PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// POST /providers
+// ─────────────────────────────────────────────
 exports.create = async (req, res) => {
   const {
     name, category, phone, email, address, contact_person,
@@ -109,38 +134,36 @@ exports.create = async (req, res) => {
     return res.status(400).json({ message: "El nombre del proveedor es obligatorio." });
   }
 
-  // superadmin crea globalmente (null); admin lo marca como suyo
-  const ownerAdminId = isSA(req) ? null : req.user.id;
+  const ownerAdminId = req.isSuperAdmin ? null : req.adminId;
 
   try {
     const result = await db.query(
       `INSERT INTO providers
          (name, category, phone, email, address, contact_person, tax_id,
-          credit_limit, payment_terms_days, lead_time_days, notes, owner_admin_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+          credit_limit, payment_terms_days, lead_time_days, notes,
+          created_by, owner_admin_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [
-        name.trim(), category, phone || null, email || null,
-        address || null, contact_person || null, tax_id || null,
+        name.trim(), category,
+        phone || null, email || null, address || null,
+        contact_person || null, tax_id || null,
         credit_limit || 0, payment_terms_days || 30,
         lead_time_days || 7, notes || null,
-        ownerAdminId,
+        req.user.id, ownerAdminId,
       ]
     );
 
-    res.status(201).json({
-      message: "Proveedor creado exitosamente",
-      provider: result.rows[0],
-    });
+    res.status(201).json({ message: "Proveedor creado exitosamente", provider: result.rows[0] });
   } catch (error) {
     console.error("CREATE PROVIDER ERROR:", error);
     res.status(500).json({ message: "Error al crear proveedor" });
   }
 };
 
-// ============================================================
-// ACTUALIZAR PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// PUT /providers/:id
+// ─────────────────────────────────────────────
 exports.update = async (req, res) => {
   const { id } = req.params;
   const {
@@ -154,7 +177,6 @@ exports.update = async (req, res) => {
   }
 
   try {
-    // Verificar pertenencia antes de modificar
     const owns = await _checkOwnership(req, id);
     if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado para modificar este proveedor" });
@@ -179,27 +201,24 @@ exports.update = async (req, res) => {
        RETURNING *`,
       [
         name.trim(), category,
-        phone || null, email || null,
-        address || null, contact_person || null, tax_id || null,
+        phone || null, email || null, address || null,
+        contact_person || null, tax_id || null,
         credit_limit ?? 0, payment_terms_days ?? 30, lead_time_days ?? 7,
         reliability_score ?? 5, is_active ?? true,
         notes || null, id,
       ]
     );
 
-    res.json({
-      message: "Proveedor actualizado exitosamente",
-      provider: result.rows[0],
-    });
+    res.json({ message: "Proveedor actualizado exitosamente", provider: result.rows[0] });
   } catch (error) {
     console.error("UPDATE PROVIDER ERROR:", error);
     res.status(500).json({ message: "Error al actualizar proveedor" });
   }
 };
 
-// ============================================================
-// TOGGLE ACTIVO / INACTIVO
-// ============================================================
+// ─────────────────────────────────────────────
+// PATCH /providers/:id/toggle-active
+// ─────────────────────────────────────────────
 exports.toggleActive = async (req, res) => {
   const { id } = req.params;
 
@@ -209,16 +228,14 @@ exports.toggleActive = async (req, res) => {
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
 
     const result = await db.query(
-      `UPDATE providers
-         SET is_active = NOT is_active, updated_at = NOW()
-       WHERE id = $1
-       RETURNING id, name, is_active`,
+      `UPDATE providers SET is_active = NOT is_active, updated_at = NOW()
+       WHERE id = $1 RETURNING id, name, is_active`,
       [id]
     );
 
     const { name, is_active } = result.rows[0];
     res.json({
-      message: `Proveedor "${name}" ${is_active ? "activado" : "desactivado"} exitosamente`,
+      message:  `Proveedor "${name}" ${is_active ? "activado" : "desactivado"} exitosamente`,
       provider: result.rows[0],
     });
   } catch (error) {
@@ -227,9 +244,9 @@ exports.toggleActive = async (req, res) => {
   }
 };
 
-// ============================================================
-// ELIMINAR PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// DELETE /providers/:id
+// ─────────────────────────────────────────────
 exports.remove = async (req, res) => {
   const { id } = req.params;
 
@@ -239,10 +256,8 @@ exports.remove = async (req, res) => {
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado para eliminar este proveedor" });
 
     const ordersCheck = await db.query(
-      "SELECT COUNT(*) AS count FROM purchase_orders WHERE provider_id = $1",
-      [id]
+      "SELECT COUNT(*) AS count FROM purchase_orders WHERE provider_id = $1", [id]
     );
-
     if (parseInt(ordersCheck.rows[0].count) > 0) {
       return res.status(400).json({
         message: "No se puede eliminar: el proveedor tiene órdenes de compra asociadas. Considere desactivarlo.",
@@ -257,12 +272,11 @@ exports.remove = async (req, res) => {
   }
 };
 
-// ============================================================
-// REGISTRAR PAGO A PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// POST /providers/payments  — registrar pago
+// ─────────────────────────────────────────────
 exports.registerPayment = async (req, res) => {
-  const { provider_id, amount, payment_method, reference_number, notes, purchase_order_id } =
-    req.body;
+  const { provider_id, amount, payment_method, reference_number, notes, purchase_order_id } = req.body;
 
   if (!provider_id || !amount || isNaN(amount) || Number(amount) <= 0) {
     return res.status(400).json({ message: "Datos de pago inválidos." });
@@ -272,9 +286,8 @@ exports.registerPayment = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Verificar proveedor + pertenencia + saldo (con FOR UPDATE para concurrencia)
-    const ownerClause = isSA(req) ? "" : "AND owner_admin_id = $2";
-    const checkParams = isSA(req) ? [provider_id] : [provider_id, req.user.id];
+    const ownerClause = req.isSuperAdmin ? "" : "AND owner_admin_id = $2";
+    const checkParams = req.isSuperAdmin ? [provider_id] : [provider_id, req.adminId];
 
     const providerRes = await client.query(
       `SELECT id, name, balance FROM providers WHERE id = $1 ${ownerClause} FOR UPDATE`,
@@ -282,7 +295,6 @@ exports.registerPayment = async (req, res) => {
     );
 
     if (providerRes.rowCount === 0) {
-      // Distinguir 404 de 403
       const exists = await client.query("SELECT id FROM providers WHERE id = $1", [provider_id]);
       throw {
         status:  exists.rowCount ? 403 : 404,
@@ -297,13 +309,10 @@ exports.registerPayment = async (req, res) => {
 
     await client.query(
       `INSERT INTO provider_payments
-         (provider_id, purchase_order_id, amount, payment_method,
-          reference_number, notes, created_by)
+         (provider_id, purchase_order_id, amount, payment_method, reference_number, notes, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [
-        provider_id, purchase_order_id || null, amount, payment_method,
-        reference_number || null, notes || null, req.user.id,
-      ]
+      [provider_id, purchase_order_id || null, amount, payment_method,
+       reference_number || null, notes || null, req.user.id]
     );
 
     await client.query(
@@ -313,32 +322,24 @@ exports.registerPayment = async (req, res) => {
 
     if (purchase_order_id) {
       const orderRes = await client.query(
-        "SELECT total_cost FROM purchase_orders WHERE id = $1",
-        [purchase_order_id]
+        "SELECT total_cost FROM purchase_orders WHERE id = $1", [purchase_order_id]
       );
-
       if (orderRes.rowCount > 0) {
         const totalCost = parseFloat(orderRes.rows[0].total_cost);
         const paidRes   = await client.query(
           "SELECT COALESCE(SUM(amount),0) AS total_paid FROM provider_payments WHERE purchase_order_id = $1",
           [purchase_order_id]
         );
-        const totalPaid  = parseFloat(paidRes.rows[0].total_paid);
-        const newStatus  = totalPaid >= totalCost ? "paid" : totalPaid > 0 ? "partial" : "pending";
-
+        const totalPaid = parseFloat(paidRes.rows[0].total_paid);
+        const newStatus = totalPaid >= totalCost ? "paid" : totalPaid > 0 ? "partial" : "pending";
         await client.query(
-          "UPDATE purchase_orders SET payment_status = $1 WHERE id = $2",
-          [newStatus, purchase_order_id]
+          "UPDATE purchase_orders SET payment_status = $1 WHERE id = $2", [newStatus, purchase_order_id]
         );
       }
     }
 
     await client.query("COMMIT");
-
-    res.json({
-      message:     "Pago registrado exitosamente",
-      new_balance: currentBalance - parseFloat(amount),
-    });
+    res.json({ message: "Pago registrado exitosamente", new_balance: currentBalance - parseFloat(amount) });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("REGISTER PAYMENT ERROR:", error);
@@ -348,24 +349,20 @@ exports.registerPayment = async (req, res) => {
   }
 };
 
-// ============================================================
-// HISTORIAL DE PAGOS DE UN PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers/:id/payments
+// ─────────────────────────────────────────────
 exports.getPaymentHistory = async (req, res) => {
   const { id } = req.params;
   const { start_date, end_date } = req.query;
 
   try {
-    // Verificar acceso al proveedor primero
     const owns = await _checkOwnership(req, id);
     if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
 
     let query = `
-      SELECT
-        pp.*,
-        po.order_number,
-        u.name AS registered_by
+      SELECT pp.*, po.order_number, u.name AS registered_by
       FROM provider_payments pp
       LEFT JOIN purchase_orders po ON po.id = pp.purchase_order_id
       LEFT JOIN users u            ON u.id  = pp.created_by
@@ -376,7 +373,6 @@ exports.getPaymentHistory = async (req, res) => {
 
     if (start_date) { query += ` AND pp.created_at >= $${idx++}`; params.push(start_date); }
     if (end_date)   { query += ` AND pp.created_at <= $${idx++}`; params.push(end_date); }
-
     query += " ORDER BY pp.created_at DESC";
 
     const result = await db.query(query, params);
@@ -387,9 +383,9 @@ exports.getPaymentHistory = async (req, res) => {
   }
 };
 
-// ============================================================
-// HISTORIAL DE COMPRAS POR PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers/:id/purchases
+// ─────────────────────────────────────────────
 exports.getPurchaseHistory = async (req, res) => {
   const { id } = req.params;
   const { start_date, end_date, status } = req.query;
@@ -399,19 +395,14 @@ exports.getPurchaseHistory = async (req, res) => {
     if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
 
-    // v_purchase_orders_summary hereda del proveedor — filtrar por provider_id ya es suficiente
-    // porque el proveedor ya fue validado arriba
-    let query = `
-      SELECT * FROM v_purchase_orders_summary
-      WHERE provider_id = $1
-    `;
+    // El proveedor ya fue validado → filtrar por provider_id es suficiente
+    let query = `SELECT * FROM v_purchase_orders_summary WHERE provider_id = $1`;
     const params = [id];
     let idx = 2;
 
     if (start_date) { query += ` AND order_date >= $${idx++}`; params.push(start_date); }
     if (end_date)   { query += ` AND order_date <= $${idx++}`; params.push(end_date); }
     if (status)     { query += ` AND status = $${idx++}`;      params.push(status); }
-
     query += " ORDER BY order_date DESC";
 
     const result = await db.query(query, params);
@@ -422,19 +413,17 @@ exports.getPurchaseHistory = async (req, res) => {
   }
 };
 
-// ============================================================
-// COMPARACIÓN DE PRECIOS ENTRE PROVEEDORES
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers/price-comparison?product_id=X
+// ─────────────────────────────────────────────
 exports.getPriceComparison = async (req, res) => {
   const { product_id } = req.query;
-
   if (!product_id) {
     return res.status(400).json({ message: "product_id es requerido" });
   }
 
   try {
-    // Solo muestra proveedores del propio admin (o todos si es superadmin)
-    const tc  = tenantClause(req, "prov", 2);
+    const tc = tenantClause(req, "prov", 2);
 
     const result = await db.query(
       `SELECT
@@ -468,9 +457,9 @@ exports.getPriceComparison = async (req, res) => {
   }
 };
 
-// ============================================================
-// ESTADÍSTICAS DEL PROVEEDOR
-// ============================================================
+// ─────────────────────────────────────────────
+// GET /providers/:id/stats
+// ─────────────────────────────────────────────
 exports.getStats = async (req, res) => {
   const { id } = req.params;
 
@@ -495,13 +484,11 @@ exports.getStats = async (req, res) => {
         `SELECT
            COALESCE(SUM(amount), 0) AS total_paid,
            (SELECT balance FROM providers WHERE id = $1) AS current_balance
-         FROM provider_payments
-         WHERE provider_id = $1`,
+         FROM provider_payments WHERE provider_id = $1`,
         [id]
       ),
       db.query(
-        `SELECT
-           p.id, p.name, p.sku,
+        `SELECT p.id, p.name, p.sku,
            SUM(poi.quantity)  AS total_quantity,
            AVG(poi.unit_cost) AS avg_cost
          FROM purchase_order_items poi
@@ -509,8 +496,7 @@ exports.getStats = async (req, res) => {
          JOIN purchase_orders po ON po.id = poi.purchase_order_id
          WHERE po.provider_id = $1 AND po.status != 'cancelled'
          GROUP BY p.id, p.name, p.sku
-         ORDER BY total_quantity DESC
-         LIMIT 10`,
+         ORDER BY total_quantity DESC LIMIT 10`,
         [id]
       ),
     ]);
@@ -529,22 +515,21 @@ exports.getStats = async (req, res) => {
   }
 };
 
-// ============================================================
-// HELPER PRIVADO — verifica existencia y pertenencia
+// ─────────────────────────────────────────────
+// HELPER PRIVADO — verifica existencia y ownership
 // Retorna: "ok" | "not_found" | "forbidden"
-// ============================================================
+// ─────────────────────────────────────────────
 const _checkOwnership = async (req, id) => {
-  if (isSA(req)) {
+  if (req.isSuperAdmin) {
     const r = await db.query("SELECT id FROM providers WHERE id = $1", [id]);
     return r.rowCount ? "ok" : "not_found";
   }
 
   const r = await db.query(
-    "SELECT id, owner_admin_id FROM providers WHERE id = $1",
-    [id]
+    "SELECT id, owner_admin_id FROM providers WHERE id = $1", [id]
   );
   if (!r.rowCount) return "not_found";
-  if (String(r.rows[0].owner_admin_id) !== String(req.user.id)) return "forbidden";
+  if (String(r.rows[0].owner_admin_id) !== String(req.adminId)) return "forbidden";
   return "ok";
 };
 
