@@ -1,40 +1,21 @@
+// routes/discounts.routes.js
 const express = require("express");
 const { auth, requireManager } = require("../middleware/auth.middleware");
+const { adminScope }           = require("../middleware/adminScope");
 const ctrl = require("../controllers/discounts.controller");
 
 const router = express.Router();
 
-// ============================================
-// 💰 RUTAS DE DESCUENTOS
-// ============================================
+// ── Middleware global ─────────────────────────────────────────
+router.use(auth);
+router.use(adminScope);
+router.use(requireManager);
 
-/**
- * @route   GET /api/discounts
- * @desc    Obtener todos los descuentos
- * @access  Private (Admin y Gerente)
- */
-router.get("/", auth, requireManager, ctrl.getAll);
+// ── Rutas ─────────────────────────────────────────────────────
+router.get   ("/",    ctrl.getAll);
+router.post  ("/",    ctrl.create);
+router.put   ("/:id", ctrl.update);
+router.delete("/:id", ctrl.remove);
+router.patch ("/:id", ctrl.toggleActive);
 
-/**
- * @route   POST /api/discounts
- * @desc    Crear nuevo descuento
- * @access  Private (Admin y Gerente)
- */
-router.post("/", auth, requireManager, ctrl.create);
-
-/**
- * @route   PUT /api/discounts/:id
- * @desc    Actualizar descuento
- * @access  Private (Admin y Gerente)
- */
-router.put("/:id", auth, requireManager, ctrl.update);
-
-/**
- * @route   DELETE /api/discounts/:id
- * @desc    Eliminar descuento
- * @access  Private (Admin y Gerente)
- */
-router.delete("/:id", auth, requireManager, ctrl.remove);
-
-router.patch("/:id", auth, requireManager, ctrl.toggleActive);
 module.exports = router;

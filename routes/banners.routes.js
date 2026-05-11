@@ -1,19 +1,21 @@
+// routes/banners.routes.js
 const express = require("express");
 const router  = express.Router();
-const bannerController = require("../controllers/banners.controller");
-const { uploadBanner } = require("../middleware/upload.middleware");
+const ctrl    = require("../controllers/banners.controller");
+const { uploadBanner }         = require("../middleware/upload.middleware");
 const { auth, requireManager } = require("../middleware/auth.middleware");
-const { adminScope } = require("../middleware/adminScope");
+const { adminScope }           = require("../middleware/adminScope");
 
-// Pública — storefront, con caché
-router.get("/", bannerController.getAll);
+// ── Pública — sin auth (storefront, con caché) ────────────────
+router.get("/", ctrl.getAll);
 
-// Panel admin — autenticada, con scope de tenant
-router.get("/admin", auth, adminScope, requireManager, bannerController.getAllAdmin);
+// ── Privadas — auth + adminScope para todo lo de abajo ────────
+router.use(auth);
+router.use(adminScope);
 
-// Mutaciones — requieren auth + scope
-router.post(  "/",    auth, adminScope, requireManager, uploadBanner.single("image"), bannerController.create);
-router.put(   "/:id", auth, adminScope, requireManager, uploadBanner.single("image"), bannerController.update);
-router.delete("/:id", auth, adminScope, requireManager, bannerController.delete);
+router.get   ("/admin", requireManager, ctrl.getAllAdmin);
+router.post  ("/",      requireManager, uploadBanner.single("image"), ctrl.create);
+router.put   ("/:id",   requireManager, uploadBanner.single("image"), ctrl.update);
+router.delete("/:id",   requireManager, ctrl.delete);
 
 module.exports = router;

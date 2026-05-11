@@ -1,22 +1,25 @@
-// src/routes/sales.routes.js
+// routes/sales.routes.js
 const express = require("express");
 const router  = express.Router();
-
-const ctrl              = require("../controllers/sales.controller");
+const ctrl    = require("../controllers/sales.controller");
 const { auth, requireManager } = require("../middleware/auth.middleware");
+const { adminScope }           = require("../middleware/adminScope");
 
-// ── Rutas estáticas primero ──────────────────────────────────
-router.get("/",             auth, ctrl.getAllSales);
-router.get("/user/history", auth, ctrl.getUserOrderHistory);
-router.get("/user/stats",   auth, ctrl.getUserStats);
+// ── Middleware global — auth + adminScope para todas ─────────
+router.use(auth);
+router.use(adminScope);
 
-router.post("/",         auth, ctrl.createOrder);
-router.post("/checkout", auth, ctrl.createOrder);
+// ── Rutas estáticas primero ───────────────────────────────────
+router.get ("/",             requireManager, ctrl.getAllSales);
+router.get ("/user/history",                ctrl.getUserOrderHistory);
+router.get ("/user/stats",                  ctrl.getUserStats);
+router.post("/",                            ctrl.createOrder);
+router.post("/checkout",                    ctrl.createOrder);
 
-// ── Rutas con :id ────────────────────────────────────────────
-router.get( "/:id/payments", auth,                     ctrl.getSalePayments);   // historial de pagos
-router.post("/:id/payments", auth, requireManager,     ctrl.registerPayment);   // registrar abono
-router.post("/:id/cancel",   auth,                     ctrl.cancelOrder);       // cancelar
-router.get( "/:id",          auth,                     ctrl.getOrderDetail);    // ítems
+// ── Rutas con :id ─────────────────────────────────────────────
+router.get ("/:id/payments",                ctrl.getSalePayments);
+router.post("/:id/payments", requireManager,ctrl.registerPayment);
+router.post("/:id/cancel",                  ctrl.cancelOrder);
+router.get ("/:id",                         ctrl.getOrderDetail);
 
 module.exports = router;

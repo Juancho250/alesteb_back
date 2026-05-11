@@ -2,11 +2,10 @@
 const db = require("../config/db");
 const { emitDataUpdate } = require("../config/socket");
 
-const isSA = (req) => req.user?.roles?.includes("superadmin");
-
-// Helper: verifica que el descuento le pertenezca al admin que lo pide
-const assertDiscountOwnership = async (discountId, adminId, superAdmin) => {
-  if (superAdmin) return true;
+// Helper: verifica ownership usando req.isSuperAdmin / req.adminId
+// (adminScope ya corrió, así que siempre están definidos)
+const assertDiscountOwnership = async (discountId, adminId, isSuperAdmin) => {
+  if (isSuperAdmin) return true;
   const res = await db.query(
     "SELECT id FROM discounts WHERE id = $1 AND owner_admin_id = $2",
     [discountId, adminId]
@@ -19,7 +18,8 @@ const assertDiscountOwnership = async (discountId, adminId, superAdmin) => {
 // ============================================
 exports.create = async (req, res) => {
   const { name, type, value, starts_at, ends_at, targets } = req.body;
-  const ownerAdminId = isSA(req) ? null : req.user.id;
+  const { isSuperAdmin, adminId } = req;
+  const ownerAdminId = isSuperAdmin ? null : adminId;
 
   const client = await db.connect();
   try {
@@ -36,7 +36,8 @@ exports.create = async (req, res) => {
     if (targets?.length > 0) {
       for (const target of targets) {
         await client.query(
-          `INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES ($1, $2, $3)`,
+          `INSERT INTO discount_targets (discount_id, target_type, target_id)
+           VALUES ($1, $2, $3)`,
           [discount.id, target.target_type, target.target_id]
         );
       }
@@ -44,7 +45,6 @@ exports.create = async (req, res) => {
 
     await client.query("COMMIT");
     emitDataUpdate("discounts", "created", { ...discount, targets: targets || [] });
-
     res.status(201).json({ id: discount.id, message: "Descuento creado con éxito" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -56,16 +56,20 @@ exports.create = async (req, res) => {
 };
 
 // ============================================
-// 📋 OBTENER TODOS LOS DESCUENTOS
+// 📋 OBTENER TODOS
 // ============================================
 exports.getAll = async (req, res) => {
-  try {
-    const tenantClause = isSA(req) ? "" : "WHERE d.owner_admin_id = $1";
-    const params       = isSA(req) ? [] : [req.user.id];
+  const { isSuperAdmin, adminId } = req;
 
+  const tenantClause = isSuperAdmin ? "" : "WHERE d.owner_admin_id = $1";
+  const params       = isSuperAdmin ? [] : [adminId];
+
+  try {
     const result = await db.query(`
       SELECT d.*,
-        (SELECT json_agg(dt) FROM discount_targets dt WHERE dt.discount_id = d.id) as targets
+        (SELECT json_agg(dt)
+         FROM discount_targets dt
+         WHERE dt.discount_id = d.id) AS targets
       FROM discounts d
       ${tenantClause}
       ORDER BY d.created_at DESC
@@ -79,15 +83,16 @@ exports.getAll = async (req, res) => {
 };
 
 // ============================================
-// ✏️ ACTUALIZAR DESCUENTO
+// ✏️ ACTUALIZAR
 // ============================================
 exports.update = async (req, res) => {
   const { id } = req.params;
   const { name, type, value, starts_at, ends_at, targets } = req.body;
+  const { isSuperAdmin, adminId } = req;
 
   const client = await db.connect();
   try {
-    const owned = await assertDiscountOwnership(id, req.user.id, isSA(req));
+    const owned = await assertDiscountOwnership(id, adminId, isSuperAdmin);
     if (!owned) {
       const exists = await db.query("SELECT id FROM discounts WHERE id = $1", [id]);
       return exists.rowCount
@@ -109,7 +114,8 @@ exports.update = async (req, res) => {
     if (targets?.length > 0) {
       for (const target of targets) {
         await client.query(
-          `INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES ($1, $2, $3)`,
+          `INSERT INTO discount_targets (discount_id, target_type, target_id)
+           VALUES ($1, $2, $3)`,
           [id, target.target_type, target.target_id]
         );
       }
@@ -117,7 +123,6 @@ exports.update = async (req, res) => {
 
     await client.query("COMMIT");
     emitDataUpdate("discounts", "updated", { ...updateRes.rows[0], targets: targets || [] });
-
     res.json({ message: "Descuento actualizado con éxito" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -129,12 +134,14 @@ exports.update = async (req, res) => {
 };
 
 // ============================================
-// 🗑️ ELIMINAR DESCUENTO
+// 🗑️ ELIMINAR
 // ============================================
 exports.remove = async (req, res) => {
   const { id } = req.params;
+  const { isSuperAdmin, adminId } = req;
+
   try {
-    const owned = await assertDiscountOwnership(id, req.user.id, isSA(req));
+    const owned = await assertDiscountOwnership(id, adminId, isSuperAdmin);
     if (!owned) {
       const exists = await db.query("SELECT id FROM discounts WHERE id = $1", [id]);
       return exists.rowCount
@@ -144,7 +151,6 @@ exports.remove = async (req, res) => {
 
     await db.query("DELETE FROM discounts WHERE id = $1", [id]);
     emitDataUpdate("discounts", "deleted", { id: parseInt(id) });
-
     res.json({ message: "Descuento eliminado" });
   } catch (error) {
     console.error("DISCOUNT REMOVE ERROR:", error);
@@ -158,15 +164,19 @@ exports.remove = async (req, res) => {
 exports.toggleActive = async (req, res) => {
   const { id } = req.params;
   const { is_active } = req.body;
+  const { isSuperAdmin, adminId } = req;
 
   if (typeof is_active !== "boolean") {
     return res.status(400).json({ message: "is_active debe ser un booleano" });
   }
 
   try {
-    const owned = await assertDiscountOwnership(id, req.user.id, isSA(req));
+    const owned = await assertDiscountOwnership(id, adminId, isSuperAdmin);
     if (!owned) {
-      return res.status(403).json({ message: "No tienes permisos sobre este descuento" });
+      const exists = await db.query("SELECT id FROM discounts WHERE id = $1", [id]);
+      return exists.rowCount
+        ? res.status(403).json({ message: "No tienes permisos sobre este descuento" })
+        : res.status(404).json({ message: "Descuento no encontrado" });
     }
 
     const result = await db.query(

@@ -1,8 +1,22 @@
 // controllers/stats.controller.js
-// ─── Todo PostgreSQL (Neon) ───────────────────────────────────────
 const pool = require("../config/db");
 
+// ─────────────────────────────────────────────
+// Helper de scope — igual que en finance
+// ─────────────────────────────────────────────
+const tc = (isSuperAdmin, adminId, alias, startIdx = 1) => {
+  if (isSuperAdmin) return { clause: "", params: [], next: startIdx };
+  const col = alias ? `${alias}.owner_admin_id` : "owner_admin_id";
+  return {
+    clause: `AND ${col} = $${startIdx}`,
+    params: [adminId],
+    next:   startIdx + 1,
+  };
+};
+
 const getDashboardStats = async (req, res) => {
+  const { isSuperAdmin, adminId } = req;
+
   try {
     const [
       revenueVsExpenses,
@@ -16,46 +30,41 @@ const getDashboardStats = async (req, res) => {
       lowStock,
       pendingOrders,
     ] = await Promise.all([
-      getRevenueVsExpenses(),
-      getCashflow12Months(),
-      getTopProductsByProfit(),
-      getMarginByCategory(),
-      getPaymentMethodDistribution(),
-      getExpensesByType(),
-      getKpiSummary(),
-      getProviderDebt(),
-      getLowStockProducts(),
-      getPendingOrders(),
+      getRevenueVsExpenses(isSuperAdmin, adminId),
+      getCashflow12Months(isSuperAdmin, adminId),
+      getTopProductsByProfit(isSuperAdmin, adminId),
+      getMarginByCategory(isSuperAdmin, adminId),
+      getPaymentMethodDistribution(isSuperAdmin, adminId),
+      getExpensesByType(isSuperAdmin, adminId),
+      getKpiSummary(isSuperAdmin, adminId),
+      getProviderDebt(isSuperAdmin, adminId),
+      getLowStockProducts(isSuperAdmin, adminId),
+      getPendingOrders(isSuperAdmin, adminId),
     ]);
 
-    return res.json({
-      revenueVsExpenses,
-      cashflow,
-      topProducts,
-      marginByCategory,
-      paymentMethods,
-      expensesByType,
-      kpiSummary,
-      providerDebt,
-      lowStock,
-      pendingOrders,
+    res.json({
+      revenueVsExpenses, cashflow, topProducts, marginByCategory,
+      paymentMethods, expensesByType, kpiSummary, providerDebt,
+      lowStock, pendingOrders,
     });
   } catch (err) {
     console.error("[STATS /dashboard]", err);
-    return res.status(500).json({ error: "Error al cargar estadísticas del dashboard" });
+    res.status(500).json({ error: "Error al cargar estadísticas del dashboard" });
   }
 };
 
 // ── Ingresos vs Gastos — últimas 8 semanas ────────────────────────
-async function getRevenueVsExpenses() {
+async function getRevenueVsExpenses(isSuperAdmin, adminId) {
+  const sScope = tc(isSuperAdmin, adminId, "s");
+  const eScope = tc(isSuperAdmin, adminId, "e");
+
   const { rows } = await pool.query(`
     WITH weeks AS (SELECT generate_series(0, 7) AS w),
     week_ranges AS (
-      SELECT
-        w,
-        CURRENT_DATE - ((w + 1) * 7)  AS week_start,
-        CURRENT_DATE - (w * 7)         AS week_end,
-        'S' || (8 - w)                 AS label
+      SELECT w,
+        CURRENT_DATE - ((w + 1) * 7) AS week_start,
+        CURRENT_DATE - (w * 7)        AS week_end,
+        'S' || (8 - w)                AS label
       FROM weeks
     ),
     sales_agg AS (
@@ -66,6 +75,7 @@ async function getRevenueVsExpenses() {
         ON s.sale_date::date >= wr.week_start
         AND s.sale_date::date < wr.week_end
         AND s.payment_status = 'paid'
+        ${sScope.clause}
       GROUP BY wr.label, wr.w
     ),
     expenses_agg AS (
@@ -75,188 +85,277 @@ async function getRevenueVsExpenses() {
       LEFT JOIN expenses e
         ON e.expense_date >= wr.week_start
         AND e.expense_date < wr.week_end
+        ${eScope.clause}
       GROUP BY wr.label, wr.w
     )
     SELECT
-      sa.label                              AS name,
-      ROUND(sa.ingresos, 0)                 AS ingresos,
-      ROUND(ea.gastos, 0)                   AS gastos,
-      ROUND(sa.ingresos - ea.gastos, 0)     AS utilidad
+      sa.label                           AS name,
+      ROUND(sa.ingresos, 0)              AS ingresos,
+      ROUND(ea.gastos, 0)                AS gastos,
+      ROUND(sa.ingresos - ea.gastos, 0)  AS utilidad
     FROM sales_agg sa
     JOIN expenses_agg ea USING (label, w)
     ORDER BY sa.w DESC
-  `);
+  `, [...sScope.params, ...eScope.params]);
+
   return rows;
 }
 
-// ── Flujo de caja — últimos 12 meses ──────────────────────────────
-async function getCashflow12Months() {
+// ── Flujo de caja — últimos 12 meses ─────────────────────────────
+async function getCashflow12Months(isSuperAdmin, adminId) {
+  const sScope = tc(isSuperAdmin, adminId, "s");
+  const eScope = tc(isSuperAdmin, adminId, "e");
+
+  // Los params de sales van en $1, los de expenses en $(n+1)
+  // Como ambos pueden ser [adminId] o [], los concatenamos
+  const allParams = [...sScope.params, ...eScope.params];
+
+  // Necesitamos offsets correctos para la segunda subquery
+  const eOffset = sScope.params.length;
+  const eClause = eScope.clause
+    ? eScope.clause.replace(`$${1}`, `$${eOffset + 1}`)
+    : "";
+
   const { rows } = await pool.query(`
     SELECT
-      TO_CHAR(month_start, 'Mon')    AS name,
+      TO_CHAR(month_start, 'Mon')     AS name,
       TO_CHAR(month_start, 'YYYY-MM') AS period,
       ROUND(COALESCE(SUM(CASE WHEN type = 'income'  THEN amount END), 0), 0) AS ingresos,
       ROUND(COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0), 0) AS gastos
     FROM (
-      SELECT DATE_TRUNC('month', sale_date)                AS month_start, 'income'  AS type, total  AS amount
-      FROM sales
-      WHERE payment_status = 'paid'
-        AND sale_date >= NOW() - INTERVAL '12 months'
+      SELECT DATE_TRUNC('month', s.sale_date) AS month_start,
+             'income' AS type, s.total AS amount
+      FROM sales s
+      WHERE s.payment_status = 'paid'
+        AND s.sale_date >= NOW() - INTERVAL '12 months'
+        ${sScope.clause}
 
       UNION ALL
 
-      SELECT DATE_TRUNC('month', expense_date::timestamp)  AS month_start, 'expense' AS type, amount
-      FROM expenses
-      WHERE expense_date >= NOW() - INTERVAL '12 months'
+      SELECT DATE_TRUNC('month', e.expense_date::timestamp) AS month_start,
+             'expense' AS type, e.amount
+      FROM expenses e
+      WHERE e.expense_date >= NOW() - INTERVAL '12 months'
+        ${eClause}
     ) combined
     GROUP BY month_start
     ORDER BY month_start ASC
-  `);
+  `, allParams);
+
   return rows;
 }
 
-// ── Top 6 productos por utilidad realizada ─────────────────────────
-async function getTopProductsByProfit() {
+// ── Top 6 productos por utilidad ──────────────────────────────────
+async function getTopProductsByProfit(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "p");
+
   const { rows } = await pool.query(`
     SELECT
       p.id,
       CASE WHEN LENGTH(p.name) > 16 THEN SUBSTRING(p.name, 1, 14) || '…' ELSE p.name END AS name,
-      ROUND(COALESCE(SUM(si.total_profit), 0), 0)   AS revenue,
-      COALESCE(SUM(si.quantity), 0)::int             AS units,
-      ROUND(p.sale_price, 0)                         AS price,
-      ROUND(p.sale_price - p.purchase_price, 0)      AS margin_per_unit,
-      CASE
-        WHEN p.purchase_price > 0
+      ROUND(COALESCE(SUM(si.total_profit), 0), 0) AS revenue,
+      COALESCE(SUM(si.quantity), 0)::int           AS units,
+      ROUND(p.sale_price, 0)                       AS price,
+      ROUND(p.sale_price - p.purchase_price, 0)    AS margin_per_unit,
+      CASE WHEN p.purchase_price > 0
         THEN ROUND((p.sale_price - p.purchase_price) / p.purchase_price * 100, 1)
         ELSE 0
       END AS margin_pct
     FROM products p
     LEFT JOIN sale_items si ON si.product_id = p.id
-    WHERE p.is_active = true
+    WHERE p.is_active = true ${scope.clause}
     GROUP BY p.id, p.name, p.sale_price, p.purchase_price
     ORDER BY revenue DESC
     LIMIT 6
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── Margen por categoría ───────────────────────────────────────────
-async function getMarginByCategory() {
+// ── Margen por categoría ──────────────────────────────────────────
+async function getMarginByCategory(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "p");
+
   const { rows } = await pool.query(`
     SELECT
       COALESCE(c.name, 'Sin categoría') AS name,
       ROUND(
-        CASE
-          WHEN SUM(p.sale_price) > 0
+        CASE WHEN SUM(p.sale_price) > 0
           THEN (SUM(p.sale_price - p.purchase_price) / SUM(p.sale_price)) * 100
           ELSE 0
         END, 1
       ) AS margin
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.is_active = true AND p.purchase_price > 0
+    WHERE p.is_active = true AND p.purchase_price > 0 ${scope.clause}
     GROUP BY c.name
     HAVING SUM(p.sale_price) > 0
     ORDER BY margin DESC
     LIMIT 6
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── Distribución de métodos de pago ───────────────────────────────
-async function getPaymentMethodDistribution() {
+// ── Distribución de métodos de pago ──────────────────────────────
+async function getPaymentMethodDistribution(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "s");
+
   const { rows } = await pool.query(`
     SELECT
-      COALESCE(payment_method::text, 'other') AS name,
-      COUNT(*)::int                            AS value,
-      ROUND(SUM(total), 0)                     AS total_amount
-    FROM sales
-    WHERE payment_status = 'paid'
-      AND created_at >= NOW() - INTERVAL '90 days'
-    GROUP BY payment_method
+      COALESCE(s.payment_method::text, 'other') AS name,
+      COUNT(*)::int                              AS value,
+      ROUND(SUM(s.total), 0)                     AS total_amount
+    FROM sales s
+    WHERE s.payment_status = 'paid'
+      AND s.created_at >= NOW() - INTERVAL '90 days'
+      ${scope.clause}
+    GROUP BY s.payment_method
     ORDER BY value DESC
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── Gastos por tipo (mes actual) ───────────────────────────────────
-async function getExpensesByType() {
+// ── Gastos por tipo (mes actual) ──────────────────────────────────
+async function getExpensesByType(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "e");
+
   const { rows } = await pool.query(`
     SELECT
-      expense_type::text    AS name,
-      ROUND(SUM(amount), 0) AS value,
-      COUNT(*)::int         AS count
-    FROM expenses
-    WHERE expense_date >= DATE_TRUNC('month', CURRENT_DATE)
-    GROUP BY expense_type
+      e.expense_type::text  AS name,
+      ROUND(SUM(e.amount), 0) AS value,
+      COUNT(*)::int           AS count
+    FROM expenses e
+    WHERE e.expense_date >= DATE_TRUNC('month', CURRENT_DATE)
+      ${scope.clause}
+    GROUP BY e.expense_type
     ORDER BY value DESC
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── KPIs de resumen ────────────────────────────────────────────────
-async function getKpiSummary() {
-  const { rows } = await pool.query(`
-    WITH
-      today_sales     AS (SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE sale_date::date = CURRENT_DATE         AND payment_status = 'paid'),
-      yesterday_sales AS (SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE sale_date::date = CURRENT_DATE - 1     AND payment_status = 'paid'),
-      month_sales     AS (
-        SELECT
-          COALESCE(SUM(total), 0) AS revenue,
-          COALESCE(AVG(total), 0) AS avg_ticket,
-          COUNT(*)                 AS count
-        FROM sales
-        WHERE DATE_TRUNC('month', sale_date) = DATE_TRUNC('month', NOW())
-          AND payment_status = 'paid'
-      ),
-      last_month      AS (SELECT COALESCE(SUM(total), 0) AS revenue FROM sales WHERE DATE_TRUNC('month', sale_date) = DATE_TRUNC('month', NOW() - INTERVAL '1 month') AND payment_status = 'paid'),
-      month_expenses  AS (SELECT COALESCE(SUM(amount), 0) AS total  FROM expenses WHERE DATE_TRUNC('month', expense_date::timestamp) = DATE_TRUNC('month', NOW())),
-      inventory       AS (SELECT COALESCE(SUM(stock * sale_price), 0) AS value, COUNT(*) AS sku_count FROM products WHERE is_active = true),
-      low_stock_cnt   AS (SELECT COUNT(*) AS cnt FROM products WHERE is_active = true AND stock <= COALESCE(min_stock, 5)),
-      pending_po      AS (SELECT COUNT(*) AS cnt FROM purchase_orders WHERE status IN ('pending', 'draft')),
-      provider_debt   AS (SELECT COALESCE(SUM(balance), 0) AS total, COUNT(*) FILTER (WHERE balance > 0) AS cnt FROM providers WHERE is_active = true)
-    SELECT
-      ts.total                                                                       AS sales_today,
-      ys.total                                                                       AS sales_yesterday,
-      ms.revenue                                                                     AS month_revenue,
-      lm.revenue                                                                     AS last_month_revenue,
-      ms.avg_ticket                                                                  AS avg_ticket,
-      ms.count::int                                                                  AS month_sales_count,
-      me.total                                                                       AS month_expenses,
-      CASE WHEN ms.revenue > 0 THEN ROUND((ms.revenue - me.total) / ms.revenue * 100, 1) ELSE 0 END AS net_margin,
-      inv.value                                                                      AS inventory_value,
-      inv.sku_count::int                                                             AS sku_count,
-      ls.cnt::int                                                                    AS low_stock_count,
-      pp.cnt::int                                                                    AS pending_orders,
-      pd.total                                                                       AS total_debt,
-      pd.cnt::int                                                                    AS active_providers
-    FROM today_sales ts, yesterday_sales ys, month_sales ms, last_month lm,
-         month_expenses me, inventory inv, low_stock_cnt ls, pending_po pp, provider_debt pd
-  `);
-  return rows[0] ?? {};
+// ── KPIs de resumen ───────────────────────────────────────────────
+async function getKpiSummary(isSuperAdmin, adminId) {
+  // Para KPIs usamos subconsultas — cada una necesita su propio scope
+  const sS  = tc(isSuperAdmin, adminId, "s");   // sales scope   → $1
+  const eS  = tc(isSuperAdmin, adminId, "e");   // expenses scope → $2 (si no superadmin)
+  const pS  = tc(isSuperAdmin, adminId, "p");   // products scope
+  const prS = tc(isSuperAdmin, adminId, "pr");  // providers scope
+  const poS = tc(isSuperAdmin, adminId, "po");  // purchase_orders scope
+
+  // Pasamos todos los params al query usando funciones separadas más simples
+  const [
+    salesToday, salesYesterday, monthSales, lastMonth,
+    monthExpenses, inventory, lowStockCnt, pendingPO, providerDebt,
+  ] = await Promise.all([
+    pool.query(
+      `SELECT COALESCE(SUM(s.total), 0) AS total FROM sales s
+       WHERE s.sale_date::date = CURRENT_DATE AND s.payment_status = 'paid' ${sS.clause}`,
+      sS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(s.total), 0) AS total FROM sales s
+       WHERE s.sale_date::date = CURRENT_DATE - 1 AND s.payment_status = 'paid' ${sS.clause}`,
+      sS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(s.total), 0) AS revenue,
+              COALESCE(AVG(s.total), 0)  AS avg_ticket,
+              COUNT(*)                    AS count
+       FROM sales s
+       WHERE DATE_TRUNC('month', s.sale_date) = DATE_TRUNC('month', NOW())
+         AND s.payment_status = 'paid' ${sS.clause}`,
+      sS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(s.total), 0) AS revenue FROM sales s
+       WHERE DATE_TRUNC('month', s.sale_date) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
+         AND s.payment_status = 'paid' ${sS.clause}`,
+      sS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(e.amount), 0) AS total FROM expenses e
+       WHERE DATE_TRUNC('month', e.expense_date::timestamp) = DATE_TRUNC('month', NOW())
+         ${eS.clause}`,
+      eS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(p.stock * p.sale_price), 0) AS value, COUNT(*) AS sku_count
+       FROM products p WHERE p.is_active = true ${pS.clause}`,
+      pS.params
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS cnt FROM products p
+       WHERE p.is_active = true AND p.stock <= COALESCE(p.min_stock, 5) ${pS.clause}`,
+      pS.params
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS cnt FROM purchase_orders po
+       WHERE po.status IN ('pending', 'draft') ${poS.clause}`,
+      poS.params
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(pr.balance), 0) AS total,
+              COUNT(*) FILTER (WHERE pr.balance > 0) AS cnt
+       FROM providers pr WHERE pr.is_active = true ${prS.clause}`,
+      prS.params
+    ),
+  ]);
+
+  const ms  = monthSales.rows[0];
+  const me  = monthExpenses.rows[0];
+  const inv = inventory.rows[0];
+  const pd  = providerDebt.rows[0];
+
+  return {
+    sales_today:        Number(salesToday.rows[0].total),
+    sales_yesterday:    Number(salesYesterday.rows[0].total),
+    month_revenue:      Number(ms.revenue),
+    last_month_revenue: Number(lastMonth.rows[0].revenue),
+    avg_ticket:         Number(ms.avg_ticket),
+    month_sales_count:  Number(ms.count),
+    month_expenses:     Number(me.total),
+    net_margin: Number(ms.revenue) > 0
+      ? +((Number(ms.revenue) - Number(me.total)) / Number(ms.revenue) * 100).toFixed(1)
+      : 0,
+    inventory_value:  Number(inv.value),
+    sku_count:        Number(inv.sku_count),
+    low_stock_count:  Number(lowStockCnt.rows[0].cnt),
+    pending_orders:   Number(pendingPO.rows[0].cnt),
+    total_debt:       Number(pd.total),
+    active_providers: Number(pd.cnt),
+  };
 }
 
-// ── Deuda con proveedores ──────────────────────────────────────────
-async function getProviderDebt() {
+// ── Deuda con proveedores ─────────────────────────────────────────
+async function getProviderDebt(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "p");
+
   const { rows } = await pool.query(`
     SELECT
-      p.id,
-      p.name,
-      p.category::text,
-      ROUND(p.balance, 0)       AS balance,
-      ROUND(p.credit_limit, 0)  AS credit_limit,
-      p.payment_terms_days      AS terms,
-      CASE WHEN p.credit_limit > 0 THEN ROUND((p.balance / p.credit_limit) * 100, 1) ELSE 0 END AS usage_pct
+      p.id, p.name, p.category::text,
+      ROUND(p.balance, 0)      AS balance,
+      ROUND(p.credit_limit, 0) AS credit_limit,
+      p.payment_terms_days     AS terms,
+      CASE WHEN p.credit_limit > 0
+        THEN ROUND((p.balance / p.credit_limit) * 100, 1)
+        ELSE 0
+      END AS usage_pct
     FROM providers p
-    WHERE p.balance > 0 AND p.is_active = true
+    WHERE p.balance > 0 AND p.is_active = true ${scope.clause}
     ORDER BY p.balance DESC
     LIMIT 6
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── Productos con stock bajo ───────────────────────────────────────
-async function getLowStockProducts() {
+// ── Productos con stock bajo ──────────────────────────────────────
+async function getLowStockProducts(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "p");
+
   const { rows } = await pool.query(`
     SELECT
       p.id, p.name, p.stock, p.min_stock, p.max_stock,
@@ -269,23 +368,27 @@ async function getLowStockProducts() {
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
     WHERE p.is_active = true AND p.stock <= COALESCE(p.min_stock, 5)
+      ${scope.clause}
     ORDER BY p.stock ASC
     LIMIT 10
-  `);
+  `, scope.params);
+
   return rows;
 }
 
-// ── Órdenes de compra pendientes ───────────────────────────────────
-async function getPendingOrders() {
+// ── Órdenes de compra pendientes ──────────────────────────────────
+async function getPendingOrders(isSuperAdmin, adminId) {
+  const scope = tc(isSuperAdmin, adminId, "po");
+
   const { rows } = await pool.query(`
     SELECT
       po.id, po.order_number,
       po.status::text,
       po.payment_status::text,
-      ROUND(po.total_cost, 0)         AS total_cost,
+      ROUND(po.total_cost, 0)       AS total_cost,
       po.order_date,
       po.expected_delivery_date,
-      pr.name                          AS provider_name,
+      pr.name                        AS provider_name,
       CASE
         WHEN po.expected_delivery_date < CURRENT_DATE
           AND po.status NOT IN ('received', 'cancelled')
@@ -293,10 +396,11 @@ async function getPendingOrders() {
       END AS is_late
     FROM purchase_orders po
     JOIN providers pr ON pr.id = po.provider_id
-    WHERE po.status IN ('pending', 'draft')
+    WHERE po.status IN ('pending', 'draft') ${scope.clause}
     ORDER BY po.expected_delivery_date ASC NULLS LAST
     LIMIT 5
-  `);
+  `, scope.params);
+
   return rows;
 }
 

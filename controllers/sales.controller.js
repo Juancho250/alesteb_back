@@ -1,33 +1,25 @@
-// src/controllers/sales.controller.js
+// controllers/sales.controller.js
 const db = require("../config/db");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 
-// ── Helpers de tenant ─────────────────────────────────────────────────────────
-const isSA      = (req) => req.user?.roles?.includes("superadmin");
+// ── Helpers ───────────────────────────────────────────────────
+// adminScope siempre corre antes → req.isSuperAdmin y req.adminId
+// siempre disponibles. Solo isManager sigue leyendo roles porque
+// gerente también puede operar (no tiene isSuperAdmin ni es el owner).
 const isManager = (req) =>
   req.user?.roles?.some((r) => ["superadmin", "admin", "gerente"].includes(r));
 
-/**
- * Devuelve la cláusula SQL + params para filtrar ventas por admin propietario.
- * superadmin → sin filtro
- * admin/gerente → solo ventas cuyo owner_admin_id coincida
- */
 const tenantSalesClause = (req, startIdx = 1) => {
-  if (isSA(req)) return { clause: "", params: [], nextIdx: startIdx };
+  if (req.isSuperAdmin) return { clause: "", params: [], nextIdx: startIdx };
   return {
     clause:  `AND s.owner_admin_id = $${startIdx}`,
-    params:  [req.user.id],
+    params:  [req.adminId],
     nextIdx: startIdx + 1,
   };
 };
 
-// ── Sincronizar estado de pago ────────────────────────────────────────────────
-/**
- * Recalcula y actualiza payment_status + amount_paid de una venta
- * según la suma real de sale_payments. Llama siempre dentro de una tx.
- */
 async function syncPaymentStatus(client, saleId) {
   const { rows: payRows } = await client.query(
     "SELECT COALESCE(SUM(amount), 0) AS paid FROM sale_payments WHERE sale_id = $1",
@@ -36,16 +28,12 @@ async function syncPaymentStatus(client, saleId) {
   const paid = Number(payRows[0].paid);
 
   const { rows: saleRows } = await client.query(
-    "SELECT total FROM sales WHERE id = $1 FOR UPDATE",
-    [saleId]
+    "SELECT total FROM sales WHERE id = $1 FOR UPDATE", [saleId]
   );
   if (!saleRows.length) throw new Error(`Venta ${saleId} no encontrada al sincronizar`);
   const total = Number(saleRows[0].total);
 
-  const status =
-    paid <= 0       ? "pending" :
-    paid < total    ? "partial" :
-                      "paid";
+  const status = paid <= 0 ? "pending" : paid < total ? "partial" : "paid";
 
   await client.query(
     "UPDATE sales SET amount_paid = $1, payment_status = $2 WHERE id = $3",
@@ -54,34 +42,30 @@ async function syncPaymentStatus(client, saleId) {
   return { paid, status };
 }
 
-// ── Helper: verificar acceso a una venta concreta ────────────────────────────
-// Retorna "ok" | "not_found" | "forbidden"
 async function checkSaleAccess(req, saleId, client = db) {
   const { rows } = await client.query(
-    "SELECT id, owner_admin_id, customer_id FROM sales WHERE id = $1",
-    [saleId]
+    "SELECT id, owner_admin_id, customer_id FROM sales WHERE id = $1", [saleId]
   );
   if (!rows.length) return "not_found";
-  if (isSA(req))    return "ok";
 
-  // Admin/gerente: solo sus ventas
+  if (req.isSuperAdmin) return "ok";
+
   if (isManager(req)) {
-    return String(rows[0].owner_admin_id) === String(req.user.id) ? "ok" : "forbidden";
+    return String(rows[0].owner_admin_id) === String(req.adminId) ? "ok" : "forbidden";
   }
-  // Usuario final: solo sus propios pedidos
+  // Usuario final
   return String(rows[0].customer_id) === String(req.user.id) ? "ok" : "forbidden";
 }
 
 // ============================================
 // 📋 OBTENER TODAS LAS VENTAS
-// Admin/gerente: sus ventas    Superadmin: todas
 // ============================================
 exports.getAllSales = async (req, res) => {
   try {
     if (!isManager(req))
       return res.status(403).json({ success: false, message: "No autorizado" });
 
-    const tc  = tenantSalesClause(req, 1);
+    const tc = tenantSalesClause(req, 1);
     const { page = 1, limit = 50, payment_status, sale_type, start_date, end_date } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -104,8 +88,8 @@ exports.getAllSales = async (req, res) => {
         s.tax_amount,      s.discount_amount,
         s.credit_due_date, s.credit_notes,
         s.shipping_address, s.shipping_city, s.shipping_notes,
-        u.name  AS customer_name,
-        u.email AS customer_email,
+        u.name      AS customer_name,
+        u.email     AS customer_email,
         seller.name AS seller_name,
         adm.name    AS owner_admin_name
       FROM sales s
@@ -118,14 +102,20 @@ exports.getAllSales = async (req, res) => {
     `;
     params.push(parseInt(limit), offset);
 
+    // Count con mismos filtros
+    const countParams = [
+      ...tc.params,
+      ...(payment_status ? [payment_status] : []),
+      ...(sale_type      ? [sale_type]      : []),
+      ...(start_date     ? [start_date]     : []),
+      ...(end_date       ? [end_date]       : []),
+    ];
+
     const [salesRes, countRes] = await Promise.all([
       db.query(query, params),
       db.query(
         `SELECT COUNT(*) FROM sales s WHERE 1=1 ${tc.clause} ${filters}`,
-        [...tc.params, ...(payment_status ? [payment_status] : []),
-                       ...(sale_type      ? [sale_type]      : []),
-                       ...(start_date     ? [start_date]     : []),
-                       ...(end_date       ? [end_date]       : [])]
+        countParams
       ),
     ]);
 
@@ -147,9 +137,6 @@ exports.getAllSales = async (req, res) => {
 
 // ============================================
 // 📦 HISTORIAL DE PEDIDOS DEL USUARIO FINAL
-// Solo devuelve sus propios pedidos.
-// Si lo llama un admin, requiere que ese userId
-// pertenezca a su tenant (owner_admin_id).
 // ============================================
 exports.getUserOrderHistory = async (req, res) => {
   const { userId } = req.query;
@@ -157,11 +144,10 @@ exports.getUserOrderHistory = async (req, res) => {
     return res.status(400).json({ success: false, message: "userId requerido" });
 
   try {
-    // Verificar que el usuario objetivo pertenezca al admin (si no es superadmin)
-    if (!isSA(req) && isManager(req)) {
+    if (!req.isSuperAdmin && isManager(req)) {
       const { rows } = await db.query(
         "SELECT id FROM users WHERE id = $1 AND owner_admin_id = $2",
-        [userId, req.user.id]
+        [userId, req.adminId]
       );
       if (!rows.length)
         return res.status(403).json({ success: false, message: "No autorizado para ver pedidos de este usuario" });
@@ -193,11 +179,10 @@ exports.getUserStats = async (req, res) => {
     return res.status(400).json({ success: false, message: "userId requerido" });
 
   try {
-    // Misma verificación de tenant que getUserOrderHistory
-    if (!isSA(req) && isManager(req)) {
+    if (!req.isSuperAdmin && isManager(req)) {
       const { rows } = await db.query(
         "SELECT id FROM users WHERE id = $1 AND owner_admin_id = $2",
-        [userId, req.user.id]
+        [userId, req.adminId]
       );
       if (!rows.length)
         return res.status(403).json({ success: false, message: "No autorizado" });
@@ -205,9 +190,9 @@ exports.getUserStats = async (req, res) => {
 
     const { rows } = await db.query(
       `SELECT
-        COUNT(DISTINCT s.id)                                                               AS total_orders,
-        COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0)  AS total_invested,
-        COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0)  AS pending_amount,
+        COUNT(DISTINCT s.id) AS total_orders,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0) AS total_invested,
+        COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) AS pending_amount,
         COALESCE(SUM(CASE WHEN s.payment_status = 'partial' THEN (s.total - s.amount_paid) ELSE 0 END), 0) AS partial_pending,
         COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END) AS completed_orders,
         COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END) AS pending_orders,
@@ -224,22 +209,13 @@ exports.getUserStats = async (req, res) => {
 
 // ============================================
 // 🛒 CREAR PEDIDO / VENTA
-// Inyecta owner_admin_id del token (null si superadmin)
 // ============================================
 exports.createOrder = async (req, res) => {
   const {
-    customer_id,
-    items,
-    discount_amount = 0,
-    tax_amount      = 0,
-    sale_type       = "online",
-    payment_method  = "cash",
-    credit_due_date = null,
-    credit_notes    = null,
-    initial_payment = 0,
-    shipping_address,
-    shipping_city,
-    shipping_notes,
+    customer_id, items, discount_amount = 0, tax_amount = 0,
+    sale_type = "online", payment_method = "cash",
+    credit_due_date = null, credit_notes = null, initial_payment = 0,
+    shipping_address, shipping_city, shipping_notes,
   } = req.body;
 
   if (!customer_id || !items?.length)
@@ -249,44 +225,35 @@ exports.createOrder = async (req, res) => {
   const isOnline = sale_type === "online" || sale_type === "web";
 
   if (isFiado && !credit_due_date)
-    return res.status(400).json({
-      success: false,
-      message: "Se requiere fecha límite de pago para ventas a crédito",
-    });
+    return res.status(400).json({ success: false, message: "Se requiere fecha límite de pago para ventas a crédito" });
 
-  // Verificar que el cliente pertenezca al admin (si aplica)
-  if (!isSA(req) && isManager(req)) {
+  if (!req.isSuperAdmin && isManager(req)) {
     const { rows: custCheck } = await db.query(
       "SELECT id FROM users WHERE id = $1 AND owner_admin_id = $2",
-      [customer_id, req.user.id]
+      [customer_id, req.adminId]
     );
     if (!custCheck.length)
       return res.status(403).json({ success: false, message: "El cliente no pertenece a tu panel" });
   }
 
-  // owner_admin_id: superadmin crea sin dueño (venta global), admin se marca a sí mismo
-  const ownerAdminId = isSA(req) ? null : req.user.id;
-
+  const ownerAdminId = req.isSuperAdmin ? null : req.adminId;
   const client = await db.connect();
+
   try {
     await client.query("BEGIN");
 
-    // ── Cliente ──────────────────────────────────────────────
     const { rows: custRows } = await client.query(
-      "SELECT id, name, email FROM users WHERE id = $1",
-      [customer_id]
+      "SELECT id, name, email FROM users WHERE id = $1", [customer_id]
     );
     if (!custRows.length) throw new Error("Cliente no encontrado");
     const customer = custRows[0];
 
-    // ── Validar ítems y calcular totales ─────────────────────
     let subtotal = 0;
     const validatedItems = [];
 
     for (const item of items) {
-      // Verificar que el producto también pertenezca al admin
-      const ownerCheck = isSA(req) ? "" : "AND p.owner_admin_id = $2";
-      const prodParams  = isSA(req) ? [item.product_id] : [item.product_id, req.user.id];
+      const ownerCheck = req.isSuperAdmin ? "" : "AND p.owner_admin_id = $2";
+      const prodParams  = req.isSuperAdmin ? [item.product_id] : [item.product_id, req.adminId];
 
       const { rows: prodRows } = await client.query(
         `SELECT id, name, sku, sale_price, stock, purchase_price, has_variants
@@ -300,16 +267,11 @@ exports.createOrder = async (req, res) => {
       let variantId  = null;
       let unitCost   = Number(product.purchase_price ?? 0);
       let availStock = Number(product.stock);
-
-      // Precio: respeta el que manda el frontend (ya tiene descuento); cae a DB como respaldo
-      let unitPrice = item.unit_price != null
-        ? Number(item.unit_price)
-        : Number(product.sale_price);
+      let unitPrice  = item.unit_price != null ? Number(item.unit_price) : Number(product.sale_price);
 
       if (item.variant_id) {
         const { rows: varRows } = await client.query(
-          `SELECT id, sku, sale_price, stock
-           FROM product_variants
+          `SELECT id, sku, sale_price, stock FROM product_variants
            WHERE id = $1 AND product_id = $2 AND is_active = true`,
           [item.variant_id, item.product_id]
         );
@@ -324,37 +286,27 @@ exports.createOrder = async (req, res) => {
       }
 
       if (availStock < item.quantity)
-        throw new Error(
-          `Stock insuficiente para "${product.name}". Disponible: ${availStock}`
-        );
+        throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${availStock}`);
 
       const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
 
       validatedItems.push({
-        product_id:     product.id,
-        variant_id:     variantId,
-        name:           product.name,
-        sku:            product.sku,
-        quantity:       item.quantity,
-        unit_price:     unitPrice,
-        unit_cost:      unitCost,
-        subtotal:       itemSubtotal,
+        product_id: product.id, variant_id: variantId,
+        name: product.name, sku: product.sku,
+        quantity: item.quantity, unit_price: unitPrice, unit_cost: unitCost,
+        subtotal: itemSubtotal,
         profit_per_unit: unitPrice - unitCost,
-        total_profit:   (unitPrice - unitCost) * item.quantity,
+        total_profit:    (unitPrice - unitCost) * item.quantity,
       });
     }
 
     const total   = subtotal - Number(discount_amount) + Number(tax_amount);
     const initPay = Math.min(Number(initial_payment) || 0, total);
 
-    // ── Estado de pago inicial ────────────────────────────────
     let finalPaymentStatus, dbPaymentMethod, amountPaidInitial;
-
     if (isOnline) {
-      finalPaymentStatus = "pending";
-      dbPaymentMethod    = "credit";
-      amountPaidInitial  = 0;
+      finalPaymentStatus = "pending"; dbPaymentMethod = "credit"; amountPaidInitial = 0;
     } else if (isFiado) {
       dbPaymentMethod = "credit";
       if (initPay <= 0)        { finalPaymentStatus = "pending"; amountPaidInitial = 0; }
@@ -362,19 +314,17 @@ exports.createOrder = async (req, res) => {
       else                     { finalPaymentStatus = "paid";    amountPaidInitial = total; }
     } else {
       finalPaymentStatus = "paid";
-      dbPaymentMethod    = ["cash", "transfer", "credit", "check"].includes(payment_method)
+      dbPaymentMethod    = ["cash","transfer","credit","check"].includes(payment_method)
         ? payment_method : "cash";
       amountPaidInitial  = total;
     }
 
-    // ── Número de venta (secuencia segura dentro de la tx) ────
     const { rows: numRows } = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(sale_number FROM 5) AS INTEGER)), 0) + 1 AS n
        FROM sales WHERE sale_number LIKE 'VEN-%'`
     );
     const saleNumber = `VEN-${String(numRows[0].n).padStart(6, "0")}`;
 
-    // ── Insertar venta ────────────────────────────────────────
     const { rows: saleRows } = await client.query(
       `INSERT INTO sales (
         sale_number, customer_id, subtotal, tax_amount, discount_amount,
@@ -387,8 +337,7 @@ exports.createOrder = async (req, res) => {
       [
         saleNumber, customer_id, subtotal, tax_amount, discount_amount,
         total, amountPaidInitial, dbPaymentMethod, finalPaymentStatus, sale_type,
-        req.user?.id ?? customer_id,
-        ownerAdminId,
+        req.user?.id ?? customer_id, ownerAdminId,
         shipping_address ?? null, shipping_city ?? null, shipping_notes ?? null,
         isFiado ? credit_due_date : null,
         isFiado ? credit_notes    : null,
@@ -396,18 +345,15 @@ exports.createOrder = async (req, res) => {
     );
     const saleId = saleRows[0].id;
 
-    // ── Insertar ítems + reducir stock ────────────────────────
     for (const item of validatedItems) {
       await client.query(
         `INSERT INTO sale_items (
           sale_id, product_id, variant_id, quantity, unit_price, unit_cost,
           subtotal, profit_per_unit, total_profit
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [
-          saleId, item.product_id, item.variant_id ?? null,
-          item.quantity, item.unit_price, item.unit_cost,
-          item.subtotal, item.profit_per_unit, item.total_profit,
-        ]
+        [saleId, item.product_id, item.variant_id ?? null,
+         item.quantity, item.unit_price, item.unit_cost,
+         item.subtotal, item.profit_per_unit, item.total_profit]
       );
 
       if (item.variant_id) {
@@ -415,14 +361,11 @@ exports.createOrder = async (req, res) => {
           "UPDATE product_variants SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
           [item.quantity, item.variant_id]
         );
-        // Resincronizar stock agregado del producto padre
         await client.query(
           `UPDATE products SET
-             stock = (SELECT COALESCE(SUM(pv.stock), 0)
-                      FROM product_variants pv
+             stock = (SELECT COALESCE(SUM(pv.stock),0) FROM product_variants pv
                       WHERE pv.product_id = $1 AND pv.is_active = true),
-             updated_at = NOW()
-           WHERE id = $1`,
+             updated_at = NOW() WHERE id = $1`,
           [item.product_id]
         );
       } else {
@@ -433,16 +376,13 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // ── Registrar pago automático (venta local o abono fiado) ─
     if (amountPaidInitial > 0) {
       await client.query(
         `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, created_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          saleId, amountPaidInitial, dbPaymentMethod,
-          isFiado ? "Abono inicial sobre crédito" : "Pago completo en tienda",
-          req.user?.id ?? null,
-        ]
+         VALUES ($1,$2,$3,$4,$5)`,
+        [saleId, amountPaidInitial, dbPaymentMethod,
+         isFiado ? "Abono inicial sobre crédito" : "Pago completo en tienda",
+         req.user?.id ?? null]
       );
     }
 
@@ -450,7 +390,6 @@ exports.createOrder = async (req, res) => {
 
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
-    // ── Emails (best-effort, fuera de la tx) ─────────────────
     if (customer.email) {
       if (finalPaymentStatus === "paid" && !isFiado) {
         sendPaymentConfirmedEmail?.(customer.email, customer.name, {
@@ -460,10 +399,9 @@ exports.createOrder = async (req, res) => {
         sendOrderConfirmationEmail(customer.email, customer.name, {
           orderCode, total, items: validatedItems,
           shippingAddress: shipping_address, shippingCity: shipping_city,
-          shippingNotes:   shipping_notes,
-          paymentMethod:   isFiado ? "fiado" : "wompi",
-          creditDueDate:   credit_due_date,
-          initialPayment:  initPay,
+          shippingNotes: shipping_notes,
+          paymentMethod: isFiado ? "fiado" : "wompi",
+          creditDueDate: credit_due_date, initialPayment: initPay,
         }).catch(() => {});
       }
     }
@@ -475,45 +413,31 @@ exports.createOrder = async (req, res) => {
         : isFiado
           ? `Venta a crédito registrada${initPay > 0 ? `. Abono de $${fmt(initPay)} registrado.` : ""}`
           : "Venta registrada y pagada ✓",
-      data: {
-        sale_id:        saleId,
-        sale_number:    saleNumber,
-        order_code:     orderCode,
-        total,
-        amount_paid:    amountPaidInitial,
-        payment_status: finalPaymentStatus,
-      },
+      data: { sale_id: saleId, sale_number: saleNumber, order_code: orderCode,
+              total, amount_paid: amountPaidInitial, payment_status: finalPaymentStatus },
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("CREATE ORDER ERROR:", err);
-    // Stock insuficiente y similares son errores del cliente (400), no del servidor (500)
     const isClientError = err.message && !err.message.startsWith("Error");
-    res.status(isClientError ? 400 : 500).json({
-      success: false,
-      message: err.message || "Error al crear la venta",
-    });
+    res.status(isClientError ? 400 : 500).json({ success: false, message: err.message || "Error al crear la venta" });
   } finally {
     client.release();
   }
 };
 
 // ============================================
-// 💳 WEBHOOK WOMPI — confirmar pago online
+// 💳 WEBHOOK WOMPI
 // ============================================
 exports.wompiWebhook = async (req, res) => {
-  const crypto     = require("crypto");
-  const secret     = process.env.WOMPI_EVENTS_SECRET ?? "";
-  const sigHeader  = req.headers["x-event-checksum"] ?? "";
-  const timestamp  = req.headers["x-event-timestamp"] ?? "";
+  const crypto    = require("crypto");
+  const secret    = process.env.WOMPI_EVENTS_SECRET ?? "";
+  const sigHeader = req.headers["x-event-checksum"] ?? "";
+  const timestamp = req.headers["x-event-timestamp"] ?? "";
 
-  // Verificar firma HMAC-SHA256
   if (secret) {
-    const bodyStr  = JSON.stringify(req.body);
-    const signature = crypto
-      .createHash("sha256")
-      .update(`${timestamp}${bodyStr}${secret}`)
+    const signature = crypto.createHash("sha256")
+      .update(`${timestamp}${JSON.stringify(req.body)}${secret}`)
       .digest("hex");
     if (signature !== sigHeader) {
       console.warn("WOMPI WEBHOOK: firma inválida");
@@ -522,13 +446,11 @@ exports.wompiWebhook = async (req, res) => {
   }
 
   const { event, data } = req.body ?? {};
-
-  if (event !== "transaction.updated")         return res.sendStatus(200);
+  if (event !== "transaction.updated")          return res.sendStatus(200);
   if (data?.transaction?.status !== "APPROVED") return res.sendStatus(200);
 
-  const reference   = data.transaction?.reference ?? "";
-  const amountCOP   = Number(data.transaction?.amount_in_cents ?? 0) / 100;
-
+  const reference = data.transaction?.reference ?? "";
+  const amountCOP = Number(data.transaction?.amount_in_cents ?? 0) / 100;
   if (!reference || !amountCOP) return res.sendStatus(200);
 
   const client = await db.connect();
@@ -536,25 +458,13 @@ exports.wompiWebhook = async (req, res) => {
     await client.query("BEGIN");
 
     const { rows: saleRows } = await client.query(
-      "SELECT id, total, payment_status FROM sales WHERE sale_number = $1",
-      [reference]
+      "SELECT id, total, payment_status FROM sales WHERE sale_number = $1", [reference]
     );
-
-    if (!saleRows.length) {
-      console.warn(`WOMPI WEBHOOK: venta ${reference} no encontrada`);
-      await client.query("ROLLBACK");
-      return res.sendStatus(200);
-    }
+    if (!saleRows.length) { await client.query("ROLLBACK"); return res.sendStatus(200); }
 
     const sale = saleRows[0];
+    if (sale.payment_status === "paid") { await client.query("ROLLBACK"); return res.sendStatus(200); }
 
-    // Idempotencia: si ya estaba pagada no hacemos nada
-    if (sale.payment_status === "paid") {
-      await client.query("ROLLBACK");
-      return res.sendStatus(200);
-    }
-
-    // ON CONFLICT evita duplicar pagos si Wompi re-envía el webhook
     await client.query(
       `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, created_by)
        VALUES ($1, $2, 'credit', 'Pago aprobado por Wompi', NULL)
@@ -565,24 +475,19 @@ exports.wompiWebhook = async (req, res) => {
     const { status } = await syncPaymentStatus(client, sale.id);
     await client.query("COMMIT");
 
-    console.log(`WOMPI WEBHOOK: venta ${reference} → ${status}`);
-
     if (status === "paid") {
       const { rows: info } = await db.query(
         `SELECT s.total, s.sale_number, u.name, u.email
-         FROM sales s JOIN users u ON u.id = s.customer_id
-         WHERE s.id = $1`,
+         FROM sales s JOIN users u ON u.id = s.customer_id WHERE s.id = $1`,
         [sale.id]
       );
       if (info[0]?.email) {
         sendPaymentConfirmedEmail?.(info[0].email, info[0].name, {
           orderCode: `AL-${info[0].sale_number?.slice(4)}`,
-          total:     info[0].total,
-          items:     [],
+          total: info[0].total, items: [],
         }).catch(() => {});
       }
     }
-
     return res.sendStatus(200);
   } catch (err) {
     await client.query("ROLLBACK");
@@ -594,8 +499,7 @@ exports.wompiWebhook = async (req, res) => {
 };
 
 // ============================================
-// 💰 REGISTRAR ABONO / PAGO PARCIAL
-// Solo el admin dueño de la venta (o superadmin)
+// 💰 REGISTRAR ABONO
 // ============================================
 exports.registerPayment = async (req, res) => {
   const { id } = req.params;
@@ -608,49 +512,30 @@ exports.registerPayment = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Verificar acceso antes de cualquier escritura
     const access = await checkSaleAccess(req, id, client);
-    if (access === "not_found") {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ success: false, message: "Venta no encontrada" });
-    }
-    if (access === "forbidden") {
-      await client.query("ROLLBACK");
-      return res.status(403).json({ success: false, message: "No autorizado para registrar pagos en esta venta" });
-    }
+    if (access === "not_found") { await client.query("ROLLBACK"); return res.status(404).json({ success: false, message: "Venta no encontrada" }); }
+    if (access === "forbidden") { await client.query("ROLLBACK"); return res.status(403).json({ success: false, message: "No autorizado para registrar pagos en esta venta" }); }
 
     const { rows: saleRows } = await client.query(
-      "SELECT id, total, amount_paid, payment_status FROM sales WHERE id = $1 FOR UPDATE",
-      [id]
+      "SELECT id, total, amount_paid, payment_status FROM sales WHERE id = $1 FOR UPDATE", [id]
     );
     const sale = saleRows[0];
 
-    if (sale.payment_status === "paid") {
-      await client.query("ROLLBACK");
+    if (sale.payment_status === "paid")
       return res.status(400).json({ success: false, message: "Esta venta ya está pagada por completo" });
-    }
-
-    if (sale.payment_status === "cancelled") {
-      await client.query("ROLLBACK");
+    if (sale.payment_status === "cancelled")
       return res.status(400).json({ success: false, message: "No se puede abonar a una venta cancelada" });
-    }
 
     const pending = Number(sale.total) - Number(sale.amount_paid);
-    // No permitir abono mayor al pendiente (truncar silenciosamente era confuso)
     if (Number(amount) > pending)
-      return res.status(400).json({
-        success: false,
-        message: `El monto excede el saldo pendiente ($${fmt(pending)})`,
-      });
+      return res.status(400).json({ success: false, message: `El monto excede el saldo pendiente ($${fmt(pending)})` });
 
     await client.query(
       `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, payment_date, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        id, Number(amount), payment_method, notes,
-        payment_date ?? new Date().toISOString().slice(0, 10),
-        req.user?.id ?? null,
-      ]
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, Number(amount), payment_method, notes,
+       payment_date ?? new Date().toISOString().slice(0, 10),
+       req.user?.id ?? null]
     );
 
     const { paid, status } = await syncPaymentStatus(client, id);
@@ -663,7 +548,6 @@ exports.registerPayment = async (req, res) => {
         : `Abono de $${fmt(Number(amount))} registrado. Pendiente: $${fmt(Number(sale.total) - paid)}`,
       data: { amount_paid: paid, payment_status: status, new_payment: Number(amount) },
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("REGISTER PAYMENT ERROR:", err);
@@ -696,8 +580,7 @@ exports.getSalePayments = async (req, res) => {
 
     const { rows: payments } = await db.query(
       `SELECT sp.id, sp.amount, sp.payment_method, sp.notes,
-              sp.payment_date, sp.created_at,
-              u.name AS recorded_by
+              sp.payment_date, sp.created_at, u.name AS recorded_by
        FROM sale_payments sp
        LEFT JOIN users u ON u.id = sp.created_by
        WHERE sp.sale_id = $1
@@ -708,11 +591,7 @@ exports.getSalePayments = async (req, res) => {
     res.json({
       success: true,
       data: {
-        sale: {
-          ...sale,
-          pending_amount: Number(sale.total) - Number(sale.amount_paid),
-          is_fiado: !!sale.credit_due_date,
-        },
+        sale: { ...sale, pending_amount: Number(sale.total) - Number(sale.amount_paid), is_fiado: !!sale.credit_due_date },
         payments,
       },
     });
@@ -723,7 +602,7 @@ exports.getSalePayments = async (req, res) => {
 };
 
 // ============================================
-// 📄 DETALLE DE ÍTEMS DE UNA VENTA
+// 📄 DETALLE DE ÍTEMS
 // ============================================
 exports.getOrderDetail = async (req, res) => {
   const { id } = req.params;
@@ -739,13 +618,11 @@ exports.getOrderDetail = async (req, res) => {
         p.name, p.sku,
         pv.sku AS variant_sku,
         COALESCE((
-          SELECT json_agg(
-            json_build_object(
-              'attribute_type', at.name, 'value', av.value,
-              'display_value',  COALESCE(av.display_value, av.value),
-              'hex_color',      av.hex_color
-            ) ORDER BY at.id
-          )
+          SELECT json_agg(json_build_object(
+            'attribute_type', at.name, 'value', av.value,
+            'display_value',  COALESCE(av.display_value, av.value),
+            'hex_color',      av.hex_color
+          ) ORDER BY at.id)
           FROM variant_attribute_values vav
           JOIN attribute_values av ON av.id = vav.attribute_value_id
           JOIN attribute_types  at ON at.id = av.attribute_type_id
@@ -768,9 +645,7 @@ exports.getOrderDetail = async (req, res) => {
 };
 
 // ============================================
-// ❌ CANCELAR PEDIDO (solo pending / partial)
-// Admin solo cancela los suyos; superadmin cualquiera.
-// Usuario final cancela los propios (si no están pagados).
+// ❌ CANCELAR PEDIDO
 // ============================================
 exports.cancelOrder = async (req, res) => {
   const { id }      = req.params;
@@ -781,8 +656,7 @@ exports.cancelOrder = async (req, res) => {
     await client.query("BEGIN");
 
     const { rows } = await client.query(
-      "SELECT id, customer_id, payment_status, owner_admin_id FROM sales WHERE id = $1",
-      [id]
+      "SELECT id, customer_id, payment_status, owner_admin_id FROM sales WHERE id = $1", [id]
     );
     if (!rows.length) {
       await client.query("ROLLBACK");
@@ -790,16 +664,13 @@ exports.cancelOrder = async (req, res) => {
     }
     const order = rows[0];
 
-    // ── Verificar autorización ────────────────────────────────
-    if (!isSA(req)) {
+    if (!req.isSuperAdmin) {
       if (isManager(req)) {
-        // Admin/gerente: solo puede cancelar ventas de su propio tenant
-        if (String(order.owner_admin_id) !== String(req.user.id)) {
+        if (String(order.owner_admin_id) !== String(req.adminId)) {
           await client.query("ROLLBACK");
           return res.status(403).json({ success: false, message: "No autorizado para cancelar este pedido" });
         }
       } else {
-        // Usuario final: solo sus propios pedidos
         if (String(order.customer_id) !== String(user_id ?? req.user?.id)) {
           await client.query("ROLLBACK");
           return res.status(403).json({ success: false, message: "Sin permiso para cancelar este pedido" });
@@ -809,16 +680,11 @@ exports.cancelOrder = async (req, res) => {
 
     if (!["pending", "partial"].includes(order.payment_status)) {
       await client.query("ROLLBACK");
-      return res.status(400).json({
-        success: false,
-        message: "Solo se pueden cancelar pedidos pendientes o parciales",
-      });
+      return res.status(400).json({ success: false, message: "Solo se pueden cancelar pedidos pendientes o parciales" });
     }
 
-    // ── Restaurar stock ───────────────────────────────────────
     const { rows: items } = await client.query(
-      "SELECT product_id, variant_id, quantity FROM sale_items WHERE sale_id = $1",
-      [id]
+      "SELECT product_id, variant_id, quantity FROM sale_items WHERE sale_id = $1", [id]
     );
 
     for (const item of items) {
@@ -829,11 +695,9 @@ exports.cancelOrder = async (req, res) => {
         );
         await client.query(
           `UPDATE products SET
-             stock = (SELECT COALESCE(SUM(pv.stock), 0)
-                      FROM product_variants pv
+             stock = (SELECT COALESCE(SUM(pv.stock),0) FROM product_variants pv
                       WHERE pv.product_id = $1 AND pv.is_active = true),
-             updated_at = NOW()
-           WHERE id = $1`,
+             updated_at = NOW() WHERE id = $1`,
           [item.product_id]
         );
       } else {
@@ -844,15 +708,12 @@ exports.cancelOrder = async (req, res) => {
       }
     }
 
-    // Marcar como cancelado (no eliminamos, mantenemos el historial)
     await client.query(
-      "UPDATE sales SET payment_status = 'cancelled', updated_at = NOW() WHERE id = $1",
-      [id]
+      "UPDATE sales SET payment_status = 'cancelled', updated_at = NOW() WHERE id = $1", [id]
     );
     await client.query("COMMIT");
 
     res.json({ success: true, message: "Pedido cancelado. Stock restaurado." });
-
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("CANCEL ORDER ERROR:", err);
