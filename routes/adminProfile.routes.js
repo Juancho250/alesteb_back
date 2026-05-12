@@ -1,7 +1,7 @@
 const express = require('express');
 const multer  = require('multer');
 
-const { authenticateToken } = require('../middleware/auth.middleware');
+const { auth } = require('../middleware/auth.middleware');
 const { adminScope }        = require('../middleware/adminScope');
 const {
   getAdminProfile,
@@ -24,7 +24,7 @@ const upload = multer({
 });
 
 /* ── Todas las rutas requieren auth + scope de admin ── */
-router.use(authenticateToken, adminScope);
+router.use(auth, adminScope);
 
 router.get('/',    getAdminProfile);
 router.put('/',    upsertAdminProfile);
