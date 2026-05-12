@@ -1,0 +1,397 @@
+// controllers/subscription.controller.js
+const { pool } = require('../config/db');
+const subscriptionService = require('../services/subscription.service');
+
+// ──────────────────────────────────────────
+// PLANES PÚBLICOS
+// ──────────────────────────────────────────
+
+/** GET /api/subscriptions/plans */
+exports.getPublicPlans = async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, slug, description, tagline,
+              price_monthly, price_yearly, trial_days, currency,
+              max_products, max_users, max_admins, max_monthly_sales,
+              max_api_keys, max_categories, max_banners, max_providers, storage_mb,
+              has_analytics, has_ai_agent, has_api_access, has_multi_admin,
+              has_custom_branding, has_wompi_payments, has_export,
+              has_priority_support, has_push_notifications,
+              has_financial_reports, has_purchase_orders, has_discount_system,
+              color, badge_label, sort_order
+       FROM subscription_plans
+       WHERE is_active = true AND is_public = true
+       ORDER BY sort_order ASC`
+    );
+    res.json({ plans: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ──────────────────────────────────────────
+// MI SUSCRIPCIÓN
+// ──────────────────────────────────────────
+
+/** GET /api/subscriptions/me */
+exports.getMySubscription = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const sub = await subscriptionService.getSubscriptionByAdmin(adminId);
+    if (!sub) return res.status(404).json({ message: 'Sin suscripción activa' });
+    const limits = await subscriptionService.checkLimits(adminId);
+    res.json({ subscription: sub, limits });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** GET /api/subscriptions/me/invoices */
+exports.getMyInvoices = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const { rows } = await pool.query(
+      `SELECT si.*, sp.name AS plan_name
+       FROM subscription_invoices si
+       JOIN subscription_plans sp ON sp.id = si.plan_id
+       WHERE si.admin_id = $1
+       ORDER BY si.created_at DESC
+       LIMIT 24`,
+      [adminId]
+    );
+    res.json({ invoices: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ──────────────────────────────────────────
+// VALIDAR CUPÓN
+// ──────────────────────────────────────────
+
+/** POST /api/subscriptions/coupons/validate */
+exports.validateCoupon = async (req, res) => {
+  try {
+    const { code, plan_slug, billing_cycle = 'monthly' } = req.body;
+    if (!code) return res.status(400).json({ error: 'Código requerido' });
+
+    const couponRes = await pool.query(
+      `SELECT sc.*, ARRAY_AGG(sp.slug) AS applicable_plan_slugs
+       FROM subscription_coupons sc
+       LEFT JOIN subscription_plans sp ON sp.id = ANY(sc.applicable_plans)
+       WHERE sc.code = $1
+         AND sc.is_active = true
+         AND (sc.valid_until IS NULL OR sc.valid_until > now())
+         AND (sc.max_uses IS NULL OR sc.times_used < sc.max_uses)
+       GROUP BY sc.id`,
+      [code.toUpperCase().trim()]
+    );
+
+    if (!couponRes.rows.length) {
+      return res.status(404).json({ valid: false, message: 'Cupón inválido o expirado' });
+    }
+
+    const coupon = couponRes.rows[0];
+
+    // Verificar que aplica al plan
+    if (coupon.applicable_plan_slugs?.filter(Boolean).length > 0 && plan_slug) {
+      if (!coupon.applicable_plan_slugs.includes(plan_slug)) {
+        return res.status(400).json({ valid: false, message: 'Este cupón no aplica al plan seleccionado' });
+      }
+    }
+
+    // Calcular descuento aproximado para mostrar al usuario
+    let planPrice = 0;
+    if (plan_slug) {
+      const pRes = await pool.query(
+        'SELECT price_monthly, price_yearly FROM subscription_plans WHERE slug = $1',
+        [plan_slug]
+      );
+      if (pRes.rows.length) {
+        planPrice = billing_cycle === 'yearly'
+          ? (pRes.rows[0].price_yearly || pRes.rows[0].price_monthly * 12)
+          : pRes.rows[0].price_monthly;
+      }
+    }
+
+    let discountPreview = 0;
+    if (coupon.coupon_type === 'percentage') discountPreview = (planPrice * coupon.discount_value) / 100;
+    else if (coupon.coupon_type === 'fixed') discountPreview = Math.min(coupon.discount_value, planPrice);
+    else if (coupon.coupon_type === 'free_months') discountPreview = coupon.free_months;
+    else if (coupon.coupon_type === 'full_free') discountPreview = planPrice;
+
+    res.json({
+      valid: true,
+      coupon: {
+        code: coupon.code,
+        description: coupon.description,
+        coupon_type: coupon.coupon_type,
+        discount_value: coupon.discount_value,
+        free_months: coupon.free_months,
+      },
+      discount_preview: discountPreview,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ──────────────────────────────────────────
+// CANCELAR SUSCRIPCIÓN
+// ──────────────────────────────────────────
+
+/** POST /api/subscriptions/cancel */
+exports.cancelSubscription = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const { reason, cancel_now = false } = req.body;
+    const result = await subscriptionService.cancelSubscription(adminId, reason, cancel_now, req.user.id);
+    res.json({ message: cancel_now ? 'Suscripción cancelada' : 'Se cancelará al finalizar el período', subscription: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** POST /api/subscriptions/reactivate */
+exports.reactivateSubscription = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const { rows } = await pool.query(
+      `UPDATE subscriptions SET
+         cancel_at_period_end = false,
+         cancelled_at = NULL,
+         cancellation_reason = NULL,
+         status = CASE WHEN status = 'cancelled' THEN 'active' ELSE status END,
+         updated_at = now()
+       WHERE admin_id = $1
+       RETURNING *`,
+      [adminId]
+    );
+    res.json({ message: 'Suscripción reactivada', subscription: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ──────────────────────────────────────────
+// CAMBIAR PLAN
+// ──────────────────────────────────────────
+
+/** POST /api/subscriptions/change-plan */
+exports.changePlan = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const { plan_slug } = req.body;
+    if (!plan_slug) return res.status(400).json({ error: 'plan_slug requerido' });
+    const result = await subscriptionService.changePlan(adminId, plan_slug, req.user.id);
+    res.json({ message: 'Plan actualizado', subscription: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ──────────────────────────────────────────
+// SUPERADMIN: gestión de todas las suscripciones
+// ──────────────────────────────────────────
+
+/** GET /api/admin/subscriptions */
+exports.getAllSubscriptions = async (req, res) => {
+  try {
+    const { status, plan, page = 1, limit = 30 } = req.query;
+    const offset = (page - 1) * limit;
+    const conditions = [];
+    const params = [];
+
+    if (status) { params.push(status); conditions.push(`s.status = $${params.length}`); }
+    if (plan) { params.push(plan); conditions.push(`sp.slug = $${params.length}`); }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    params.push(limit, offset);
+
+    const { rows } = await pool.query(
+      `SELECT s.*,
+              sp.name AS plan_name, sp.slug AS plan_slug, sp.price_monthly,
+              u.name AS admin_name, u.email AS admin_email,
+              su.products_count, su.users_count, su.monthly_sales_count
+       FROM subscriptions s
+       JOIN subscription_plans sp ON sp.id = s.plan_id
+       JOIN users u ON u.id = s.admin_id
+       LEFT JOIN subscription_usage su ON su.admin_id = s.admin_id
+       ${where}
+       ORDER BY s.updated_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM subscriptions s
+       JOIN subscription_plans sp ON sp.id = s.plan_id ${where}`,
+      params.slice(0, -2)
+    );
+
+    res.json({ subscriptions: rows, total: parseInt(countRes.rows[0].count), page: +page, limit: +limit });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** POST /api/admin/subscriptions/assign */
+exports.assignSubscription = async (req, res) => {
+  try {
+    const { admin_id, plan_slug, trial_days, billing_cycle = 'monthly' } = req.body;
+    if (!admin_id || !plan_slug) return res.status(400).json({ error: 'admin_id y plan_slug requeridos' });
+
+    // Si trial_days > 0, crear trial; si no, activar directo
+    let result;
+    if (trial_days && trial_days > 0) {
+      // Override trial_days en el plan
+      result = await subscriptionService.createTrialSubscription(admin_id, plan_slug, req.user.id);
+      if (trial_days !== undefined) {
+        const trialEnd = new Date();
+        trialEnd.setDate(trialEnd.getDate() + parseInt(trial_days));
+        await pool.query(
+          'UPDATE subscriptions SET trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now() WHERE admin_id = $2',
+          [trialEnd.toISOString().split('T')[0], admin_id]
+        );
+      }
+    } else {
+      result = await subscriptionService.activateSubscription(admin_id, {
+        planSlug: plan_slug,
+        billingCycle: billing_cycle,
+        paymentMethod: 'manual',
+        paymentReference: `ADMIN-${req.user.id}`,
+        changedBy: req.user.id,
+      });
+    }
+
+    res.json({ message: 'Suscripción asignada', result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** GET /api/admin/subscriptions/stats */
+exports.getSubscriptionStats = async (req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')    AS active_count,
+        COUNT(*) FILTER (WHERE status = 'trial')     AS trial_count,
+        COUNT(*) FILTER (WHERE status = 'past_due')  AS past_due_count,
+        COUNT(*) FILTER (WHERE status = 'suspended') AS suspended_count,
+        COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_count,
+        SUM(amount_due) FILTER (WHERE status = 'active') AS mrr,
+        COUNT(DISTINCT plan_id) AS plans_used
+      FROM subscriptions
+    `);
+
+    const byPlan = await pool.query(`
+      SELECT sp.name, sp.slug, sp.color, COUNT(s.id) AS count, SUM(s.amount_due) AS revenue
+      FROM subscriptions s
+      JOIN subscription_plans sp ON sp.id = s.plan_id
+      WHERE s.status IN ('active', 'trial')
+      GROUP BY sp.id
+      ORDER BY count DESC
+    `);
+
+    const recentInvoices = await pool.query(`
+      SELECT si.*, u.name AS admin_name, sp.name AS plan_name
+      FROM subscription_invoices si
+      JOIN users u ON u.id = si.admin_id
+      JOIN subscription_plans sp ON sp.id = si.plan_id
+      ORDER BY si.created_at DESC
+      LIMIT 10
+    `);
+
+    res.json({
+      stats: stats.rows[0],
+      by_plan: byPlan.rows,
+      recent_invoices: recentInvoices.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** POST /api/admin/subscriptions/coupons */
+exports.createCoupon = async (req, res) => {
+  try {
+    const {
+      code, description, coupon_type, discount_value,
+      free_months, max_uses, valid_from, valid_until,
+      applicable_plans, applies_to_cycle
+    } = req.body;
+
+    if (!code || !coupon_type) return res.status(400).json({ error: 'code y coupon_type requeridos' });
+
+    const { rows } = await pool.query(
+      `INSERT INTO subscription_coupons
+         (code, description, coupon_type, discount_value, free_months,
+          max_uses, valid_from, valid_until, applicable_plans,
+          applies_to_cycle, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *`,
+      [code.toUpperCase().trim(), description, coupon_type,
+       discount_value || 0, free_months || 0,
+       max_uses || null, valid_from || new Date(), valid_until || null,
+       applicable_plans || null, applies_to_cycle || null, req.user.id]
+    );
+
+    res.status(201).json({ coupon: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Ese código ya existe' });
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** GET /api/admin/subscriptions/coupons */
+exports.getCoupons = async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT sc.*, u.name AS created_by_name
+       FROM subscription_coupons sc
+       LEFT JOIN users u ON u.id = sc.created_by
+       ORDER BY sc.created_at DESC`
+    );
+    res.json({ coupons: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** PATCH /api/admin/subscriptions/plans/:id */
+exports.updatePlan = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const fields = req.body;
+    const allowed = [
+      'name','description','tagline','price_monthly','price_yearly','trial_days',
+      'max_products','max_users','max_admins','max_monthly_sales','max_api_keys',
+      'max_categories','max_banners','max_providers','storage_mb',
+      'has_analytics','has_ai_agent','has_api_access','has_multi_admin',
+      'has_custom_branding','has_wompi_payments','has_export','has_priority_support',
+      'has_push_notifications','has_financial_reports','has_purchase_orders',
+      'has_discount_system','color','badge_label','sort_order','is_active','is_public'
+    ];
+
+    const updates = Object.entries(fields)
+      .filter(([k]) => allowed.includes(k))
+      .map(([k, v], i) => `"${k}" = $${i + 2}`)
+      .join(', ');
+
+    const values = Object.entries(fields)
+      .filter(([k]) => allowed.includes(k))
+      .map(([, v]) => v);
+
+    if (!updates) return res.status(400).json({ error: 'Sin campos para actualizar' });
+
+    const { rows } = await pool.query(
+      `UPDATE subscription_plans SET ${updates}, updated_at = now() WHERE id = $1 RETURNING *`,
+      [id, ...values]
+    );
+
+    res.json({ plan: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
