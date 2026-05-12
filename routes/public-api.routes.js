@@ -72,18 +72,19 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
            p.sale_price AS price,
            p.stock, p.stock_status,
            c.name AS category, c.slug AS category_slug,
-           p.main_image,
+           (SELECT url FROM product_images
+            WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
            COALESCE(
              json_agg(
                DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
              ) FILTER (WHERE pi.id IS NOT NULL), '[]'
            ) AS images
-         FROM v_products_full p
+         FROM products p
          LEFT JOIN categories c      ON c.id = p.category_id
          LEFT JOIN product_images pi ON pi.product_id = p.id
          ${where}
          GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                  p.stock, p.stock_status, c.name, c.slug, p.main_image,
+                  p.stock, p.stock_status, c.name, c.slug,
                   p.created_at, p.owner_admin_id
          ORDER BY ${orderBy}
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -91,7 +92,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
       ),
       db.query(
         `SELECT COUNT(*)
-         FROM v_products_full p
+         FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
          ${where}`,
         params.slice(0, -2)
@@ -127,7 +128,8 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
          p.sale_price AS price,
          p.stock, p.stock_status,
          c.name AS category, c.slug AS category_slug,
-         p.main_image,
+         (SELECT url FROM product_images
+          WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
          COALESCE(
            json_agg(
              DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
@@ -143,15 +145,15 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
              )
            ) FILTER (WHERE pv.id IS NOT NULL AND pv.is_active = true), '[]'
          ) AS variants
-       FROM v_products_full p
-       LEFT JOIN categories c       ON c.id = p.category_id
-       LEFT JOIN product_images pi  ON pi.product_id = p.id
+       FROM products p
+       LEFT JOIN categories c        ON c.id = p.category_id
+       LEFT JOIN product_images pi   ON pi.product_id = p.id
        LEFT JOIN product_variants pv ON pv.product_id = p.id
        WHERE p.id = $1
          AND p.is_active = true
          AND p.owner_admin_id = $2
        GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                p.stock, p.stock_status, c.name, c.slug, p.main_image`,
+                p.stock, p.stock_status, c.name, c.slug`,
       [req.params.id, adminId]
     );
 
@@ -208,7 +210,7 @@ router.get("/inventory", requireApiPermission("inventory:read"), async (req, res
          p.stock, p.min_stock, p.max_stock,
          p.stock_status,
          c.name AS category
-       FROM v_products_full p
+       FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        ${where}
        ORDER BY p.stock ASC`,
@@ -321,7 +323,6 @@ router.post("/discounts/validate", async (req, res) => {
       });
     }
 
-    // Calcular descuento aplicable
     let discountAmount = 0;
     if (discount.type === "percentage") {
       discountAmount = (parseFloat(amount || 0) * discount.value) / 100;
@@ -427,7 +428,6 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
     let subtotal    = 0;
     const saleItems = [];
 
-    // Validar y calcular items — solo productos del admin
     for (const item of items) {
       if (!item.product_id || !item.quantity || item.quantity < 1) {
         await client.query("ROLLBACK");
@@ -481,12 +481,11 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
       });
     }
 
-    // Validar cupón si viene
     let discountAmount = 0;
     let discountId     = null;
 
     if (coupon_code) {
-      const now     = new Date();
+      const now = new Date();
       const couponRes = await client.query(
         `SELECT id, type, value, min_purchase_amount, max_discount_amount
          FROM discounts
@@ -530,7 +529,6 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
 
       discountId = coupon.id;
 
-      // Incrementar contador del cupón
       await client.query(
         "UPDATE discounts SET times_used = times_used + 1 WHERE id = $1",
         [coupon.id]
@@ -549,16 +547,9 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
        ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10)
        RETURNING id, sale_number, subtotal, discount_amount, total`,
       [
-        saleNumber,
-        subtotal,
-        discountAmount,
-        total,
-        payment_method,
-        shipping_address || null,
-        shipping_city    || null,
-        shipping_notes   || null,
-        customer_phone   || null,
-        adminId,
+        saleNumber, subtotal, discountAmount, total, payment_method,
+        shipping_address || null, shipping_city || null,
+        shipping_notes   || null, customer_phone || null, adminId,
       ]
     );
 
@@ -569,14 +560,12 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
         `INSERT INTO sale_items (
            sale_id, product_id, quantity,
            unit_price, unit_cost, subtotal,
-           profit_per_unit, total_profit,
-           discount_id
+           profit_per_unit, total_profit, discount_id
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           saleId, item.product_id, item.quantity,
           item.unit_price, item.unit_cost, item.subtotal,
-          item.profit_unit, item.total_profit,
-          discountId,
+          item.profit_unit, item.total_profit, discountId,
         ]
       );
 
