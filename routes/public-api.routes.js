@@ -1,19 +1,16 @@
 // routes/public-api.routes.js
-// Rutas consumibles desde sitios externos via API Key (header X-API-Key).
-// NO usan JWT — la autenticación es por API Key del admin.
-// Prefijo registrado en app.js: /public-api/v1
-const express  = require("express");
-const router   = express.Router();
-const db       = require("../config/db");
+const express = require("express");
+const router  = express.Router();
+const db      = require("../config/db");
 const {
   apiKeyAuth,
   requireApiPermission,
 } = require("../middleware/auth.middleware");
 
-// ─── Auth: todas las rutas requieren API Key válida ─────────────────────────
+// ─── Auth: todas las rutas requieren API Key válida ──────────
 router.use(apiKeyAuth);
 
-// ─── CORS dinámico según whitelist de la key ─────────────────────────────────
+// ─── CORS dinámico según whitelist de la key ─────────────────
 router.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin) {
@@ -25,7 +22,7 @@ router.use((req, res, next) => {
   next();
 });
 
-// ─── Health check ─────────────────────────────────────────────────────────────
+// ─── Health check ─────────────────────────────────────────────
 // GET /public-api/v1/ping
 router.get("/ping", (req, res) => {
   res.json({
@@ -37,16 +34,17 @@ router.get("/ping", (req, res) => {
   });
 });
 
-// ─── Productos ────────────────────────────────────────────────────────────────
+// ─── Productos ────────────────────────────────────────────────
 // GET /public-api/v1/products
 router.get("/products", requireApiPermission("products:read"), async (req, res) => {
   try {
-    const { category, search, page = 1, limit = 20 } = req.query;
-    const safeLimit  = Math.min(parseInt(limit) || 20, 100);
-    const offset     = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
+    const adminId = req.apiKey.adminId;
+    const { category, search, page = 1, limit = 20, sort = "name" } = req.query;
+    const safeLimit = Math.min(parseInt(limit) || 20, 100);
+    const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
 
-    let where  = "WHERE p.is_active = true";
-    const params = [];
+    const params = [adminId];
+    let where = "WHERE p.is_active = true AND p.owner_admin_id = $1";
 
     if (category) {
       params.push(category);
@@ -57,19 +55,37 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
       where += ` AND (p.name ILIKE $${params.length} OR p.description ILIKE $${params.length})`;
     }
 
+    const orderMap = {
+      name:       "p.name ASC",
+      price_asc:  "p.sale_price ASC",
+      price_desc: "p.sale_price DESC",
+      newest:     "p.created_at DESC",
+    };
+    const orderBy = orderMap[sort] || "p.name ASC";
+
     params.push(safeLimit, offset);
 
     const [rows, countRow] = await Promise.all([
       db.query(
         `SELECT
-           p.id, p.name, p.sku, p.description, p.sale_price AS price,
+           p.id, p.name, p.sku, p.description,
+           p.sale_price AS price,
            p.stock, p.stock_status,
            c.name AS category, c.slug AS category_slug,
-           p.main_image
+           p.main_image,
+           COALESCE(
+             json_agg(
+               DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
+             ) FILTER (WHERE pi.id IS NOT NULL), '[]'
+           ) AS images
          FROM v_products_full p
-         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN categories c      ON c.id = p.category_id
+         LEFT JOIN product_images pi ON pi.product_id = p.id
          ${where}
-         ORDER BY p.name
+         GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
+                  p.stock, p.stock_status, c.name, c.slug, p.main_image,
+                  p.created_at, p.owner_admin_id
+         ORDER BY ${orderBy}
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
       ),
@@ -87,7 +103,12 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
     return res.json({
       success: true,
       data:    rows.rows,
-      meta:    { total, page: parseInt(page), limit: safeLimit, pages: Math.ceil(total / safeLimit) },
+      meta: {
+        total,
+        page:  parseInt(page),
+        limit: safeLimit,
+        pages: Math.ceil(total / safeLimit),
+      },
     });
   } catch (error) {
     console.error("[PUBLIC API] GET /products", error);
@@ -98,22 +119,40 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
 // GET /public-api/v1/products/:id
 router.get("/products/:id", requireApiPermission("products:read"), async (req, res) => {
   try {
+    const adminId = req.apiKey.adminId;
+
     const result = await db.query(
       `SELECT
-         p.id, p.name, p.sku, p.description, p.sale_price AS price,
+         p.id, p.name, p.sku, p.description,
+         p.sale_price AS price,
          p.stock, p.stock_status,
          c.name AS category, c.slug AS category_slug,
          p.main_image,
-         json_agg(
-           DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
-         ) FILTER (WHERE pi.id IS NOT NULL) AS images
+         COALESCE(
+           json_agg(
+             DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
+           ) FILTER (WHERE pi.id IS NOT NULL), '[]'
+         ) AS images,
+         COALESCE(
+           json_agg(
+             DISTINCT jsonb_build_object(
+               'id',    pv.id,
+               'sku',   pv.sku,
+               'price', COALESCE(pv.sale_price, p.sale_price),
+               'stock', pv.stock
+             )
+           ) FILTER (WHERE pv.id IS NOT NULL AND pv.is_active = true), '[]'
+         ) AS variants
        FROM v_products_full p
        LEFT JOIN categories c       ON c.id = p.category_id
        LEFT JOIN product_images pi  ON pi.product_id = p.id
-       WHERE p.id = $1 AND p.is_active = true
+       LEFT JOIN product_variants pv ON pv.product_id = p.id
+       WHERE p.id = $1
+         AND p.is_active = true
+         AND p.owner_admin_id = $2
        GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
                 p.stock, p.stock_status, c.name, c.slug, p.main_image`,
-      [req.params.id]
+      [req.params.id, adminId]
     );
 
     if (result.rowCount === 0) {
@@ -127,20 +166,25 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
   }
 });
 
-// ─── Categorías ───────────────────────────────────────────────────────────────
+// ─── Categorías ───────────────────────────────────────────────
 // GET /public-api/v1/categories
 router.get("/categories", requireApiPermission("categories:read"), async (req, res) => {
   try {
+    const adminId = req.apiKey.adminId;
+
     const result = await db.query(
       `SELECT
          c.id, c.name, c.slug, c.description, c.image_url,
          COUNT(p.id) FILTER (WHERE p.is_active = true)::int AS product_count
        FROM categories c
-       LEFT JOIN products p ON p.category_id = c.id
+       LEFT JOIN products p ON p.category_id = c.id AND p.owner_admin_id = $1
        WHERE c.is_active = true
+         AND c.owner_admin_id = $1
        GROUP BY c.id
-       ORDER BY c.name`
+       ORDER BY c.name`,
+      [adminId]
     );
+
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[PUBLIC API] GET /categories", error);
@@ -148,36 +192,259 @@ router.get("/categories", requireApiPermission("categories:read"), async (req, r
   }
 });
 
-// ─── Crear venta externa ──────────────────────────────────────────────────────
+// ─── Inventario ───────────────────────────────────────────────
+// GET /public-api/v1/inventory
+router.get("/inventory", requireApiPermission("inventory:read"), async (req, res) => {
+  try {
+    const adminId = req.apiKey.adminId;
+    const { low_stock } = req.query;
+
+    let where = "WHERE p.is_active = true AND p.owner_admin_id = $1";
+    if (low_stock === "true") where += " AND p.stock <= p.min_stock";
+
+    const result = await db.query(
+      `SELECT
+         p.id, p.name, p.sku,
+         p.stock, p.min_stock, p.max_stock,
+         p.stock_status,
+         c.name AS category
+       FROM v_products_full p
+       LEFT JOIN categories c ON c.id = p.category_id
+       ${where}
+       ORDER BY p.stock ASC`,
+      [adminId]
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /inventory", error);
+    res.status(500).json({ success: false, message: "Error al obtener inventario" });
+  }
+});
+
+// ─── Banners ──────────────────────────────────────────────────
+// GET /public-api/v1/banners
+router.get("/banners", async (req, res) => {
+  try {
+    const adminId = req.apiKey.adminId;
+
+    const result = await db.query(
+      `SELECT id, title, description, image_url, button_text, button_link, display_order
+       FROM banners
+       WHERE is_active = true
+         AND created_by = $1
+       ORDER BY display_order ASC`,
+      [adminId]
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /banners", error);
+    res.status(500).json({ success: false, message: "Error al obtener banners" });
+  }
+});
+
+// ─── Descuentos activos ───────────────────────────────────────
+// GET /public-api/v1/discounts
+router.get("/discounts", async (req, res) => {
+  try {
+    const adminId = req.apiKey.adminId;
+    const now     = new Date();
+
+    const result = await db.query(
+      `SELECT
+         id, name, code, type, value,
+         min_purchase_amount, max_discount_amount,
+         starts_at, ends_at,
+         usage_limit, times_used,
+         description
+       FROM discounts
+       WHERE active = true
+         AND owner_admin_id = $1
+         AND starts_at <= $2
+         AND ends_at   >= $2
+         AND (usage_limit IS NULL OR times_used < usage_limit)
+       ORDER BY ends_at ASC`,
+      [adminId, now]
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /discounts", error);
+    res.status(500).json({ success: false, message: "Error al obtener descuentos" });
+  }
+});
+
+// ─── Validar cupón ────────────────────────────────────────────
+// POST /public-api/v1/discounts/validate
+router.post("/discounts/validate", async (req, res) => {
+  try {
+    const adminId          = req.apiKey.adminId;
+    const { code, amount } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: "Código requerido" });
+    }
+
+    const now = new Date();
+
+    const result = await db.query(
+      `SELECT
+         id, name, code, type, value,
+         min_purchase_amount, max_discount_amount,
+         usage_limit, times_used
+       FROM discounts
+       WHERE code = $1
+         AND owner_admin_id = $2
+         AND active = true
+         AND starts_at <= $3
+         AND ends_at   >= $3
+         AND (usage_limit IS NULL OR times_used < usage_limit)`,
+      [code.toUpperCase().trim(), adminId, now]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Cupón inválido, expirado o no disponible",
+        code:    "INVALID_COUPON",
+      });
+    }
+
+    const discount = result.rows[0];
+
+    if (amount && parseFloat(amount) < parseFloat(discount.min_purchase_amount)) {
+      return res.status(400).json({
+        success: false,
+        message: `Compra mínima requerida: $${discount.min_purchase_amount}`,
+        code:    "MIN_PURCHASE_NOT_MET",
+      });
+    }
+
+    // Calcular descuento aplicable
+    let discountAmount = 0;
+    if (discount.type === "percentage") {
+      discountAmount = (parseFloat(amount || 0) * discount.value) / 100;
+      if (discount.max_discount_amount) {
+        discountAmount = Math.min(discountAmount, parseFloat(discount.max_discount_amount));
+      }
+    } else {
+      discountAmount = parseFloat(discount.value);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        ...discount,
+        discount_amount: parseFloat(discountAmount.toFixed(2)),
+        final_amount:    parseFloat((parseFloat(amount || 0) - discountAmount).toFixed(2)),
+      },
+    });
+  } catch (error) {
+    console.error("[PUBLIC API] POST /discounts/validate", error);
+    res.status(500).json({ success: false, message: "Error al validar cupón" });
+  }
+});
+
+// ─── Historial de ventas (lectura) ───────────────────────────
+// GET /public-api/v1/sales
+router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
+  try {
+    const adminId                           = req.apiKey.adminId;
+    const { page = 1, limit = 20, status } = req.query;
+    const safeLimit = Math.min(parseInt(limit) || 20, 50);
+    const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
+
+    const params = [adminId];
+    let where    = "WHERE s.owner_admin_id = $1";
+
+    if (status) {
+      params.push(status);
+      where += ` AND s.payment_status = $${params.length}`;
+    }
+
+    params.push(safeLimit, offset);
+
+    const result = await db.query(
+      `SELECT
+         s.id, s.sale_number, s.sale_date,
+         s.subtotal, s.discount_amount, s.total,
+         s.payment_method, s.payment_status, s.sale_type,
+         s.shipping_address, s.customer_phone,
+         COUNT(si.id)::int          AS items_count,
+         COALESCE(SUM(si.quantity), 0)::int AS units_total
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       ${where}
+       GROUP BY s.id
+       ORDER BY s.sale_date DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return res.json({
+      success: true,
+      data:    result.rows,
+      meta: {
+        page:  parseInt(page),
+        limit: safeLimit,
+      },
+    });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /sales", error);
+    res.status(500).json({ success: false, message: "Error al obtener ventas" });
+  }
+});
+
+// ─── Crear venta externa ──────────────────────────────────────
 // POST /public-api/v1/sales
 router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
   const client = await db.connect();
   try {
+    const adminId = req.apiKey.adminId;
     const {
       items,
       customer_name,
       customer_phone,
+      customer_email,
       shipping_address,
+      shipping_city,
+      shipping_notes,
       payment_method = "transfer",
+      coupon_code,
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Se requiere al menos un item",
-        code: "MISSING_ITEMS",
+        code:    "MISSING_ITEMS",
       });
     }
 
     await client.query("BEGIN");
 
-    let subtotal   = 0;
+    let subtotal    = 0;
     const saleItems = [];
 
+    // Validar y calcular items — solo productos del admin
     for (const item of items) {
+      if (!item.product_id || !item.quantity || item.quantity < 1) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Cada item requiere product_id y quantity válidos",
+          code:    "INVALID_ITEM",
+        });
+      }
+
       const productRes = await client.query(
-        "SELECT id, name, sale_price, stock, purchase_price FROM products WHERE id = $1 AND is_active = true",
-        [item.product_id]
+        `SELECT id, name, sale_price, stock, purchase_price
+         FROM products
+         WHERE id = $1
+           AND is_active = true
+           AND owner_admin_id = $2`,
+        [item.product_id, adminId]
       );
 
       if (productRes.rowCount === 0) {
@@ -185,7 +452,7 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
         return res.status(400).json({
           success: false,
           message: `Producto ID ${item.product_id} no encontrado`,
-          code: "PRODUCT_NOT_FOUND",
+          code:    "PRODUCT_NOT_FOUND",
         });
       }
 
@@ -196,7 +463,7 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
         return res.status(400).json({
           success: false,
           message: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
-          code: "INSUFFICIENT_STOCK",
+          code:    "INSUFFICIENT_STOCK",
         });
       }
 
@@ -214,21 +481,84 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
       });
     }
 
-    const saleNumber = `WEB-${req.apiKey.adminId}-${Date.now()}`;
+    // Validar cupón si viene
+    let discountAmount = 0;
+    let discountId     = null;
+
+    if (coupon_code) {
+      const now     = new Date();
+      const couponRes = await client.query(
+        `SELECT id, type, value, min_purchase_amount, max_discount_amount
+         FROM discounts
+         WHERE code = $1
+           AND owner_admin_id = $2
+           AND active = true
+           AND starts_at <= $3
+           AND ends_at   >= $3
+           AND (usage_limit IS NULL OR times_used < usage_limit)`,
+        [coupon_code.toUpperCase().trim(), adminId, now]
+      );
+
+      if (couponRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Cupón inválido o expirado",
+          code:    "INVALID_COUPON",
+        });
+      }
+
+      const coupon = couponRes.rows[0];
+
+      if (subtotal < parseFloat(coupon.min_purchase_amount)) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: `Compra mínima requerida: $${coupon.min_purchase_amount}`,
+          code:    "MIN_PURCHASE_NOT_MET",
+        });
+      }
+
+      if (coupon.type === "percentage") {
+        discountAmount = (subtotal * coupon.value) / 100;
+        if (coupon.max_discount_amount) {
+          discountAmount = Math.min(discountAmount, parseFloat(coupon.max_discount_amount));
+        }
+      } else {
+        discountAmount = parseFloat(coupon.value);
+      }
+
+      discountId = coupon.id;
+
+      // Incrementar contador del cupón
+      await client.query(
+        "UPDATE discounts SET times_used = times_used + 1 WHERE id = $1",
+        [coupon.id]
+      );
+    }
+
+    const total      = Math.max(0, subtotal - discountAmount);
+    const saleNumber = `WEB-${adminId}-${Date.now()}`;
 
     const saleRes = await client.query(
-      `INSERT INTO sales
-         (sale_number, subtotal, total, payment_method, payment_status,
-          sale_type, shipping_address, customer_phone, created_by)
-       VALUES ($1, $2, $2, $3, 'pending', 'web', $4, $5, $6)
-       RETURNING id, sale_number, total`,
+      `INSERT INTO sales (
+         sale_number, subtotal, discount_amount, total,
+         payment_method, payment_status, sale_type,
+         shipping_address, shipping_city, shipping_notes,
+         customer_phone, owner_admin_id, created_by
+       ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10)
+       RETURNING id, sale_number, subtotal, discount_amount, total`,
       [
         saleNumber,
         subtotal,
+        discountAmount,
+        total,
         payment_method,
-        shipping_address  || null,
-        customer_phone    || null,
-        req.apiKey.adminId,
+        shipping_address || null,
+        shipping_city    || null,
+        shipping_notes   || null,
+        customer_phone   || null,
+        adminId,
       ]
     );
 
@@ -236,14 +566,17 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
 
     for (const item of saleItems) {
       await client.query(
-        `INSERT INTO sale_items
-           (sale_id, product_id, quantity, unit_price, unit_cost,
-            subtotal, profit_per_unit, total_profit)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO sale_items (
+           sale_id, product_id, quantity,
+           unit_price, unit_cost, subtotal,
+           profit_per_unit, total_profit,
+           discount_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           saleId, item.product_id, item.quantity,
           item.unit_price, item.unit_cost, item.subtotal,
           item.profit_unit, item.total_profit,
+          discountId,
         ]
       );
 
@@ -259,9 +592,11 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
       success: true,
       message: "Venta registrada correctamente",
       data: {
-        sale_id:     saleId,
-        sale_number: saleRes.rows[0].sale_number,
-        total:       saleRes.rows[0].total,
+        sale_id:         saleId,
+        sale_number:     saleRes.rows[0].sale_number,
+        subtotal:        saleRes.rows[0].subtotal,
+        discount_amount: saleRes.rows[0].discount_amount,
+        total:           saleRes.rows[0].total,
       },
     });
   } catch (error) {
@@ -270,6 +605,52 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
     res.status(500).json({ success: false, message: "Error al registrar la venta" });
   } finally {
     client.release();
+  }
+});
+
+// ─── Clientes ─────────────────────────────────────────────────
+// GET /public-api/v1/customers
+router.get("/customers", requireApiPermission("customers:read"), async (req, res) => {
+  try {
+    const adminId              = req.apiKey.adminId;
+    const { search, page = 1, limit = 20 } = req.query;
+    const safeLimit = Math.min(parseInt(limit) || 20, 50);
+    const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
+
+    const params = [adminId];
+    let where    = `
+      WHERE u.owner_admin_id = $1
+        AND r.name = 'user'
+        AND u.is_active = true`;
+
+    if (search) {
+      params.push(`%${search}%`);
+      where += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`;
+    }
+
+    params.push(safeLimit, offset);
+
+    const result = await db.query(
+      `SELECT
+         u.id, u.name, u.email, u.phone,
+         u.city, u.created_at,
+         COUNT(DISTINCT s.id)::int          AS total_orders,
+         COALESCE(SUM(s.total), 0)::numeric AS total_spent
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r       ON r.id = ur.role_id
+       LEFT JOIN sales s       ON s.customer_id = u.id AND s.owner_admin_id = $1
+       ${where}
+       GROUP BY u.id
+       ORDER BY total_spent DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /customers", error);
+    res.status(500).json({ success: false, message: "Error al obtener clientes" });
   }
 });
 
