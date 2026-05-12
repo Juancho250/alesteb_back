@@ -19,16 +19,10 @@ const getAdminProfile = async (req, res) => {
   try {
     const { id } = req.user;
 
-    const { rows } = await pool.query(
-      `SELECT ap.*, u.name AS user_name, u.email AS user_email
-       FROM   admin_profiles ap
-       RIGHT  JOIN users u ON u.id = $1
-       LEFT   JOIN admin_profiles ap2 ON ap2.user_id = u.id
-       WHERE  u.id = $1`,
-      [id]
-    );
+    // ❌ Elimina esto — resultado nunca usado
+    // const { rows } = await pool.query(`SELECT ap.*, ...`, [id]);
 
-    // Consulta limpia: solo el perfil si existe
+    // ✅ Solo esta query importa
     const profileResult = await pool.query(
       'SELECT * FROM admin_profiles WHERE user_id = $1',
       [id]
