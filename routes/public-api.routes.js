@@ -7,10 +7,8 @@ const {
   requireApiPermission,
 } = require("../middleware/auth.middleware");
 
-// ─── Auth: todas las rutas requieren API Key válida ──────────
 router.use(apiKeyAuth);
 
-// ─── CORS dinámico según whitelist de la key ─────────────────
 router.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin) {
@@ -22,7 +20,6 @@ router.use((req, res, next) => {
   next();
 });
 
-// ─── Health check ─────────────────────────────────────────────
 // GET /public-api/v1/ping
 router.get("/ping", (req, res) => {
   res.json({
@@ -34,7 +31,6 @@ router.get("/ping", (req, res) => {
   });
 });
 
-// ─── Productos ────────────────────────────────────────────────
 // GET /public-api/v1/products
 router.get("/products", requireApiPermission("products:read"), async (req, res) => {
   try {
@@ -70,7 +66,12 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
         `SELECT
            p.id, p.name, p.sku, p.description,
            p.sale_price AS price,
-           p.stock, p.stock_status,
+           p.stock,
+           CASE
+             WHEN p.stock <= 0           THEN 'out'
+             WHEN p.stock <= p.min_stock THEN 'low'
+             ELSE 'normal'
+           END AS stock_status,
            c.name AS category, c.slug AS category_slug,
            (SELECT url FROM product_images
             WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
@@ -84,7 +85,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
          LEFT JOIN product_images pi ON pi.product_id = p.id
          ${where}
          GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                  p.stock, p.stock_status, c.name, c.slug,
+                  p.stock, p.min_stock, c.name, c.slug,
                   p.created_at, p.owner_admin_id
          ORDER BY ${orderBy}
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -126,7 +127,12 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
       `SELECT
          p.id, p.name, p.sku, p.description,
          p.sale_price AS price,
-         p.stock, p.stock_status,
+         p.stock,
+         CASE
+           WHEN p.stock <= 0           THEN 'out'
+           WHEN p.stock <= p.min_stock THEN 'low'
+           ELSE 'normal'
+         END AS stock_status,
          c.name AS category, c.slug AS category_slug,
          (SELECT url FROM product_images
           WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
@@ -153,7 +159,7 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
          AND p.is_active = true
          AND p.owner_admin_id = $2
        GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                p.stock, p.stock_status, c.name, c.slug`,
+                p.stock, p.min_stock, c.name, c.slug`,
       [req.params.id, adminId]
     );
 
@@ -168,7 +174,6 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
   }
 });
 
-// ─── Categorías ───────────────────────────────────────────────
 // GET /public-api/v1/categories
 router.get("/categories", requireApiPermission("categories:read"), async (req, res) => {
   try {
@@ -194,7 +199,6 @@ router.get("/categories", requireApiPermission("categories:read"), async (req, r
   }
 });
 
-// ─── Inventario ───────────────────────────────────────────────
 // GET /public-api/v1/inventory
 router.get("/inventory", requireApiPermission("inventory:read"), async (req, res) => {
   try {
@@ -208,7 +212,11 @@ router.get("/inventory", requireApiPermission("inventory:read"), async (req, res
       `SELECT
          p.id, p.name, p.sku,
          p.stock, p.min_stock, p.max_stock,
-         p.stock_status,
+         CASE
+           WHEN p.stock <= 0           THEN 'out'
+           WHEN p.stock <= p.min_stock THEN 'low'
+           ELSE 'normal'
+         END AS stock_status,
          c.name AS category
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
@@ -224,7 +232,6 @@ router.get("/inventory", requireApiPermission("inventory:read"), async (req, res
   }
 });
 
-// ─── Banners ──────────────────────────────────────────────────
 // GET /public-api/v1/banners
 router.get("/banners", async (req, res) => {
   try {
@@ -246,7 +253,6 @@ router.get("/banners", async (req, res) => {
   }
 });
 
-// ─── Descuentos activos ───────────────────────────────────────
 // GET /public-api/v1/discounts
 router.get("/discounts", async (req, res) => {
   try {
@@ -277,7 +283,6 @@ router.get("/discounts", async (req, res) => {
   }
 });
 
-// ─── Validar cupón ────────────────────────────────────────────
 // POST /public-api/v1/discounts/validate
 router.post("/discounts/validate", async (req, res) => {
   try {
@@ -347,7 +352,6 @@ router.post("/discounts/validate", async (req, res) => {
   }
 });
 
-// ─── Historial de ventas (lectura) ───────────────────────────
 // GET /public-api/v1/sales
 router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
   try {
@@ -372,7 +376,7 @@ router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
          s.subtotal, s.discount_amount, s.total,
          s.payment_method, s.payment_status, s.sale_type,
          s.shipping_address, s.customer_phone,
-         COUNT(si.id)::int          AS items_count,
+         COUNT(si.id)::int                  AS items_count,
          COALESCE(SUM(si.quantity), 0)::int AS units_total
        FROM sales s
        LEFT JOIN sale_items si ON si.sale_id = s.id
@@ -386,10 +390,7 @@ router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
     return res.json({
       success: true,
       data:    result.rows,
-      meta: {
-        page:  parseInt(page),
-        limit: safeLimit,
-      },
+      meta: { page: parseInt(page), limit: safeLimit },
     });
   } catch (error) {
     console.error("[PUBLIC API] GET /sales", error);
@@ -397,7 +398,6 @@ router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
   }
 });
 
-// ─── Crear venta externa ──────────────────────────────────────
 // POST /public-api/v1/sales
 router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
   const client = await db.connect();
@@ -405,9 +405,7 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
     const adminId = req.apiKey.adminId;
     const {
       items,
-      customer_name,
       customer_phone,
-      customer_email,
       shipping_address,
       shipping_city,
       shipping_notes,
@@ -416,11 +414,7 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Se requiere al menos un item",
-        code:    "MISSING_ITEMS",
-      });
+      return res.status(400).json({ success: false, message: "Se requiere al menos un item", code: "MISSING_ITEMS" });
     }
 
     await client.query("BEGIN");
@@ -431,45 +425,30 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
     for (const item of items) {
       if (!item.product_id || !item.quantity || item.quantity < 1) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: "Cada item requiere product_id y quantity válidos",
-          code:    "INVALID_ITEM",
-        });
+        return res.status(400).json({ success: false, message: "Cada item requiere product_id y quantity válidos", code: "INVALID_ITEM" });
       }
 
       const productRes = await client.query(
         `SELECT id, name, sale_price, stock, purchase_price
          FROM products
-         WHERE id = $1
-           AND is_active = true
-           AND owner_admin_id = $2`,
+         WHERE id = $1 AND is_active = true AND owner_admin_id = $2`,
         [item.product_id, adminId]
       );
 
       if (productRes.rowCount === 0) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: `Producto ID ${item.product_id} no encontrado`,
-          code:    "PRODUCT_NOT_FOUND",
-        });
+        return res.status(400).json({ success: false, message: `Producto ID ${item.product_id} no encontrado`, code: "PRODUCT_NOT_FOUND" });
       }
 
       const product = productRes.rows[0];
 
       if (product.stock < item.quantity) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
-          code:    "INSUFFICIENT_STOCK",
-        });
+        return res.status(400).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`, code: "INSUFFICIENT_STOCK" });
       }
 
       const itemSubtotal = product.sale_price * item.quantity;
       subtotal += itemSubtotal;
-
       saleItems.push({
         product_id:   product.id,
         quantity:     item.quantity,
@@ -489,50 +468,33 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
       const couponRes = await client.query(
         `SELECT id, type, value, min_purchase_amount, max_discount_amount
          FROM discounts
-         WHERE code = $1
-           AND owner_admin_id = $2
-           AND active = true
-           AND starts_at <= $3
-           AND ends_at   >= $3
+         WHERE code = $1 AND owner_admin_id = $2 AND active = true
+           AND starts_at <= $3 AND ends_at >= $3
            AND (usage_limit IS NULL OR times_used < usage_limit)`,
         [coupon_code.toUpperCase().trim(), adminId, now]
       );
 
       if (couponRes.rowCount === 0) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: "Cupón inválido o expirado",
-          code:    "INVALID_COUPON",
-        });
+        return res.status(400).json({ success: false, message: "Cupón inválido o expirado", code: "INVALID_COUPON" });
       }
 
       const coupon = couponRes.rows[0];
 
       if (subtotal < parseFloat(coupon.min_purchase_amount)) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: `Compra mínima requerida: $${coupon.min_purchase_amount}`,
-          code:    "MIN_PURCHASE_NOT_MET",
-        });
+        return res.status(400).json({ success: false, message: `Compra mínima requerida: $${coupon.min_purchase_amount}`, code: "MIN_PURCHASE_NOT_MET" });
       }
 
       if (coupon.type === "percentage") {
         discountAmount = (subtotal * coupon.value) / 100;
-        if (coupon.max_discount_amount) {
-          discountAmount = Math.min(discountAmount, parseFloat(coupon.max_discount_amount));
-        }
+        if (coupon.max_discount_amount) discountAmount = Math.min(discountAmount, parseFloat(coupon.max_discount_amount));
       } else {
         discountAmount = parseFloat(coupon.value);
       }
 
       discountId = coupon.id;
-
-      await client.query(
-        "UPDATE discounts SET times_used = times_used + 1 WHERE id = $1",
-        [coupon.id]
-      );
+      await client.query("UPDATE discounts SET times_used = times_used + 1 WHERE id = $1", [coupon.id]);
     }
 
     const total      = Math.max(0, subtotal - discountAmount);
@@ -546,33 +508,20 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
          customer_phone, owner_admin_id, created_by
        ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10)
        RETURNING id, sale_number, subtotal, discount_amount, total`,
-      [
-        saleNumber, subtotal, discountAmount, total, payment_method,
-        shipping_address || null, shipping_city || null,
-        shipping_notes   || null, customer_phone || null, adminId,
-      ]
+      [saleNumber, subtotal, discountAmount, total, payment_method,
+       shipping_address || null, shipping_city || null,
+       shipping_notes || null, customer_phone || null, adminId]
     );
 
     const saleId = saleRes.rows[0].id;
 
     for (const item of saleItems) {
       await client.query(
-        `INSERT INTO sale_items (
-           sale_id, product_id, quantity,
-           unit_price, unit_cost, subtotal,
-           profit_per_unit, total_profit, discount_id
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [
-          saleId, item.product_id, item.quantity,
-          item.unit_price, item.unit_cost, item.subtotal,
-          item.profit_unit, item.total_profit, discountId,
-        ]
+        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, unit_cost, subtotal, profit_per_unit, total_profit, discount_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [saleId, item.product_id, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId]
       );
-
-      await client.query(
-        "UPDATE products SET stock = stock - $1 WHERE id = $2",
-        [item.quantity, item.product_id]
-      );
+      await client.query("UPDATE products SET stock = stock - $1 WHERE id = $2", [item.quantity, item.product_id]);
     }
 
     await client.query("COMMIT");
@@ -597,20 +546,16 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
   }
 });
 
-// ─── Clientes ─────────────────────────────────────────────────
 // GET /public-api/v1/customers
 router.get("/customers", requireApiPermission("customers:read"), async (req, res) => {
   try {
-    const adminId              = req.apiKey.adminId;
+    const adminId = req.apiKey.adminId;
     const { search, page = 1, limit = 20 } = req.query;
     const safeLimit = Math.min(parseInt(limit) || 20, 50);
     const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
 
     const params = [adminId];
-    let where    = `
-      WHERE u.owner_admin_id = $1
-        AND r.name = 'user'
-        AND u.is_active = true`;
+    let where = `WHERE u.owner_admin_id = $1 AND r.name = 'user' AND u.is_active = true`;
 
     if (search) {
       params.push(`%${search}%`);
