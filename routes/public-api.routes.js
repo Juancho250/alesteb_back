@@ -257,12 +257,13 @@ router.get("/banners", async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
 
+    // public-api.routes.js — GET /banners
     const result = await db.query(
-      `SELECT id, title, description, image_url, button_text, button_link, display_order
-       FROM banners
-       WHERE is_active = true
-         AND created_by = $1
-       ORDER BY display_order ASC`,
+      `SELECT id, title, description, image_url, button_text, button_link, display_order, is_active
+      FROM banners
+      WHERE is_active = true
+        AND created_by = $1
+      ORDER BY display_order ASC`,
       [adminId]
     );
 
