@@ -126,40 +126,60 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
     const result = await db.query(
       `SELECT
          p.id, p.name, p.sku, p.description,
+         p.sale_price,
          p.sale_price AS price,
          p.stock,
+         p.has_variants,
          CASE
            WHEN p.stock <= 0           THEN 'out'
            WHEN p.stock <= p.min_stock THEN 'low'
            ELSE 'normal'
          END AS stock_status,
-         c.name AS category, c.slug AS category_slug,
+         c.name AS category,
+         c.name AS category_name,
+         c.slug AS category_slug,
          (SELECT url FROM product_images
           WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
          COALESCE(
-           json_agg(
-             DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
-           ) FILTER (WHERE pi.id IS NOT NULL), '[]'
+           (SELECT json_agg(jsonb_build_object('url', pi.url, 'is_main', pi.is_main))
+            FROM product_images pi WHERE pi.product_id = p.id),
+           '[]'
          ) AS images,
          COALESCE(
-           json_agg(
-             DISTINCT jsonb_build_object(
-               'id',    pv.id,
-               'sku',   pv.sku,
-               'price', COALESCE(pv.sale_price, p.sale_price),
-               'stock', pv.stock
+           (SELECT json_agg(
+             jsonb_build_object(
+               'id',         pv.id,
+               'sku',        pv.sku,
+               'sale_price', COALESCE(pv.sale_price, p.sale_price),
+               'price',      COALESCE(pv.sale_price, p.sale_price),
+               'stock',      pv.stock,
+               'is_active',  pv.is_active,
+               'attributes', (
+                 SELECT COALESCE(json_agg(
+                   jsonb_build_object(
+                     'type',               at.name,
+                     'value',              av.value,
+                     'display_value',      COALESCE(av.display_value, av.value),
+                     'hex_color',          av.hex_color,
+                     'attribute_value_id', av.id
+                   )
+                 ), '[]'::json)
+                 FROM variant_attribute_values vav
+                 JOIN attribute_values av ON av.id = vav.attribute_value_id
+                 JOIN attribute_types  at ON at.id = av.attribute_type_id
+                 WHERE vav.variant_id = pv.id
+               )
              )
-           ) FILTER (WHERE pv.id IS NOT NULL AND pv.is_active = true), '[]'
+           )
+           FROM product_variants pv
+           WHERE pv.product_id = p.id AND pv.is_active = true),
+           '[]'
          ) AS variants
        FROM products p
-       LEFT JOIN categories c        ON c.id = p.category_id
-       LEFT JOIN product_images pi   ON pi.product_id = p.id
-       LEFT JOIN product_variants pv ON pv.product_id = p.id
+       LEFT JOIN categories c ON c.id = p.category_id
        WHERE p.id = $1
          AND p.is_active = true
-         AND p.owner_admin_id = $2
-       GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                p.stock, p.min_stock, c.name, c.slug`,
+         AND p.owner_admin_id = $2`,
       [req.params.id, adminId]
     );
 
