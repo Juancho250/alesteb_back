@@ -50,6 +50,9 @@ const rolesRoutes      = safeRequire("./routes/roles.routes",      "roles.routes
 // API Keys: cada admin gestiona las suyas
 const apiKeysRoutes    = safeRequire("./routes/apikeys.routes",    "apikeys.routes");
 
+// Perfil de negocio: cada admin configura su empresa
+const adminProfileRoutes = safeRequire("./routes/adminProfile.routes", "adminProfile.routes");
+
 // Resto del panel
 const statsRoutes         = safeRequire("./routes/stats.routes",              "stats.routes");
 const providersRoutes     = safeRequire("./routes/providers.routes",          "providers.routes");
@@ -88,10 +91,11 @@ require("./services/notificationScheduler"); // Push notifications automáticas
 if (authRoutes)       app.use("/api/auth",       authRoutes);
 
 // — Panel de administración —
-if (superadminRoutes) app.use("/api/superadmin",  superadminRoutes); // Solo superadmin
-if (usersRoutes)      app.use("/api/users",        usersRoutes);      // Admin gestiona sus users
-if (rolesRoutes)      app.use("/api/roles",        rolesRoutes);      // Lectura admin / escritura superadmin
-if (apiKeysRoutes)    app.use("/api/api-keys",     apiKeysRoutes);    // Admin gestiona sus API keys
+if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);    // Solo superadmin
+if (usersRoutes)         app.use("/api/users",           usersRoutes);         // Admin gestiona sus users
+if (rolesRoutes)         app.use("/api/roles",           rolesRoutes);         // Lectura admin / escritura superadmin
+if (apiKeysRoutes)       app.use("/api/api-keys",        apiKeysRoutes);       // Admin gestiona sus API keys
+if (adminProfileRoutes)  app.use("/api/admin-profile",   adminProfileRoutes);  // Perfil de negocio del admin
 
 // — Resto del panel —
 if (statsRoutes)         app.use("/api/stats",         statsRoutes);
@@ -126,6 +130,7 @@ app.get("/api/health", (req, res) => {
       users:              !!usersRoutes,
       roles:              !!rolesRoutes,
       apiKeys:            !!apiKeysRoutes,
+      adminProfile:       !!adminProfileRoutes,
       stats:              !!statsRoutes,
       providers:          !!providersRoutes,
       finance:            !!financeRoutes,
