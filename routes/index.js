@@ -32,5 +32,7 @@ router.use("/superadmin",     require("./superadmin.routes"));
 router.use("/variants",       require("./variants_bundles.routes"));
 router.use("/wompi",          require("./wompi.routes"));
 router.use("/payments",       require("./payments.controller")); // parece mal nombrado
+// Agrega esta línea junto a las demás rutas del panel
+router.use("/subscriptions", require("./subscription.routes"));
 
 module.exports = router;
