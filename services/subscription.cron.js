@@ -1,7 +1,7 @@
 // services/subscription.cron.js
 const cron = require('node-cron');
 const subscriptionService = require('./subscription.service');
-const { pool } = require('../config/db');
+const db = require('../config/db');
 
 // ─────────────────────────────────────────────────────────────────
 // OPCIONAL: descomenta e importa tu módulo de email real
@@ -38,7 +38,7 @@ function startSubscriptionCron() {
   // ── 3. Sincronizar contadores de uso: cada hora en el minuto 30 ─
   cron.schedule('30 * * * *', async () => {
     try {
-      const { rows } = await pool.query(
+      const { rows } = await db.query(
         `SELECT DISTINCT admin_id
          FROM subscriptions
          WHERE status IN ('trial', 'active', 'past_due')`
@@ -77,7 +77,7 @@ async function runSafely(label, fn) {
 // NOTIFICACIÓN: trial por vencer en los próximos 3 días
 // ─────────────────────────────────────────────────────────────────
 async function notifyTrialExpiring() {
-  const { rows } = await pool.query(`
+  const { rows } = await db.query(`
     SELECT
       s.admin_id,
       u.email,
@@ -116,7 +116,7 @@ async function notifyTrialExpiring() {
 // NOTIFICACIÓN: período de gracia por expirar (≤ 2 días)
 // ─────────────────────────────────────────────────────────────────
 async function notifyGraceExpiring() {
-  const { rows } = await pool.query(`
+  const { rows } = await db.query(`
     SELECT
       s.admin_id,
       u.email,
@@ -151,7 +151,7 @@ async function notifyGraceExpiring() {
 // ─────────────────────────────────────────────────────────────────
 async function notifyPastDue() {
   // Solo notificar el primer día en past_due para no spamear
-  const { rows } = await pool.query(`
+  const { rows } = await db.query(`
     SELECT
       s.admin_id,
       u.email,
@@ -188,7 +188,7 @@ async function notifyPastDue() {
 // NOTIFICACIÓN: recordatorio de renovación 7 días antes
 // ─────────────────────────────────────────────────────────────────
 async function notifyRenewalReminder() {
-  const { rows } = await pool.query(`
+  const { rows } = await db.query(`
     SELECT
       s.admin_id,
       u.email,

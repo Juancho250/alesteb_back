@@ -9,7 +9,7 @@ const subscriptionService = require('../services/subscription.service');
 /** GET /api/subscriptions/plans */
 exports.getPublicPlans = async (req, res) => {
   try {
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `SELECT id, name, slug, description, tagline,
               price_monthly, price_yearly, trial_days, currency,
               max_products, max_users, max_admins, max_monthly_sales,
@@ -50,7 +50,7 @@ exports.getMySubscription = async (req, res) => {
 exports.getMyInvoices = async (req, res) => {
   try {
     const adminId = req.user.owner_admin_id || req.user.id;
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `SELECT si.*, sp.name AS plan_name
        FROM subscription_invoices si
        JOIN subscription_plans sp ON sp.id = si.plan_id
@@ -75,7 +75,7 @@ exports.validateCoupon = async (req, res) => {
     const { code, plan_slug, billing_cycle = 'monthly' } = req.body;
     if (!code) return res.status(400).json({ error: 'Código requerido' });
 
-    const couponRes = await pool.query(
+    const couponRes = await db.query(
       `SELECT sc.*, ARRAY_AGG(sp.slug) AS applicable_plan_slugs
        FROM subscription_coupons sc
        LEFT JOIN subscription_plans sp ON sp.id = ANY(sc.applicable_plans)
@@ -103,7 +103,7 @@ exports.validateCoupon = async (req, res) => {
     // Calcular descuento aproximado para mostrar al usuario
     let planPrice = 0;
     if (plan_slug) {
-      const pRes = await pool.query(
+      const pRes = await db.query(
         'SELECT price_monthly, price_yearly FROM subscription_plans WHERE slug = $1',
         [plan_slug]
       );
@@ -156,7 +156,7 @@ exports.cancelSubscription = async (req, res) => {
 exports.reactivateSubscription = async (req, res) => {
   try {
     const adminId = req.user.owner_admin_id || req.user.id;
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `UPDATE subscriptions SET
          cancel_at_period_end = false,
          cancelled_at = NULL,
@@ -208,7 +208,7 @@ exports.getAllSubscriptions = async (req, res) => {
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     params.push(limit, offset);
 
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `SELECT s.*,
               sp.name AS plan_name, sp.slug AS plan_slug, sp.price_monthly,
               u.name AS admin_name, u.email AS admin_email,
@@ -223,7 +223,7 @@ exports.getAllSubscriptions = async (req, res) => {
       params
     );
 
-    const countRes = await pool.query(
+    const countRes = await db.query(
       `SELECT COUNT(*) FROM subscriptions s
        JOIN subscription_plans sp ON sp.id = s.plan_id ${where}`,
       params.slice(0, -2)
@@ -249,7 +249,7 @@ exports.assignSubscription = async (req, res) => {
       if (trial_days !== undefined) {
         const trialEnd = new Date();
         trialEnd.setDate(trialEnd.getDate() + parseInt(trial_days));
-        await pool.query(
+        await db.query(
           'UPDATE subscriptions SET trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now() WHERE admin_id = $2',
           [trialEnd.toISOString().split('T')[0], admin_id]
         );
@@ -273,7 +273,7 @@ exports.assignSubscription = async (req, res) => {
 /** GET /api/admin/subscriptions/stats */
 exports.getSubscriptionStats = async (req, res) => {
   try {
-    const stats = await pool.query(`
+    const stats = await db.query(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'active')    AS active_count,
         COUNT(*) FILTER (WHERE status = 'trial')     AS trial_count,
@@ -285,7 +285,7 @@ exports.getSubscriptionStats = async (req, res) => {
       FROM subscriptions
     `);
 
-    const byPlan = await pool.query(`
+    const byPlan = await db.query(`
       SELECT sp.name, sp.slug, sp.color, COUNT(s.id) AS count, SUM(s.amount_due) AS revenue
       FROM subscriptions s
       JOIN subscription_plans sp ON sp.id = s.plan_id
@@ -294,7 +294,7 @@ exports.getSubscriptionStats = async (req, res) => {
       ORDER BY count DESC
     `);
 
-    const recentInvoices = await pool.query(`
+    const recentInvoices = await db.query(`
       SELECT si.*, u.name AS admin_name, sp.name AS plan_name
       FROM subscription_invoices si
       JOIN users u ON u.id = si.admin_id
@@ -324,7 +324,7 @@ exports.createCoupon = async (req, res) => {
 
     if (!code || !coupon_type) return res.status(400).json({ error: 'code y coupon_type requeridos' });
 
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `INSERT INTO subscription_coupons
          (code, description, coupon_type, discount_value, free_months,
           max_uses, valid_from, valid_until, applicable_plans,
@@ -347,7 +347,7 @@ exports.createCoupon = async (req, res) => {
 /** GET /api/admin/subscriptions/coupons */
 exports.getCoupons = async (req, res) => {
   try {
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `SELECT sc.*, u.name AS created_by_name
        FROM subscription_coupons sc
        LEFT JOIN users u ON u.id = sc.created_by
@@ -385,7 +385,7 @@ exports.updatePlan = async (req, res) => {
 
     if (!updates) return res.status(400).json({ error: 'Sin campos para actualizar' });
 
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `UPDATE subscription_plans SET ${updates}, updated_at = now() WHERE id = $1 RETURNING *`,
       [id, ...values]
     );
