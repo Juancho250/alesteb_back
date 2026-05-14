@@ -2,13 +2,13 @@
 // Solo accesible por el rol "superadmin"
 const db     = require("../config/db");
 const bcrypt = require("bcryptjs");
+const subscriptionService = require("../services/subscription.service");
 
 const SALT_ROUNDS = 12;
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isStrongPassword = (pw) =>
   pw.length >= 8 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
-
 // ============================================
 // 📋 LISTAR TODOS LOS ADMINS
 // ============================================
@@ -39,15 +39,24 @@ exports.getAdmins = async (req, res) => {
   }
 };
 
+
 // ============================================
-// ➕ CREAR ADMIN (solo superadmin puede hacerlo)
+// ➕ CREAR ADMIN — con asignación de plan
 // ============================================
 exports.createAdmin = async (req, res) => {
   const client = await db.connect();
   try {
-    const { email, password, name, cedula, phone, city, address } = req.body;
+    const {
+      email, password, name, cedula,
+      phone, city, address,
+      // ── nuevos campos de suscripción ──
+      plan_slug    = "basic",   // qué plan asignar
+      trial_days,               // sobreescribe los días del plan (opcional)
+      start_active = false,     // true → activar directo sin trial (pago manual)
+      billing_cycle = "monthly",
+    } = req.body;
 
-    // --- Validaciones ---
+    // ── Validaciones ──────────────────────────────────────────────
     if (!email || !password || !name || !cedula) {
       return res.status(400).json({
         success: false,
@@ -55,11 +64,9 @@ exports.createAdmin = async (req, res) => {
         code: "MISSING_FIELDS",
       });
     }
-
     if (!isValidEmail(email)) {
       return res.status(400).json({ success: false, message: "Email inválido", code: "INVALID_EMAIL" });
     }
-
     if (!isStrongPassword(password)) {
       return res.status(400).json({
         success: false,
@@ -70,70 +77,116 @@ exports.createAdmin = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verificar email único
-    const emailCheck = await client.query("SELECT id FROM users WHERE email = $1", [
-      email.toLowerCase().trim(),
-    ]);
+    // Unicidad de email / cédula
+    const emailCheck = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase().trim()]);
     if (emailCheck.rowCount > 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "El email ya está registrado", code: "EMAIL_TAKEN" });
     }
-
-    // Verificar cédula única
-    const cedulaCheck = await client.query("SELECT id FROM users WHERE cedula = $1", [
-      cedula.trim(),
-    ]);
+    const cedulaCheck = await client.query("SELECT id FROM users WHERE cedula = $1", [cedula.trim()]);
     if (cedulaCheck.rowCount > 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "La cédula ya está registrada", code: "CEDULA_TAKEN" });
     }
 
-    // Obtener role_id del rol 'admin'
+    // Verificar que el plan existe
+    const planCheck = await client.query(
+      "SELECT id, name, trial_days, price_monthly FROM subscription_plans WHERE slug = $1 AND is_active = true",
+      [plan_slug]
+    );
+    if (planCheck.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ success: false, message: `Plan '${plan_slug}' no encontrado`, code: "PLAN_NOT_FOUND" });
+    }
+    const plan = planCheck.rows[0];
+
+    // Rol 'admin'
     const roleRes = await client.query("SELECT id FROM roles WHERE name = 'admin' LIMIT 1");
     if (roleRes.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(500).json({
-        success: false,
-        message: "Rol 'admin' no encontrado. Ejecuta las migraciones.",
-        code: "ROLE_NOT_FOUND",
-      });
+      return res.status(500).json({ success: false, message: "Rol 'admin' no encontrado", code: "ROLE_NOT_FOUND" });
     }
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
+    // Crear usuario
     const userRes = await client.query(
       `INSERT INTO users (email, password, name, cedula, phone, city, address, is_active, is_verified)
        VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
        RETURNING id, email, name, cedula, created_at`,
-      [
-        email.toLowerCase().trim(),
-        hashedPassword,
-        name.trim(),
-        cedula.trim(),
-        phone?.trim() || null,
-        city?.trim() || null,
-        address?.trim() || null,
-      ]
+      [email.toLowerCase().trim(), hashedPassword, name.trim(), cedula.trim(),
+       phone?.trim() || null, city?.trim() || null, address?.trim() || null]
     );
-
     const newAdmin = userRes.rows[0];
 
+    // Asignar rol
     await client.query(
       "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
       [newAdmin.id, roleRes.rows[0].id]
     );
 
     await client.query("COMMIT");
+    // COMMIT antes de llamar a subscriptionService (usa su propio cliente)
 
-    console.log(`[SUPERADMIN] Admin creado: ${newAdmin.email} (ID: ${newAdmin.id}) por superadmin ID: ${req.user.id}`);
+    // ── Crear suscripción ─────────────────────────────────────────
+    let subscriptionResult = null;
+    try {
+      if (start_active) {
+        // Activar directo (pago manual por superadmin)
+        subscriptionResult = await subscriptionService.activateSubscription(newAdmin.id, {
+          planSlug:         plan_slug,
+          billingCycle:     billing_cycle,
+          paymentMethod:    "manual",
+          paymentReference: `SUPERADMIN-${req.user.id}`,
+          changedBy:        req.user.id,
+        });
+      } else {
+        // Crear trial
+        subscriptionResult = await subscriptionService.createTrialSubscription(
+          newAdmin.id,
+          plan_slug,
+          req.user.id
+        );
+
+        // Si se especificaron días personalizados, sobreescribir
+        const customDays = parseInt(trial_days);
+        if (!isNaN(customDays) && customDays !== plan.trial_days) {
+          const trialEnd = new Date();
+          trialEnd.setDate(trialEnd.getDate() + customDays);
+          const trialEndStr = trialEnd.toISOString().split("T")[0];
+          await db.query(
+            `UPDATE subscriptions SET
+               trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
+             WHERE admin_id = $2`,
+            [trialEndStr, newAdmin.id]
+          );
+        }
+      }
+    } catch (subErr) {
+      // La suscripción falló pero el admin ya fue creado.
+      // Logear y continuar — el superadmin puede asignarla después.
+      console.error("[CREATE ADMIN] Subscription error (admin created OK):", subErr.message);
+    }
+
+    console.log(
+      `[SUPERADMIN] Admin creado: ${newAdmin.email} (ID: ${newAdmin.id}) ` +
+      `Plan: ${plan.name} | ${start_active ? "Activo" : `Trial ${trial_days ?? plan.trial_days}d`} ` +
+      `por superadmin ID: ${req.user.id}`
+    );
 
     return res.status(201).json({
       success: true,
       message: "Administrador creado correctamente",
-      data: newAdmin,
+      data: {
+        ...newAdmin,
+        plan_slug,
+        plan_name: plan.name,
+        subscription: subscriptionResult,
+      },
     });
+
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     console.error("[CREATE ADMIN ERROR]", error);
     res.status(500).json({ success: false, message: "Error al crear administrador" });
   } finally {
@@ -141,6 +194,59 @@ exports.createAdmin = async (req, res) => {
   }
 };
 
+// ============================================
+// GET /admin/subscriptions/:adminId  — detalle de suscripción de un admin
+// (Nuevo endpoint para el panel de superadmin)
+// ============================================
+exports.getAdminSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sub = await subscriptionService.getSubscriptionByAdmin(id);
+    const limits = sub ? await subscriptionService.checkLimits(id) : null;
+    res.json({ success: true, data: { subscription: sub, limits } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ============================================
+// POST /superadmin/admins/:id/subscription — asignar/cambiar plan desde superadmin
+// ============================================
+exports.setAdminSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { plan_slug, trial_days, start_active = false, billing_cycle = "monthly" } = req.body;
+
+    if (!plan_slug) return res.status(400).json({ success: false, message: "plan_slug requerido" });
+
+    let result;
+    if (start_active) {
+      result = await subscriptionService.activateSubscription(parseInt(id), {
+        planSlug: plan_slug, billingCycle: billing_cycle,
+        paymentMethod: "manual", paymentReference: `SA-${req.user.id}`,
+        changedBy: req.user.id,
+      });
+    } else {
+      result = await subscriptionService.createTrialSubscription(parseInt(id), plan_slug, req.user.id);
+
+      const customDays = parseInt(trial_days);
+      if (!isNaN(customDays)) {
+        const trialEnd = new Date();
+        trialEnd.setDate(trialEnd.getDate() + customDays);
+        await db.query(
+          `UPDATE subscriptions SET
+             trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
+           WHERE admin_id = $2`,
+          [trialEnd.toISOString().split("T")[0], id]
+        );
+      }
+    }
+
+    res.json({ success: true, message: "Suscripción actualizada", data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 // ============================================
 // ✏️ ACTUALIZAR ADMIN
 // ============================================
