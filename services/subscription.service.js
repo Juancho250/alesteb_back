@@ -10,7 +10,7 @@ const { invalidateCache } = require("../middleware/subscription.middleware");
 const addDays = (date, days) => {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0]; // YYYY-MM-DD
+  return d.toISOString().split("T")[0];
 };
 
 const addMonths = (date, months) => {
@@ -32,7 +32,6 @@ const genInvoiceNumber = () => {
 };
 
 // ─── getSubscriptionByAdmin ───────────────────────────────────────────────────
-// Retorna la suscripción completa con datos del plan.
 const getSubscriptionByAdmin = async (adminId) => {
   const { rows } = await db.query(
     `SELECT
@@ -60,7 +59,6 @@ const getSubscriptionByAdmin = async (adminId) => {
 };
 
 // ─── checkLimits ──────────────────────────────────────────────────────────────
-// Devuelve { allowed, features, limits } listo para el frontend.
 const checkLimits = async (adminId) => {
   const sub = await getSubscriptionByAdmin(adminId);
   if (!sub) return { allowed: false, features: {}, limits: {} };
@@ -83,7 +81,6 @@ const checkLimits = async (adminId) => {
     discount_system:    sub.has_discount_system,
   };
 
-  // Obtener uso actual
   const { rows: usageRows } = await db.query(
     "SELECT * FROM subscription_usage WHERE admin_id = $1",
     [adminId]
@@ -105,8 +102,43 @@ const checkLimits = async (adminId) => {
   return { allowed, features, limits };
 };
 
+// ─── syncUsage ────────────────────────────────────────────────────────────────
+// Sincroniza los contadores reales de uso para un admin.
+// Llamado desde el cron cada hora y opcionalmente tras crear/eliminar recursos.
+const syncUsage = async (adminId) => {
+  await db.query(
+    `INSERT INTO subscription_usage
+       (admin_id,
+        products_count, users_count, categories_count,
+        providers_count, banners_count, api_keys_count,
+        monthly_sales_count, updated_at)
+     VALUES (
+       $1,
+       (SELECT COUNT(*) FROM products   WHERE owner_admin_id = $1 AND is_active = true),
+       (SELECT COUNT(*) FROM users      WHERE owner_admin_id = $1 AND is_active = true),
+       (SELECT COUNT(*) FROM categories WHERE owner_admin_id = $1 AND is_active = true),
+       (SELECT COUNT(*) FROM providers  WHERE owner_admin_id = $1 AND is_active = true),
+       (SELECT COUNT(*) FROM banners    WHERE created_by     = $1),
+       (SELECT COUNT(*) FROM api_keys   WHERE admin_id       = $1 AND is_active = true),
+       (SELECT COUNT(*) FROM sales
+        WHERE owner_admin_id = $1
+          AND DATE_TRUNC('month', sale_date) = DATE_TRUNC('month', now())),
+       now()
+     )
+     ON CONFLICT (admin_id) DO UPDATE SET
+       products_count      = EXCLUDED.products_count,
+       users_count         = EXCLUDED.users_count,
+       categories_count    = EXCLUDED.categories_count,
+       providers_count     = EXCLUDED.providers_count,
+       banners_count       = EXCLUDED.banners_count,
+       api_keys_count      = EXCLUDED.api_keys_count,
+       monthly_sales_count = EXCLUDED.monthly_sales_count,
+       updated_at          = now()`,
+    [adminId]
+  );
+};
+
 // ─── createTrialSubscription ──────────────────────────────────────────────────
-// Crea (o sobreescribe) la suscripción de un admin en modo trial.
 const createTrialSubscription = async (adminId, planSlug, createdBy) => {
   const { rows: plans } = await db.query(
     "SELECT * FROM subscription_plans WHERE slug = $1 AND is_active = true",
@@ -141,21 +173,17 @@ const createTrialSubscription = async (adminId, planSlug, createdBy) => {
     [adminId, plan.id, today, trialEnd, plan.price_monthly, createdBy]
   );
 
-  // Asegurar fila de usage
   await db.query(
-    `INSERT INTO subscription_usage (admin_id)
-     VALUES ($1) ON CONFLICT DO NOTHING`,
+    `INSERT INTO subscription_usage (admin_id) VALUES ($1) ON CONFLICT DO NOTHING`,
     [adminId]
   );
 
   await _logChange(adminId, null, plan.id, null, "trial", createdBy, "Trial creado por superadmin");
-
   invalidateCache(adminId);
   return rows[0];
 };
 
 // ─── activateSubscription ─────────────────────────────────────────────────────
-// Activa directamente (pago manual por superadmin).
 const activateSubscription = async (adminId, {
   planSlug, billingCycle = "monthly",
   paymentMethod = "manual", paymentReference,
@@ -168,9 +196,9 @@ const activateSubscription = async (adminId, {
   if (!plans.length) throw new Error(`Plan '${planSlug}' no encontrado`);
   const plan = plans[0];
 
-  const today   = new Date().toISOString().split("T")[0];
+  const today     = new Date().toISOString().split("T")[0];
   const periodEnd = billingCycle === "yearly" ? addYears(today, 1) : addMonths(today, 1);
-  const amount  = billingCycle === "yearly"
+  const amount    = billingCycle === "yearly"
     ? (plan.price_yearly ?? plan.price_monthly * 12)
     : plan.price_monthly;
 
@@ -199,12 +227,10 @@ const activateSubscription = async (adminId, {
   );
 
   await db.query(
-    `INSERT INTO subscription_usage (admin_id)
-     VALUES ($1) ON CONFLICT DO NOTHING`,
+    `INSERT INTO subscription_usage (admin_id) VALUES ($1) ON CONFLICT DO NOTHING`,
     [adminId]
   );
 
-  // Crear factura pagada
   await db.query(
     `INSERT INTO subscription_invoices
        (subscription_id, admin_id, plan_id, invoice_number, billing_cycle,
@@ -220,7 +246,6 @@ const activateSubscription = async (adminId, {
   );
 
   await _logChange(adminId, null, plan.id, null, "active", changedBy, `Activado manual (${paymentMethod})`);
-
   invalidateCache(adminId);
   return rows[0];
 };
@@ -274,16 +299,19 @@ const cancelSubscription = async (adminId, reason, cancelNow = false, changedBy)
   }
 
   const { rows } = await db.query(query, params);
-  await _logChange(adminId, null, null, null, cancelNow ? "cancelled" : rows[0]?.status, changedBy, `Cancelación: ${reason}`);
+  await _logChange(
+    adminId, null, null, null,
+    cancelNow ? "cancelled" : rows[0]?.status,
+    changedBy,
+    `Cancelación: ${reason}`
+  );
   invalidateCache(adminId);
   return rows[0];
 };
 
 // ─── processExpiredTrials ─────────────────────────────────────────────────────
-// Llamar desde cron job diario.
 const processExpiredTrials = async () => {
   const today = new Date().toISOString().split("T")[0];
-
   const { rows: expired } = await db.query(
     `UPDATE subscriptions
      SET status = 'suspended', updated_at = now()
@@ -291,32 +319,27 @@ const processExpiredTrials = async () => {
      RETURNING admin_id`,
     [today]
   );
-
   expired.forEach(r => invalidateCache(r.admin_id));
-  console.log(`[CRON] Trials expirados: ${expired.length}`);
   return expired.length;
 };
 
 // ─── processExpiredActive ─────────────────────────────────────────────────────
-// Mueve active→past_due y past_due→suspended según grace period.
 const processExpiredActive = async () => {
-  const today = new Date().toISOString().split("T")[0];
+  const today      = new Date().toISOString().split("T")[0];
   const GRACE_DAYS = 7;
 
-  // active expirado → past_due con grace period
   const { rows: pastDue } = await db.query(
     `UPDATE subscriptions
      SET status = 'past_due',
-         grace_expires_at = now() + INTERVAL '${GRACE_DAYS} days',
+         grace_expires_at = now() + ($1 || ' days')::INTERVAL,
          updated_at = now()
      WHERE status = 'active'
-       AND current_period_end < $1
+       AND current_period_end < $2
        AND cancel_at_period_end = false
      RETURNING admin_id`,
-    [today]
+    [GRACE_DAYS, today]
   );
 
-  // past_due con grace expirado → suspended
   const { rows: suspended } = await db.query(
     `UPDATE subscriptions
      SET status = 'suspended', updated_at = now()
@@ -325,7 +348,6 @@ const processExpiredActive = async () => {
      RETURNING admin_id`
   );
 
-  // cancel_at_period_end → cancelled
   const { rows: cancelled } = await db.query(
     `UPDATE subscriptions
      SET status = 'cancelled', cancelled_at = now(), updated_at = now()
@@ -337,9 +359,17 @@ const processExpiredActive = async () => {
   );
 
   [...pastDue, ...suspended, ...cancelled].forEach(r => invalidateCache(r.admin_id));
-
-  console.log(`[CRON] past_due: ${pastDue.length}, suspended: ${suspended.length}, cancelled: ${cancelled.length}`);
   return { pastDue: pastDue.length, suspended: suspended.length, cancelled: cancelled.length };
+};
+
+// ─── processExpiredSubscriptions ─────────────────────────────────────────────
+// Función unificada que llama el cron job diario.
+const processExpiredSubscriptions = async () => {
+  const trialCount  = await processExpiredTrials();
+  const activeStats = await processExpiredActive();
+  console.log(`[CRON] Trials expirados: ${trialCount}`);
+  console.log(`[CRON] past_due: ${activeStats.pastDue}, suspended: ${activeStats.suspended}, cancelled: ${activeStats.cancelled}`);
+  return { trialExpired: trialCount, ...activeStats };
 };
 
 // ─── Private helper ───────────────────────────────────────────────────────────
@@ -365,10 +395,12 @@ const _logChange = async (adminId, fromPlanId, toPlanId, fromStatus, toStatus, c
 module.exports = {
   getSubscriptionByAdmin,
   checkLimits,
+  syncUsage,
   createTrialSubscription,
   activateSubscription,
   changePlan,
   cancelSubscription,
   processExpiredTrials,
   processExpiredActive,
+  processExpiredSubscriptions,  // ← unificada para el cron
 };

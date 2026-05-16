@@ -41,29 +41,51 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ success: false, message: msg, code });
     }
 
+    // ─── Traer is_active Y owner_admin_id en la misma query ──────
+    // owner_admin_id es null para admins raíz y tiene valor para sub-usuarios.
+    // Lo necesitan subscription.controller y subscription.middleware para
+    // resolver a qué admin pertenece la suscripción que se consulta.
     const userCheck = await db.query(
-      "SELECT is_active FROM users WHERE id = $1",
+      "SELECT is_active, owner_admin_id FROM users WHERE id = $1",
       [decoded.id]
     );
 
     if (userCheck.rowCount === 0) {
-      return res.status(401).json({ success: false, message: "Usuario no encontrado", code: "USER_NOT_FOUND" });
+      return res.status(401).json({
+        success: false,
+        message: "Usuario no encontrado",
+        code: "USER_NOT_FOUND",
+      });
     }
-    if (!userCheck.rows[0].is_active) {
-      return res.status(403).json({ success: false, message: "Usuario desactivado", code: "USER_INACTIVE" });
+
+    const { is_active, owner_admin_id } = userCheck.rows[0];
+
+    if (!is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Usuario desactivado",
+        code: "USER_INACTIVE",
+      });
     }
 
     req.user = {
-      id:    decoded.id,
-      email: decoded.email,
-      name:  decoded.name,
-      roles: decoded.roles || [],
+      id:             decoded.id,
+      email:          decoded.email,
+      name:           decoded.name,
+      roles:          decoded.roles || [],
+      // Para sub-usuarios apunta al admin dueño; para admins raíz es null.
+      // Uso: const adminId = req.user.owner_admin_id ?? req.user.id
+      owner_admin_id: owner_admin_id ?? null,
     };
 
     next();
   } catch (error) {
     console.error("[AUTH MIDDLEWARE ERROR]", error);
-    return res.status(500).json({ success: false, message: "Error en autenticación", code: "AUTH_ERROR" });
+    return res.status(500).json({
+      success: false,
+      message: "Error en autenticación",
+      code: "AUTH_ERROR",
+    });
   }
 };
 
@@ -83,7 +105,6 @@ const apiKeyAuth = async (req, res, next) => {
       });
     }
 
-    // Validar formato: ak_<prefix>_<secret>
     if (!rawKey.startsWith("ak_")) {
       return res.status(401).json({
         success: false,
@@ -114,44 +135,35 @@ const apiKeyAuth = async (req, res, next) => {
     if (!key.is_active) {
       return res.status(403).json({ success: false, message: "API Key desactivada", code: "API_KEY_INACTIVE" });
     }
-
     if (key.expires_at && new Date(key.expires_at) < new Date()) {
       return res.status(403).json({ success: false, message: "API Key expirada", code: "API_KEY_EXPIRED" });
     }
-
     if (!key.admin_active) {
       return res.status(403).json({ success: false, message: "Cuenta admin desactivada", code: "ADMIN_INACTIVE" });
     }
 
-    // Validar origen si hay lista blanca configurada
     const origin  = req.headers.origin || req.headers.referer || "";
     const origins = key.allowed_origins || [];
 
-    if (origins.length > 0) {
-      const allowed = origins.some((o) => origin.startsWith(o));
-      if (!allowed) {
-        return res.status(403).json({
-          success: false,
-          message: "Origen no autorizado para esta API Key",
-          code: "ORIGIN_NOT_ALLOWED",
-        });
-      }
+    if (origins.length > 0 && !origins.some((o) => origin.startsWith(o))) {
+      return res.status(403).json({
+        success: false,
+        message: "Origen no autorizado para esta API Key",
+        code: "ORIGIN_NOT_ALLOWED",
+      });
     }
 
-    // Actualizar contador y last_used_at (sin await para no bloquear)
+    // Fire-and-forget: actualizar contador y log
     db.query(
-      `UPDATE api_keys SET last_used_at = NOW(), request_count = request_count + 1 WHERE id = $1`,
+      "UPDATE api_keys SET last_used_at = NOW(), request_count = request_count + 1 WHERE id = $1",
       [key.id]
     ).catch((e) => console.error("[API KEY UPDATE ERROR]", e));
 
-    // Log de uso (sin await)
     db.query(
-      `INSERT INTO api_key_logs (api_key_id, endpoint, method, ip_address, origin)
-       VALUES ($1, $2, $3, $4, $5)`,
+      "INSERT INTO api_key_logs (api_key_id, endpoint, method, ip_address, origin) VALUES ($1,$2,$3,$4,$5)",
       [key.id, req.path, req.method, req.ip, origin || null]
     ).catch((e) => console.error("[API KEY LOG ERROR]", e));
 
-    // Adjuntar contexto al request
     req.apiKey = {
       id:          key.id,
       name:        key.name,
@@ -174,7 +186,6 @@ const requireRole = (allowedRoles = []) => (req, res, next) => {
     return res.status(401).json({ success: false, message: "No autenticado", code: "NOT_AUTHENTICATED" });
   }
 
-  // Superadmin tiene acceso total
   if (req.user.roles.includes("superadmin")) return next();
 
   const hasRole = req.user.roles.some((r) => allowedRoles.includes(r));
@@ -193,7 +204,6 @@ const requireRole = (allowedRoles = []) => (req, res, next) => {
 
 // ============================================
 // 🔑 VERIFICACIÓN DE PERMISOS EN API KEY
-// Uso: requireApiPermission("products:read")
 // ============================================
 const requireApiPermission = (permission) => (req, res, next) => {
   if (!req.apiKey) {
@@ -202,16 +212,10 @@ const requireApiPermission = (permission) => (req, res, next) => {
 
   const perms = req.apiKey.permissions || [];
 
-  // Permiso exacto o wildcard "all"
-  if (perms.includes("all") || perms.includes(permission)) {
-    return next();
-  }
+  if (perms.includes("all") || perms.includes(permission)) return next();
 
-  // Permiso de categoría: "products:read" satisface "products:read" en perms
   const [resource] = permission.split(":");
-  if (perms.includes(`${resource}:read`) && permission.endsWith(":read")) {
-    return next();
-  }
+  if (perms.includes(`${resource}:read`) && permission.endsWith(":read")) return next();
 
   return res.status(403).json({
     success: false,
@@ -221,14 +225,13 @@ const requireApiPermission = (permission) => (req, res, next) => {
 };
 
 // ============================================
-// ⏱️ RATE LIMITING
+// ⏱️ RATE LIMITING (en memoria)
 // ============================================
 const _rateLimitStore = {};
 
 const checkRateLimit = (identifier, maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
   return (req, res, next) => {
     const key = identifier === "ip" ? req.ip : (req.body?.email || req.ip);
-
     if (!key) return next();
 
     const now    = Date.now();
@@ -254,6 +257,7 @@ const checkRateLimit = (identifier, maxAttempts = 5, windowMs = 15 * 60 * 1000) 
   };
 };
 
+// Limpiar entradas expiradas cada hora
 setInterval(() => {
   const now = Date.now();
   Object.keys(_rateLimitStore).forEach((k) => {

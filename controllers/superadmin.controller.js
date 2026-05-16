@@ -6,39 +6,62 @@ const subscriptionService = require("../services/subscription.service");
 
 const SALT_ROUNDS = 12;
 
-const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const isValidEmail    = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isStrongPassword = (pw) =>
   pw.length >= 8 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
+
 // ============================================
 // 📋 LISTAR TODOS LOS ADMINS
+// Incluye datos de suscripción para que AdminCard los pueda mostrar.
 // ============================================
 exports.getAdmins = async (req, res) => {
   try {
-    const result = await db.query(`
+    const { rows } = await db.query(`
       SELECT
-        u.id, u.email, u.name, u.phone, u.cedula, u.city,
-        u.is_active, u.is_verified, u.created_at, u.last_login,
+        u.id,
+        u.email,
+        u.name,
+        u.phone,
+        u.cedula,
+        u.city,
+        u.is_active,
+        u.is_verified,
+        u.created_at,
+        u.last_login,
+        -- Roles
         COALESCE(
           json_agg(DISTINCT jsonb_build_object('id', r.id, 'name', r.name))
           FILTER (WHERE r.id IS NOT NULL), '[]'
         ) AS roles,
-        COUNT(DISTINCT ak.id) AS api_keys_count
+        -- API Keys
+        COUNT(DISTINCT ak.id) AS api_keys_count,
+        -- Suscripción (usados en AdminCard)
+        s.status        AS subscription_status,
+        s.trial_end     AS subscription_trial_end,
+        s.billing_cycle AS subscription_billing_cycle,
+        sp.name         AS plan_name,
+        sp.slug         AS plan_slug,
+        sp.color        AS plan_color
       FROM users u
+      -- Roles
       LEFT JOIN user_roles ur ON ur.user_id = u.id
-      LEFT JOIN roles r       ON r.id = ur.role_id
-      LEFT JOIN api_keys ak   ON ak.admin_id = u.id
+      LEFT JOIN roles r       ON r.id       = ur.role_id
+      -- API Keys
+      LEFT JOIN api_keys ak   ON ak.admin_id = u.id AND ak.is_active = true
+      -- Suscripción
+      LEFT JOIN subscriptions s        ON s.admin_id = u.id
+      LEFT JOIN subscription_plans sp  ON sp.id      = s.plan_id
       WHERE r.name = 'admin'
-      GROUP BY u.id
+      GROUP BY u.id, s.status, s.trial_end, s.billing_cycle, sp.name, sp.slug, sp.color
       ORDER BY u.created_at DESC
     `);
 
-    res.json({ success: true, data: result.rows });
+    res.json({ success: true, data: rows });
   } catch (error) {
     console.error("[GET ADMINS ERROR]", error);
     res.status(500).json({ success: false, message: "Error al obtener administradores" });
   }
 };
-
 
 // ============================================
 // ➕ CREAR ADMIN — con asignación de plan
@@ -49,10 +72,9 @@ exports.createAdmin = async (req, res) => {
     const {
       email, password, name, cedula,
       phone, city, address,
-      // ── nuevos campos de suscripción ──
-      plan_slug    = "basic",   // qué plan asignar
-      trial_days,               // sobreescribe los días del plan (opcional)
-      start_active = false,     // true → activar directo sin trial (pago manual)
+      plan_slug     = "basic",
+      trial_days,
+      start_active  = false,
       billing_cycle = "monthly",
     } = req.body;
 
@@ -77,19 +99,26 @@ exports.createAdmin = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Unicidad de email / cédula
-    const emailCheck = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase().trim()]);
+    // Unicidad
+    const emailCheck = await client.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email.toLowerCase().trim()]
+    );
     if (emailCheck.rowCount > 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "El email ya está registrado", code: "EMAIL_TAKEN" });
     }
-    const cedulaCheck = await client.query("SELECT id FROM users WHERE cedula = $1", [cedula.trim()]);
+
+    const cedulaCheck = await client.query(
+      "SELECT id FROM users WHERE cedula = $1",
+      [cedula.trim()]
+    );
     if (cedulaCheck.rowCount > 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "La cédula ya está registrada", code: "CEDULA_TAKEN" });
     }
 
-    // Verificar que el plan existe
+    // Verificar plan
     const planCheck = await client.query(
       "SELECT id, name, trial_days, price_monthly FROM subscription_plans WHERE slug = $1 AND is_active = true",
       [plan_slug]
@@ -100,7 +129,7 @@ exports.createAdmin = async (req, res) => {
     }
     const plan = planCheck.rows[0];
 
-    // Rol 'admin'
+    // Rol admin
     const roleRes = await client.query("SELECT id FROM roles WHERE name = 'admin' LIMIT 1");
     if (roleRes.rowCount === 0) {
       await client.query("ROLLBACK");
@@ -112,27 +141,28 @@ exports.createAdmin = async (req, res) => {
     // Crear usuario
     const userRes = await client.query(
       `INSERT INTO users (email, password, name, cedula, phone, city, address, is_active, is_verified)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true,true)
        RETURNING id, email, name, cedula, created_at`,
-      [email.toLowerCase().trim(), hashedPassword, name.trim(), cedula.trim(),
-       phone?.trim() || null, city?.trim() || null, address?.trim() || null]
+      [
+        email.toLowerCase().trim(), hashedPassword, name.trim(), cedula.trim(),
+        phone?.trim() || null, city?.trim() || null, address?.trim() || null,
+      ]
     );
     const newAdmin = userRes.rows[0];
 
     // Asignar rol
     await client.query(
-      "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      "INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
       [newAdmin.id, roleRes.rows[0].id]
     );
 
     await client.query("COMMIT");
-    // COMMIT antes de llamar a subscriptionService (usa su propio cliente)
+    // COMMIT antes de subscriptionService (usa su propio pool)
 
     // ── Crear suscripción ─────────────────────────────────────────
     let subscriptionResult = null;
     try {
       if (start_active) {
-        // Activar directo (pago manual por superadmin)
         subscriptionResult = await subscriptionService.activateSubscription(newAdmin.id, {
           planSlug:         plan_slug,
           billingCycle:     billing_cycle,
@@ -141,36 +171,34 @@ exports.createAdmin = async (req, res) => {
           changedBy:        req.user.id,
         });
       } else {
-        // Crear trial
         subscriptionResult = await subscriptionService.createTrialSubscription(
           newAdmin.id,
           plan_slug,
           req.user.id
         );
 
-        // Si se especificaron días personalizados, sobreescribir
+        // Override días de trial si se especificó un valor custom
         const customDays = parseInt(trial_days);
-        if (!isNaN(customDays) && customDays !== plan.trial_days) {
+        if (!isNaN(customDays) && customDays > 0 && customDays !== plan.trial_days) {
           const trialEnd = new Date();
           trialEnd.setDate(trialEnd.getDate() + customDays);
           const trialEndStr = trialEnd.toISOString().split("T")[0];
           await db.query(
-            `UPDATE subscriptions SET
-               trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
+            `UPDATE subscriptions
+             SET trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
              WHERE admin_id = $2`,
             [trialEndStr, newAdmin.id]
           );
         }
       }
     } catch (subErr) {
-      // La suscripción falló pero el admin ya fue creado.
-      // Logear y continuar — el superadmin puede asignarla después.
+      // Admin creado OK; la suscripción puede asignarse manualmente después
       console.error("[CREATE ADMIN] Subscription error (admin created OK):", subErr.message);
     }
 
     console.log(
-      `[SUPERADMIN] Admin creado: ${newAdmin.email} (ID: ${newAdmin.id}) ` +
-      `Plan: ${plan.name} | ${start_active ? "Activo" : `Trial ${trial_days ?? plan.trial_days}d`} ` +
+      `[SUPERADMIN] Admin creado: ${newAdmin.email} (ID: ${newAdmin.id}) | ` +
+      `Plan: ${plan.name} | ${start_active ? "Activo" : `Trial ${trial_days ?? plan.trial_days}d`} | ` +
       `por superadmin ID: ${req.user.id}`
     );
 
@@ -180,7 +208,7 @@ exports.createAdmin = async (req, res) => {
       data: {
         ...newAdmin,
         plan_slug,
-        plan_name: plan.name,
+        plan_name:    plan.name,
         subscription: subscriptionResult,
       },
     });
@@ -195,47 +223,51 @@ exports.createAdmin = async (req, res) => {
 };
 
 // ============================================
-// GET /admin/subscriptions/:adminId  — detalle de suscripción de un admin
-// (Nuevo endpoint para el panel de superadmin)
+// GET /superadmin/admins/:id/subscription
 // ============================================
 exports.getAdminSubscription = async (req, res) => {
   try {
     const { id } = req.params;
-    const sub = await subscriptionService.getSubscriptionByAdmin(id);
+    const sub    = await subscriptionService.getSubscriptionByAdmin(id);
     const limits = sub ? await subscriptionService.checkLimits(id) : null;
     res.json({ success: true, data: { subscription: sub, limits } });
   } catch (err) {
+    console.error("[GET ADMIN SUBSCRIPTION]", err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
 // ============================================
-// POST /superadmin/admins/:id/subscription — asignar/cambiar plan desde superadmin
+// POST /superadmin/admins/:id/subscription
 // ============================================
 exports.setAdminSubscription = async (req, res) => {
   try {
     const { id } = req.params;
     const { plan_slug, trial_days, start_active = false, billing_cycle = "monthly" } = req.body;
 
-    if (!plan_slug) return res.status(400).json({ success: false, message: "plan_slug requerido" });
+    if (!plan_slug) {
+      return res.status(400).json({ success: false, message: "plan_slug requerido" });
+    }
 
     let result;
     if (start_active) {
       result = await subscriptionService.activateSubscription(parseInt(id), {
-        planSlug: plan_slug, billingCycle: billing_cycle,
-        paymentMethod: "manual", paymentReference: `SA-${req.user.id}`,
-        changedBy: req.user.id,
+        planSlug:         plan_slug,
+        billingCycle:     billing_cycle,
+        paymentMethod:    "manual",
+        paymentReference: `SA-${req.user.id}`,
+        changedBy:        req.user.id,
       });
     } else {
       result = await subscriptionService.createTrialSubscription(parseInt(id), plan_slug, req.user.id);
 
       const customDays = parseInt(trial_days);
-      if (!isNaN(customDays)) {
+      if (!isNaN(customDays) && customDays > 0) {
         const trialEnd = new Date();
         trialEnd.setDate(trialEnd.getDate() + customDays);
         await db.query(
-          `UPDATE subscriptions SET
-             trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
+          `UPDATE subscriptions
+           SET trial_end = $1, current_period_end = $1, next_billing_date = $1, updated_at = now()
            WHERE admin_id = $2`,
           [trialEnd.toISOString().split("T")[0], id]
         );
@@ -244,9 +276,11 @@ exports.setAdminSubscription = async (req, res) => {
 
     res.json({ success: true, message: "Suscripción actualizada", data: result });
   } catch (err) {
+    console.error("[SET ADMIN SUBSCRIPTION]", err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
 // ============================================
 // ✏️ ACTUALIZAR ADMIN
 // ============================================
@@ -256,7 +290,6 @@ exports.updateAdmin = async (req, res) => {
     const { id } = req.params;
     const { name, email, phone, cedula, city, address, is_active, password } = req.body;
 
-    // No permitir modificarse a sí mismo desde aquí (usar /profile)
     if (parseInt(id) === req.user.id) {
       return res.status(400).json({
         success: false,
@@ -267,7 +300,6 @@ exports.updateAdmin = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verificar que el usuario existe y es admin
     const userCheck = await client.query(
       `SELECT u.id FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
@@ -275,15 +307,15 @@ exports.updateAdmin = async (req, res) => {
        WHERE u.id = $1 AND r.name = 'admin'`,
       [id]
     );
-
     if (userCheck.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(404).json({ success: false, message: "Admin no encontrado", code: "ADMIN_NOT_FOUND" });
     }
 
     await client.query(
-      `UPDATE users SET name=$1, email=$2, phone=$3, cedula=$4, city=$5, address=$6,
-       is_active=$7, updated_at=NOW() WHERE id=$8`,
+      `UPDATE users
+       SET name=$1, email=$2, phone=$3, cedula=$4, city=$5, address=$6, is_active=$7, updated_at=NOW()
+       WHERE id=$8`,
       [name, email?.toLowerCase().trim(), phone || null, cedula, city || null, address || null, is_active ?? true, id]
     );
 
@@ -297,7 +329,6 @@ exports.updateAdmin = async (req, res) => {
     }
 
     await client.query("COMMIT");
-
     return res.json({ success: true, message: "Administrador actualizado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -309,20 +340,23 @@ exports.updateAdmin = async (req, res) => {
 };
 
 // ============================================
-// 🔒 ACTIVAR / DESACTIVAR ADMIN
+// 🔒 ACTIVAR / DESACTIVAR
 // ============================================
 exports.toggleAdminStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
     if (parseInt(id) === req.user.id) {
-      return res.status(400).json({ success: false, message: "No puedes desactivarte a ti mismo", code: "SELF_DEACTIVATION" });
+      return res.status(400).json({
+        success: false,
+        message: "No puedes desactivarte a ti mismo",
+        code: "SELF_DEACTIVATION",
+      });
     }
 
     const result = await db.query(
       `UPDATE users SET is_active = NOT is_active, updated_at = NOW()
-       WHERE id = $1
-       RETURNING id, email, name, is_active`,
+       WHERE id = $1 RETURNING id, email, name, is_active`,
       [id]
     );
 
@@ -330,7 +364,7 @@ exports.toggleAdminStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Admin no encontrado" });
     }
 
-    const admin = result.rows[0];
+    const admin  = result.rows[0];
     const action = admin.is_active ? "activado" : "desactivado";
 
     console.log(`[SUPERADMIN] Admin ${admin.email} ${action} por superadmin ID: ${req.user.id}`);
@@ -360,12 +394,8 @@ exports.deleteAdmin = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Revocar todas sus API keys primero
-    await client.query("UPDATE api_keys SET is_active = false WHERE admin_id = $1", [id]);
-
-    // Revocar refresh tokens
-    await client.query("UPDATE refresh_tokens SET revoked = true WHERE user_id = $1", [id]);
-
+    await client.query("UPDATE api_keys       SET is_active = false WHERE admin_id = $1", [id]);
+    await client.query("UPDATE refresh_tokens SET revoked = true    WHERE user_id  = $1", [id]);
     await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
 
     const result = await client.query("DELETE FROM users WHERE id = $1 RETURNING email", [id]);
@@ -376,7 +406,6 @@ exports.deleteAdmin = async (req, res) => {
     }
 
     await client.query("COMMIT");
-
     console.log(`[SUPERADMIN] Admin ${result.rows[0].email} eliminado por superadmin ID: ${req.user.id}`);
 
     return res.json({ success: true, message: "Administrador eliminado correctamente" });
@@ -384,7 +413,7 @@ exports.deleteAdmin = async (req, res) => {
     await client.query("ROLLBACK");
     console.error("[DELETE ADMIN ERROR]", error);
     const msg = error.code === "23503"
-      ? "No se puede eliminar: el admin tiene registros vinculados. Desactívalo en su lugar."
+      ? "No se puede eliminar: tiene registros vinculados. Desactívalo en su lugar."
       : "Error al eliminar administrador";
     res.status(500).json({ success: false, message: msg });
   } finally {
@@ -393,15 +422,26 @@ exports.deleteAdmin = async (req, res) => {
 };
 
 // ============================================
-// 📊 RESUMEN DEL SISTEMA (dashboard superadmin)
+// 📊 STATS DEL SISTEMA
 // ============================================
 exports.getSystemStats = async (req, res) => {
   try {
     const [admins, users, apiKeys, sales] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'admin'`),
-      db.query(`SELECT COUNT(*) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'user'`),
-      db.query(`SELECT COUNT(*) FROM api_keys WHERE is_active = true`),
-      db.query(`SELECT COUNT(*), COALESCE(SUM(total), 0) AS revenue FROM sales WHERE sale_date >= NOW() - INTERVAL '30 days'`),
+      db.query(
+        `SELECT COUNT(*) FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id WHERE r.name = 'admin'`
+      ),
+      db.query(
+        `SELECT COUNT(*) FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id WHERE r.name = 'user'`
+      ),
+      db.query("SELECT COUNT(*) FROM api_keys WHERE is_active = true"),
+      db.query(
+        `SELECT COUNT(*), COALESCE(SUM(total), 0) AS revenue
+         FROM sales WHERE sale_date >= NOW() - INTERVAL '30 days'`
+      ),
     ]);
 
     res.json({
