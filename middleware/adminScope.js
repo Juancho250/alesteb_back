@@ -3,35 +3,53 @@
 // Se usa en ABSOLUTAMENTE TODAS las rutas del panel excepto /auth y /setup.
 //
 // REGLA ÚNICA:
-//   superadmin  → ve y gestiona TODO de TODOS los admins
-//   admin       → ve y gestiona SOLO lo que creó (created_by = su id)
-//   No hay excepciones: productos, categorías, proveedores, banners,
-//   gastos, ventas, órdenes, facturas, presupuestos, descuentos… todo.
+//   superadmin        → ve y gestiona TODO de TODOS los admins
+//   admin raíz        → ve y gestiona SOLO sus propios datos
+//   sub-usuario       → hereda el scope de su admin dueño (owner_admin_id)
+//
+// No hay excepciones: productos, categorías, proveedores, banners,
+// gastos, ventas, órdenes, facturas, presupuestos, descuentos… todo.
 
 const adminScope = (req, _res, next) => {
+  if (!req.user) return next(); // auth middleware ya bloquea antes si falta token
+
   req.isSuperAdmin = req.user.roles.includes("superadmin");
-  req.adminId      = req.user.id;
+
+  // Sub-usuarios (gerente, cajero, etc.) heredan el scope de su admin dueño.
+  // owner_admin_id: null  → es admin raíz    → usa su propio id
+  //                 valor → es sub-usuario   → usa el id del admin que lo creó
+  req.adminId = req.user.owner_admin_id ?? req.user.id;
+
   next();
 };
 
-// Helper reutilizable en controllers:
+// ─── Helpers reutilizables en controllers ────────────────────────────────────
 //
 //   const { isSuperAdmin, adminId } = req;
 //
-//   // Para tablas con created_by:
+//   // Para tablas con created_by (sales, expenses, banners…):
 //   const { where, params } = scopeByCreator(isSuperAdmin, adminId);
-//   await db.query(`SELECT * FROM sales s ${where} ORDER BY s.sale_date DESC`, params);
+//   await db.query(`SELECT * FROM sales s WHERE 1=1 ${where} ORDER BY s.sale_date DESC`, params);
 //
-//   // Para tablas con owner_admin_id:
+//   // Para tablas con owner_admin_id (products, categories, providers…):
 //   const { where, params } = scopeByOwner(isSuperAdmin, adminId);
-//   await db.query(`SELECT * FROM users u ${where} ORDER BY u.id DESC`, params);
+//   await db.query(`SELECT * FROM products p WHERE p.is_active = true ${where}`, params);
+//
+//   // Con params previos (paramOffset):
+//   const { where, params } = scopeByOwner(isSuperAdmin, adminId, "p.", existingParams.length);
+//   await db.query(`SELECT * FROM products p WHERE p.category_id = $1 ${where}`, [...existingParams, ...params]);
 
 /**
- * Devuelve cláusula WHERE + params para filtrar por created_by.
+ * Filtra por `created_by`.
+ * Tablas: sales, expenses, purchase_orders, invoices,
+ *         banners, discounts, discount_coupons, financial_budgets,
+ *         providers, categories, products, attribute_types.
+ *
  * @param {boolean} isSuperAdmin
  * @param {number}  adminId
- * @param {string}  [alias=""] - alias de la tabla, p.ej. "s." para "s.created_by"
- * @param {number}  [paramOffset=0] - si ya hay params previos ($1, $2…)
+ * @param {string}  [alias=""]       - alias de tabla, p.ej. "s." → "s.created_by"
+ * @param {number}  [paramOffset=0]  - cantidad de params ya usados en la query
+ * @returns {{ where: string, params: any[] }}
  */
 const scopeByCreator = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
   if (isSuperAdmin) return { where: "", params: [] };
@@ -42,7 +60,16 @@ const scopeByCreator = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
 };
 
 /**
- * Devuelve cláusula WHERE + params para filtrar por owner_admin_id.
+ * Filtra por `owner_admin_id`.
+ * Tablas: products, categories, providers, expenses, sales,
+ *         discounts, discount_coupons, purchase_orders, invoices,
+ *         financial_budgets, users (sub-usuarios del admin).
+ *
+ * @param {boolean} isSuperAdmin
+ * @param {number}  adminId
+ * @param {string}  [alias=""]
+ * @param {number}  [paramOffset=0]
+ * @returns {{ where: string, params: any[] }}
  */
 const scopeByOwner = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
   if (isSuperAdmin) return { where: "", params: [] };
@@ -53,16 +80,14 @@ const scopeByOwner = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
 };
 
 /**
- * Inyecta un filtro dinámico en una query que ya tiene WHERE.
- * Útil cuando ya tienes condiciones fijas y quieres agregar el scope.
- *
- * Ejemplo:
- *   const { clause, params } = scopeClause(isSuperAdmin, adminId, "s.", existingParams.length);
- *   await db.query(`SELECT * FROM sales s WHERE payment_status = $1 ${clause}`, [...existingParams, ...params]);
- */
-/**
  * Filtra por `admin_id`.
- * Usado en: api_keys.
+ * Tablas: api_keys, subscriptions, subscription_invoices.
+ *
+ * @param {boolean} isSuperAdmin
+ * @param {number}  adminId
+ * @param {string}  [alias=""]
+ * @param {number}  [paramOffset=0]
+ * @returns {{ where: string, params: any[] }}
  */
 const scopeByAdminId = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
   if (isSuperAdmin) return { where: "", params: [] };
@@ -73,14 +98,48 @@ const scopeByAdminId = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
 };
 
 /**
- * Verifica que un registro pertenezca al admin antes de UPDATE/DELETE.
- * @param {object} db - instancia de pg pool
- * @param {string} table - nombre de la tabla
- * @param {number} recordId - id del registro
- * @param {number} adminId - id del admin autenticado
- * @param {string} [col] - columna de ownership (default: "created_by")
+ * Filtra por `user_id`.
+ * Tablas: agent_conversations, push_subscriptions.
+ *
+ * @param {boolean} isSuperAdmin
+ * @param {number}  adminId
+ * @param {string}  [alias=""]
+ * @param {number}  [paramOffset=0]
+ * @returns {{ where: string, params: any[] }}
  */
-const assertOwnership = async (db, table, recordId, adminId, col = "created_by") => {
+const scopeByUserId = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
+  if (isSuperAdmin) return { where: "", params: [] };
+  return {
+    where:  `AND ${alias}user_id = $${paramOffset + 1}`,
+    params: [adminId],
+  };
+};
+
+/**
+ * Verifica ownership antes de UPDATE / DELETE.
+ * El superadmin siempre puede; para el resto comprueba la columna indicada.
+ *
+ * Uso:
+ *   const owns = await assertOwnership(db, "products", productId, adminId, "owner_admin_id", isSuperAdmin);
+ *   if (!owns) return res.status(403).json({ success: false, message: "Sin permiso" });
+ *
+ * @param {object}  db            - instancia de pg pool/client
+ * @param {string}  table         - nombre de la tabla
+ * @param {number}  recordId      - id del registro a verificar
+ * @param {number}  adminId       - id del admin autenticado (ya resuelto por adminScope)
+ * @param {string}  [col]         - columna de ownership (default: "created_by")
+ * @param {boolean} [isSuperAdmin=false]
+ * @returns {Promise<boolean>}
+ */
+const assertOwnership = async (
+  db,
+  table,
+  recordId,
+  adminId,
+  col = "created_by",
+  isSuperAdmin = false
+) => {
+  if (isSuperAdmin) return true;
   const res = await db.query(
     `SELECT id FROM ${table} WHERE id = $1 AND ${col} = $2`,
     [recordId, adminId]
@@ -88,10 +147,40 @@ const assertOwnership = async (db, table, recordId, adminId, col = "created_by")
   return res.rowCount > 0;
 };
 
+/**
+ * Construye SET clause + params para UPDATE dinámico.
+ * Solo actualiza los campos permitidos (allowedFields).
+ * Útil para no tener que escribir el SET a mano en cada controller.
+ *
+ * Uso:
+ *   const { set, params, next } = buildUpdate(req.body, ["name","price","is_active"], 1);
+ *   if (!set) return res.status(400).json({ message: "Sin campos para actualizar" });
+ *   await db.query(`UPDATE products SET ${set} WHERE id = $${next}`, [...params, productId]);
+ *
+ * @param {object}   body          - req.body
+ * @param {string[]} allowedFields - campos permitidos para actualizar
+ * @param {number}   [startIdx=1]  - índice inicial del placeholder ($1, $2…)
+ * @returns {{ set: string, params: any[], next: number }}
+ */
+const buildUpdate = (body, allowedFields, startIdx = 1) => {
+  const entries = Object.entries(body).filter(
+    ([k, v]) => allowedFields.includes(k) && v !== undefined
+  );
+
+  if (!entries.length) return { set: "", params: [], next: startIdx };
+
+  const set    = entries.map(([k], i) => `"${k}" = $${startIdx + i}`).join(", ");
+  const params = entries.map(([, v]) => v);
+
+  return { set, params, next: startIdx + entries.length };
+};
+
 module.exports = {
   adminScope,
   scopeByCreator,
   scopeByOwner,
   scopeByAdminId,
+  scopeByUserId,
   assertOwnership,
+  buildUpdate,
 };
