@@ -2,7 +2,7 @@
 const pool = require("../config/db");
 
 // ─────────────────────────────────────────────
-// Helper de scope — igual que en finance
+// Helper de scope
 // ─────────────────────────────────────────────
 const tc = (isSuperAdmin, adminId, alias, startIdx = 1) => {
   if (isSuperAdmin) return { clause: "", params: [], next: startIdx };
@@ -55,8 +55,11 @@ const getDashboardStats = async (req, res) => {
 
 // ── Ingresos vs Gastos — últimas 8 semanas ────────────────────────
 async function getRevenueVsExpenses(isSuperAdmin, adminId) {
+  // BUG FIX: eScope debe continuar el índice donde sScope terminó.
+  // Antes ambos generaban $1, causando que pg rechazara el query
+  // con "bind message supplies 2 parameters, but prepared statement requires 1".
   const sScope = tc(isSuperAdmin, adminId, "s");
-  const eScope = tc(isSuperAdmin, adminId, "e");
+  const eScope = tc(isSuperAdmin, adminId, "e", sScope.next); // $2 si no es superadmin
 
   const { rows } = await pool.query(`
     WITH weeks AS (SELECT generate_series(0, 7) AS w),
@@ -104,17 +107,14 @@ async function getRevenueVsExpenses(isSuperAdmin, adminId) {
 // ── Flujo de caja — últimos 12 meses ─────────────────────────────
 async function getCashflow12Months(isSuperAdmin, adminId) {
   const sScope = tc(isSuperAdmin, adminId, "s");
-  const eScope = tc(isSuperAdmin, adminId, "e");
+  const eScope = tc(isSuperAdmin, adminId, "e", sScope.next);
 
-  // Los params de sales van en $1, los de expenses en $(n+1)
-  // Como ambos pueden ser [adminId] o [], los concatenamos
   const allParams = [...sScope.params, ...eScope.params];
 
-  // Necesitamos offsets correctos para la segunda subquery
-  const eOffset = sScope.params.length;
-  const eClause = eScope.clause
-    ? eScope.clause.replace(`$${1}`, `$${eOffset + 1}`)
-    : "";
+  // Si no es superadmin: sScope usa $1, eScope usa $2 (next de sScope)
+  // La UNION ALL mantiene el namespace de params compartido, así que
+  // la segunda subquery debe referenciar $2, no $1.
+  const eClause = eScope.clause; // ya tiene el índice correcto gracias a sScope.next
 
   const { rows } = await pool.query(`
     SELECT
@@ -238,14 +238,13 @@ async function getExpensesByType(isSuperAdmin, adminId) {
 
 // ── KPIs de resumen ───────────────────────────────────────────────
 async function getKpiSummary(isSuperAdmin, adminId) {
-  // Para KPIs usamos subconsultas — cada una necesita su propio scope
-  const sS  = tc(isSuperAdmin, adminId, "s");   // sales scope   → $1
-  const eS  = tc(isSuperAdmin, adminId, "e");   // expenses scope → $2 (si no superadmin)
-  const pS  = tc(isSuperAdmin, adminId, "p");   // products scope
-  const prS = tc(isSuperAdmin, adminId, "pr");  // providers scope
-  const poS = tc(isSuperAdmin, adminId, "po");  // purchase_orders scope
+  // Cada subquery es independiente → cada una usa su propio scope con startIdx=1
+  const sS  = tc(isSuperAdmin, adminId, "s");
+  const eS  = tc(isSuperAdmin, adminId, "e");
+  const pS  = tc(isSuperAdmin, adminId, "p");
+  const prS = tc(isSuperAdmin, adminId, "pr");
+  const poS = tc(isSuperAdmin, adminId, "po");
 
-  // Pasamos todos los params al query usando funciones separadas más simples
   const [
     salesToday, salesYesterday, monthSales, lastMonth,
     monthExpenses, inventory, lowStockCnt, pendingPO, providerDebt,
