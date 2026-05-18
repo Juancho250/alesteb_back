@@ -31,6 +31,51 @@ router.get("/ping", (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /public-api/v1/profile
+// Devuelve el perfil público del negocio dueño de la API Key.
+// No requiere permiso especial — cualquier key válida puede leerlo.
+// El frontend lo usa para mostrar logo, nombre y paleta de colores.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/profile", async (req, res) => {
+  try {
+    const adminId = req.apiKey.adminId;
+
+    const result = await db.query(
+      `SELECT
+         ap.business_name,
+         ap.tagline,
+         ap.description,
+         ap.logo_url,
+         ap.favicon_url,
+         ap.primary_color,
+         ap.secondary_color,
+         ap.accent_color,
+         ap.business_email,
+         ap.business_phone,
+         ap.website,
+         ap.address,
+         ap.city,
+         ap.department,
+         ap.country,
+         ap.currency,
+         ap.social_links
+       FROM admin_profiles ap
+       WHERE ap.user_id = $1`,
+      [adminId]
+    );
+
+    // El admin puede no haber configurado su perfil aún — devuelve null, no error
+    return res.json({
+      success: true,
+      data:    result.rows[0] ?? null,
+    });
+  } catch (error) {
+    console.error("[PUBLIC API] GET /profile", error);
+    res.status(500).json({ success: false, message: "Error al obtener el perfil del negocio" });
+  }
+});
+
 // GET /public-api/v1/products
 router.get("/products", requireApiPermission("products:read"), async (req, res) => {
   try {
@@ -257,7 +302,6 @@ router.get("/banners", async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
 
-    // public-api.routes.js — GET /banners
     const result = await db.query(
       `SELECT id, title, description, image_url, button_text, button_link, display_order, is_active
       FROM banners
