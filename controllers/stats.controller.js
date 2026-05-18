@@ -2,7 +2,7 @@
 const pool = require("../config/db");
 
 // ─────────────────────────────────────────────
-// Helper de scope
+// Helper de scope (tenant isolation)
 // ─────────────────────────────────────────────
 const tc = (isSuperAdmin, adminId, alias, startIdx = 1) => {
   if (isSuperAdmin) return { clause: "", params: [], next: startIdx };
@@ -55,11 +55,9 @@ const getDashboardStats = async (req, res) => {
 
 // ── Ingresos vs Gastos — últimas 8 semanas ────────────────────────
 async function getRevenueVsExpenses(isSuperAdmin, adminId) {
-  // BUG FIX: eScope debe continuar el índice donde sScope terminó.
-  // Antes ambos generaban $1, causando que pg rechazara el query
-  // con "bind message supplies 2 parameters, but prepared statement requires 1".
+  // eScope continúa el índice donde sScope terminó para evitar colisión de $N
   const sScope = tc(isSuperAdmin, adminId, "s");
-  const eScope = tc(isSuperAdmin, adminId, "e", sScope.next); // $2 si no es superadmin
+  const eScope = tc(isSuperAdmin, adminId, "e", sScope.next);
 
   const { rows } = await pool.query(`
     WITH weeks AS (SELECT generate_series(0, 7) AS w),
@@ -109,13 +107,6 @@ async function getCashflow12Months(isSuperAdmin, adminId) {
   const sScope = tc(isSuperAdmin, adminId, "s");
   const eScope = tc(isSuperAdmin, adminId, "e", sScope.next);
 
-  const allParams = [...sScope.params, ...eScope.params];
-
-  // Si no es superadmin: sScope usa $1, eScope usa $2 (next de sScope)
-  // La UNION ALL mantiene el namespace de params compartido, así que
-  // la segunda subquery debe referenciar $2, no $1.
-  const eClause = eScope.clause; // ya tiene el índice correcto gracias a sScope.next
-
   const { rows } = await pool.query(`
     SELECT
       TO_CHAR(month_start, 'Mon')     AS name,
@@ -136,35 +127,72 @@ async function getCashflow12Months(isSuperAdmin, adminId) {
              'expense' AS type, e.amount
       FROM expenses e
       WHERE e.expense_date >= NOW() - INTERVAL '12 months'
-        ${eClause}
+        ${eScope.clause}
     ) combined
     GROUP BY month_start
     ORDER BY month_start ASC
-  `, allParams);
+  `, [...sScope.params, ...eScope.params]);
 
   return rows;
 }
 
-// ── Top 6 productos por utilidad ──────────────────────────────────
+// ── Top 6 productos por utilidad (variante-aware) ─────────────────
+// La utilidad y unidades se suman desde sale_items (que incluye variant_id),
+// agrupando por product_id para tener la vista consolidada por producto.
+// Para productos con variantes se expone has_variants y el precio promedio
+// de sus variantes activas; para productos simples, el precio directo.
 async function getTopProductsByProfit(isSuperAdmin, adminId) {
   const scope = tc(isSuperAdmin, adminId, "p");
 
   const { rows } = await pool.query(`
     SELECT
       p.id,
-      CASE WHEN LENGTH(p.name) > 16 THEN SUBSTRING(p.name, 1, 14) || '…' ELSE p.name END AS name,
+      CASE
+        WHEN LENGTH(p.name) > 16 THEN SUBSTRING(p.name, 1, 14) || '…'
+        ELSE p.name
+      END AS name,
+      p.has_variants,
+      p.is_bundle,
+      -- Utilidad y unidades ya contemplan todas las variantes vendidas
       ROUND(COALESCE(SUM(si.total_profit), 0), 0) AS revenue,
       COALESCE(SUM(si.quantity), 0)::int           AS units,
-      ROUND(p.sale_price, 0)                       AS price,
-      ROUND(p.sale_price - p.purchase_price, 0)    AS margin_per_unit,
-      CASE WHEN p.purchase_price > 0
-        THEN ROUND((p.sale_price - p.purchase_price) / p.purchase_price * 100, 1)
-        ELSE 0
-      END AS margin_pct
+      -- Precio de referencia: promedio de variantes activas o precio base
+      CASE
+        WHEN p.has_variants THEN
+          ROUND(COALESCE((
+            SELECT AVG(COALESCE(pv.sale_price, p.sale_price))
+            FROM product_variants pv
+            WHERE pv.product_id = p.id AND pv.is_active = true
+          ), p.sale_price), 0)
+        WHEN p.is_bundle THEN ROUND(COALESCE(p.bundle_price, p.sale_price), 0)
+        ELSE ROUND(p.sale_price, 0)
+      END AS price,
+      -- Margen por unidad (sólo significativo en productos simples/bundle)
+      CASE
+        WHEN p.has_variants THEN NULL
+        ELSE ROUND(p.sale_price - p.purchase_price, 0)
+      END AS margin_per_unit,
+      -- % margen sobre costo (sólo para productos sin variantes y con costo > 0)
+      CASE
+        WHEN NOT p.has_variants AND p.purchase_price > 0 THEN
+          ROUND((p.sale_price - p.purchase_price) / p.purchase_price * 100, 1)
+        ELSE NULL
+      END AS margin_pct,
+      -- Stock total: suma de variantes activas o stock simple
+      CASE
+        WHEN p.has_variants THEN
+          COALESCE((
+            SELECT SUM(pv.stock)
+            FROM product_variants pv
+            WHERE pv.product_id = p.id AND pv.is_active = true
+          ), 0)
+        ELSE p.stock
+      END AS total_stock
     FROM products p
     LEFT JOIN sale_items si ON si.product_id = p.id
     WHERE p.is_active = true ${scope.clause}
-    GROUP BY p.id, p.name, p.sale_price, p.purchase_price
+    GROUP BY p.id, p.name, p.sale_price, p.purchase_price, p.has_variants,
+             p.is_bundle, p.bundle_price, p.stock
     ORDER BY revenue DESC
     LIMIT 6
   `, scope.params);
@@ -173,6 +201,9 @@ async function getTopProductsByProfit(isSuperAdmin, adminId) {
 }
 
 // ── Margen por categoría ──────────────────────────────────────────
+// Usa el precio base del producto; para categorías con variantes los
+// precios de variante pueden diferir pero el precio base sigue siendo
+// el ancla de la categoría.
 async function getMarginByCategory(isSuperAdmin, adminId) {
   const scope = tc(isSuperAdmin, adminId, "p");
 
@@ -187,7 +218,8 @@ async function getMarginByCategory(isSuperAdmin, adminId) {
       ) AS margin
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.is_active = true AND p.purchase_price > 0 ${scope.clause}
+    WHERE p.is_active = true AND p.purchase_price > 0 AND NOT p.is_bundle
+      ${scope.clause}
     GROUP BY c.name
     HAVING SUM(p.sale_price) > 0
     ORDER BY margin DESC
@@ -223,7 +255,7 @@ async function getExpensesByType(isSuperAdmin, adminId) {
 
   const { rows } = await pool.query(`
     SELECT
-      e.expense_type::text  AS name,
+      e.expense_type::text    AS name,
       ROUND(SUM(e.amount), 0) AS value,
       COUNT(*)::int           AS count
     FROM expenses e
@@ -249,16 +281,19 @@ async function getKpiSummary(isSuperAdmin, adminId) {
     salesToday, salesYesterday, monthSales, lastMonth,
     monthExpenses, inventory, lowStockCnt, pendingPO, providerDebt,
   ] = await Promise.all([
+
     pool.query(
       `SELECT COALESCE(SUM(s.total), 0) AS total FROM sales s
        WHERE s.sale_date::date = CURRENT_DATE AND s.payment_status = 'paid' ${sS.clause}`,
       sS.params
     ),
+
     pool.query(
       `SELECT COALESCE(SUM(s.total), 0) AS total FROM sales s
        WHERE s.sale_date::date = CURRENT_DATE - 1 AND s.payment_status = 'paid' ${sS.clause}`,
       sS.params
     ),
+
     pool.query(
       `SELECT COALESCE(SUM(s.total), 0) AS revenue,
               COALESCE(AVG(s.total), 0)  AS avg_ticket,
@@ -268,33 +303,85 @@ async function getKpiSummary(isSuperAdmin, adminId) {
          AND s.payment_status = 'paid' ${sS.clause}`,
       sS.params
     ),
+
     pool.query(
       `SELECT COALESCE(SUM(s.total), 0) AS revenue FROM sales s
        WHERE DATE_TRUNC('month', s.sale_date) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
          AND s.payment_status = 'paid' ${sS.clause}`,
       sS.params
     ),
+
     pool.query(
       `SELECT COALESCE(SUM(e.amount), 0) AS total FROM expenses e
        WHERE DATE_TRUNC('month', e.expense_date::timestamp) = DATE_TRUNC('month', NOW())
          ${eS.clause}`,
       eS.params
     ),
+
+    // ── Inventario variante-aware ─────────────────────────────────
+    // Valor: para productos con variantes, suma stock_variante × precio_variante (fallback al precio base).
+    // SKUs:  productos simples cuentan como 1; productos con variantes suman sus variantes activas.
     pool.query(
-      `SELECT COALESCE(SUM(p.stock * p.sale_price), 0) AS value, COUNT(*) AS sku_count
+      `SELECT
+         COALESCE(SUM(
+           CASE WHEN p.has_variants THEN
+             COALESCE((
+               SELECT SUM(pv.stock * COALESCE(pv.sale_price, p.sale_price))
+               FROM product_variants pv
+               WHERE pv.product_id = p.id AND pv.is_active = true
+             ), 0)
+           ELSE p.stock * p.sale_price
+           END
+         ), 0) AS value,
+         SUM(
+           CASE WHEN p.has_variants THEN
+             COALESCE((
+               SELECT COUNT(*) FROM product_variants pv
+               WHERE pv.product_id = p.id AND pv.is_active = true
+             ), 0)
+           ELSE 1
+           END
+         )::int AS sku_count
        FROM products p WHERE p.is_active = true ${pS.clause}`,
       pS.params
     ),
+
+    // ── Conteo de items con stock bajo (variante-aware) ───────────
+    // Para productos simples: stock del producto.
+    // Para productos con variantes: cada variante cuenta individualmente.
+    // La misma cláusula $1 aplica en ambas mitades de la UNION porque
+    // ambas referencian p.owner_admin_id con el mismo parámetro.
     pool.query(
-      `SELECT COUNT(*) AS cnt FROM products p
-       WHERE p.is_active = true AND p.stock <= COALESCE(p.min_stock, 5) ${pS.clause}`,
+      `SELECT COUNT(*) AS cnt FROM (
+         -- Productos sin variantes con stock bajo
+         SELECT p.id::text AS uid
+         FROM products p
+         WHERE p.is_active = true
+           AND p.has_variants = false
+           AND p.stock <= COALESCE(p.min_stock, 5)
+           ${pS.clause}
+
+         UNION ALL
+
+         -- Variantes con stock bajo
+         SELECT (p.id::text || '-' || pv.id::text) AS uid
+         FROM product_variants pv
+         JOIN products p ON p.id = pv.product_id
+         WHERE p.is_active = true
+           AND p.has_variants = true
+           AND pv.is_active = true
+           AND pv.stock <= COALESCE(p.min_stock, 5)
+           ${pS.clause}
+       ) low_items`,
       pS.params
     ),
+
     pool.query(
       `SELECT COUNT(*) AS cnt FROM purchase_orders po
        WHERE po.status IN ('pending', 'draft') ${poS.clause}`,
       poS.params
     ),
+
     pool.query(
       `SELECT COALESCE(SUM(pr.balance), 0) AS total,
               COUNT(*) FILTER (WHERE pr.balance > 0) AS cnt
@@ -351,14 +438,27 @@ async function getProviderDebt(isSuperAdmin, adminId) {
   return rows;
 }
 
-// ── Productos con stock bajo ──────────────────────────────────────
+// ── Productos / variantes con stock bajo (variante-aware) ─────────
+// Retorna una fila por cada item con stock bajo:
+//   - Productos sin variantes → fila normal (variant_id = null)
+//   - Productos con variantes → una fila por cada variante en stock bajo
+//     con sus atributos concatenados en variant_attrs (ej. "Rojo / L")
 async function getLowStockProducts(isSuperAdmin, adminId) {
   const scope = tc(isSuperAdmin, adminId, "p");
 
   const { rows } = await pool.query(`
+    -- ── Productos simples con stock bajo ────────────────────────
     SELECT
-      p.id, p.name, p.stock, p.min_stock, p.max_stock,
-      COALESCE(c.name, 'Sin categoría') AS category_name,
+      p.id,
+      p.name,
+      false                              AS has_variants,
+      NULL::int                          AS variant_id,
+      p.sku                              AS variant_sku,
+      NULL::text                         AS variant_attrs,
+      p.stock,
+      p.min_stock,
+      p.max_stock,
+      COALESCE(c.name, 'Sin categoría')  AS category_name,
       CASE
         WHEN p.stock = 0            THEN 'out'
         WHEN p.stock <= p.min_stock THEN 'low'
@@ -366,9 +466,51 @@ async function getLowStockProducts(isSuperAdmin, adminId) {
       END AS stock_status
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.is_active = true AND p.stock <= COALESCE(p.min_stock, 5)
+    WHERE p.is_active = true
+      AND p.has_variants = false
+      AND p.stock <= COALESCE(p.min_stock, 5)
       ${scope.clause}
-    ORDER BY p.stock ASC
+
+    UNION ALL
+
+    -- ── Variantes con stock bajo ──────────────────────────────────
+    SELECT
+      p.id,
+      p.name,
+      true                               AS has_variants,
+      pv.id                              AS variant_id,
+      pv.sku                             AS variant_sku,
+      -- Concatena todos los atributos de la variante (ej. "Negro / XL")
+      (
+        SELECT STRING_AGG(
+          COALESCE(av.display_value, av.value),
+          ' / '
+          ORDER BY at2.name
+        )
+        FROM variant_attribute_values vav
+        JOIN attribute_values av  ON av.id  = vav.attribute_value_id
+        JOIN attribute_types   at2 ON at2.id = av.attribute_type_id
+        WHERE vav.variant_id = pv.id
+      )                                  AS variant_attrs,
+      pv.stock,
+      p.min_stock,
+      p.max_stock,
+      COALESCE(c.name, 'Sin categoría')  AS category_name,
+      CASE
+        WHEN pv.stock = 0             THEN 'out'
+        WHEN pv.stock <= p.min_stock  THEN 'low'
+        ELSE 'normal'
+      END AS stock_status
+    FROM product_variants pv
+    JOIN products p ON p.id = pv.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE p.is_active = true
+      AND p.has_variants = true
+      AND pv.is_active = true
+      AND pv.stock <= COALESCE(p.min_stock, 5)
+      ${scope.clause}
+
+    ORDER BY stock ASC
     LIMIT 10
   `, scope.params);
 
