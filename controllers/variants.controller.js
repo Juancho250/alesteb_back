@@ -195,3 +195,100 @@ exports.createAttributeValue = async (req, res) => {
     res.status(500).json({ success: false, message: "Error al crear valor" });
   }
 };
+
+// POST /products/:productId/variants/:variantId/images
+exports.uploadVariantImages = async (req, res) => {
+  const { variantId, productId } = req.params;
+  const files = req.files || [];
+
+  if (!files.length)
+    return res.status(400).json({ success: false, message: "Sube al menos una imagen" });
+
+  try {
+    // Verificar que la variante pertenece al producto
+    const { rowCount } = await db.query(
+      "SELECT id FROM product_variants WHERE id = $1 AND product_id = $2",
+      [variantId, productId]
+    );
+    if (!rowCount)
+      return res.status(404).json({ success: false, message: "Variante no encontrada" });
+
+    const maxOrder = (
+      await db.query(
+        "SELECT COALESCE(MAX(display_order), -1) AS m FROM variant_images WHERE variant_id = $1",
+        [variantId]
+      )
+    ).rows[0].m;
+
+    const hasMain = (
+      await db.query(
+        "SELECT id FROM variant_images WHERE variant_id = $1 AND is_main = true LIMIT 1",
+        [variantId]
+      )
+    ).rowCount > 0;
+
+    const inserted = [];
+    for (let i = 0; i < files.length; i++) {
+      const url = files[i].path || files[i].secure_url;
+      const isMain = !hasMain && i === 0;
+      const { rows } = await db.query(
+        `INSERT INTO variant_images (variant_id, url, is_main, display_order)
+         VALUES ($1, $2, $3, $4) RETURNING id, url, is_main`,
+        [variantId, url, isMain, maxOrder + 1 + i]
+      );
+      inserted.push(rows[0]);
+    }
+
+    res.status(201).json({ success: true, data: inserted });
+  } catch (e) {
+    console.error("[VARIANT IMAGES UPLOAD]", e);
+    res.status(500).json({ success: false, message: "Error al subir imágenes de variante" });
+  }
+};
+
+// DELETE /products/:productId/variants/:variantId/images/:imageId
+exports.deleteVariantImage = async (req, res) => {
+  const { variantId, imageId, productId } = req.params;
+
+  try {
+    const { rows } = await db.query(
+      `SELECT vi.id, vi.url, vi.is_main
+       FROM variant_images vi
+       JOIN product_variants pv ON pv.id = vi.variant_id
+       WHERE vi.id = $1 AND vi.variant_id = $2 AND pv.product_id = $3`,
+      [imageId, variantId, productId]
+    );
+    if (!rows.length)
+      return res.status(404).json({ success: false, message: "Imagen no encontrada" });
+
+    const img = rows[0];
+
+    // Eliminar de Cloudinary
+    const parts = img.url.split("/upload/");
+    if (parts[1]) {
+      const publicId = parts[1]
+        .split("/").filter(p => !p.startsWith("v")).join("/")
+        .replace(/\.[^/.]+$/, "");
+      try { await cloudinary.uploader.destroy(publicId); } catch {}
+    }
+
+    await db.query("DELETE FROM variant_images WHERE id = $1", [imageId]);
+
+    // Si era la principal, promover la siguiente
+    if (img.is_main) {
+      await db.query(
+        `UPDATE variant_images SET is_main = true
+         WHERE id = (
+           SELECT id FROM variant_images WHERE variant_id = $1
+           ORDER BY display_order LIMIT 1
+         )`,
+        [variantId]
+      );
+    }
+
+    res.json({ success: true, message: "Imagen eliminada" });
+  } catch (e) {
+    console.error("[VARIANT IMAGE DELETE]", e);
+    res.status(500).json({ success: false, message: "Error al eliminar imagen" });
+  }
+};
