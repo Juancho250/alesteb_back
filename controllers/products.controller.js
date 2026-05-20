@@ -266,14 +266,30 @@ exports.getById = async (req, res) => {
     if (product.has_variants) {
       try {
         const vResult = await db.query(`
-          SELECT pv.id, pv.sku, pv.sale_price, pv.stock, pv.is_active,
+          SELECT
+            pv.id, pv.sku, pv.sale_price, pv.stock, pv.is_active,
             COALESCE(
-              json_agg(json_build_object(
-                'type', at.name, 'value', av.value,
-                'display_value', COALESCE(av.display_value, av.value),
-                'hex_color', av.hex_color, 'attribute_value_id', av.id
-              ) ORDER BY at.id) FILTER (WHERE av.id IS NOT NULL), '[]'
-            ) AS attributes
+              json_agg(
+                json_build_object(
+                  'type',               at.name,
+                  'attribute_type',     at.name,
+                  'value',              av.value,
+                  'display_value',      COALESCE(av.display_value, av.value),
+                  'hex_color',          av.hex_color,
+                  'attribute_value_id', av.id
+                ) ORDER BY at.id
+              ) FILTER (WHERE av.id IS NOT NULL), '[]'
+            ) AS attributes,
+            (
+              SELECT COALESCE(
+                json_agg(
+                  json_build_object('id', vi.id, 'url', vi.url, 'is_main', vi.is_main)
+                  ORDER BY vi.is_main DESC, vi.display_order
+                ), '[]'
+              )
+              FROM variant_images vi
+              WHERE vi.variant_id = pv.id
+            ) AS images
           FROM product_variants pv
           LEFT JOIN variant_attribute_values vav ON vav.variant_id = pv.id
           LEFT JOIN attribute_values av ON av.id = vav.attribute_value_id
