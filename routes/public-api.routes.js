@@ -33,9 +33,6 @@ router.get("/ping", (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/profile
-// Devuelve el perfil público del negocio dueño de la API Key.
-// No requiere permiso especial — cualquier key válida puede leerlo.
-// El frontend lo usa para mostrar logo, nombre y paleta de colores.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/profile", async (req, res) => {
   try {
@@ -65,7 +62,6 @@ router.get("/profile", async (req, res) => {
       [adminId]
     );
 
-    // El admin puede no haber configurado su perfil aún — devuelve null, no error
     return res.json({
       success: true,
       data:    result.rows[0] ?? null,
@@ -163,7 +159,11 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/products/:id
+// CORRECCIÓN: se agrega subquery de variant_images para que el carrusel
+// de color funcione correctamente en el frontend (selectedVariant.images).
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/products/:id", requireApiPermission("products:read"), async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
@@ -207,12 +207,19 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
                      'display_value',      COALESCE(av.display_value, av.value),
                      'hex_color',          av.hex_color,
                      'attribute_value_id', av.id
-                   )
+                   ) ORDER BY at.id, av.sort_order
                  ), '[]'::json)
                  FROM variant_attribute_values vav
                  JOIN attribute_values av ON av.id = vav.attribute_value_id
                  JOIN attribute_types  at ON at.id = av.attribute_type_id
                  WHERE vav.variant_id = pv.id
+               ),
+               'images', (
+                 SELECT COALESCE(json_agg(
+                   jsonb_build_object('id', vi.id, 'url', vi.url, 'is_main', vi.is_main)
+                   ORDER BY vi.is_main DESC, vi.display_order
+                 ), '[]'::json)
+                 FROM variant_images vi WHERE vi.variant_id = pv.id
                )
              )
            )
