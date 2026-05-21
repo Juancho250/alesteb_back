@@ -2,6 +2,7 @@
 "use strict";
 
 const db = require("../config/db");
+const { emitDataUpdate } = require("../config/socket");
 
 // ─────────────────────────────────────────────
 // Helpers de scope
@@ -154,6 +155,7 @@ exports.create = async (req, res) => {
       ]
     );
 
+    emitDataUpdate("providers", "created", result.rows[0], req.adminId);
     res.status(201).json({ message: "Proveedor creado exitosamente", provider: result.rows[0] });
   } catch (error) {
     console.error("CREATE PROVIDER ERROR:", error);
@@ -209,6 +211,7 @@ exports.update = async (req, res) => {
       ]
     );
 
+    emitDataUpdate("providers", "updated", result.rows[0], req.adminId);
     res.json({ message: "Proveedor actualizado exitosamente", provider: result.rows[0] });
   } catch (error) {
     console.error("UPDATE PROVIDER ERROR:", error);
@@ -234,6 +237,7 @@ exports.toggleActive = async (req, res) => {
     );
 
     const { name, is_active } = result.rows[0];
+    emitDataUpdate("providers", "updated", result.rows[0], req.adminId);
     res.json({
       message:  `Proveedor "${name}" ${is_active ? "activado" : "desactivado"} exitosamente`,
       provider: result.rows[0],
@@ -265,6 +269,7 @@ exports.remove = async (req, res) => {
     }
 
     await db.query("DELETE FROM providers WHERE id = $1", [id]);
+    emitDataUpdate("providers", "deleted", { id: parseInt(id) }, req.adminId);
     res.json({ message: "Proveedor eliminado exitosamente" });
   } catch (error) {
     console.error("DELETE PROVIDER ERROR:", error);

@@ -85,7 +85,7 @@ const bannerController = {
       );
 
       const newBanner = result.rows[0];
-      emitDataUpdate("banners", "created", newBanner);
+      emitDataUpdate("banners", "created", newBanner, req.adminId);
 
       res.status(201).json({
         success: true,
@@ -163,7 +163,7 @@ const bannerController = {
         return res.status(404).json({ success: false, error: "Banner no encontrado" });
       }
 
-      emitDataUpdate("banners", "updated", result.rows[0]);
+      emitDataUpdate("banners", "updated", result.rows[0], req.adminId);
       res.json({ success: true, message: "Banner actualizado", data: result.rows[0] });
     } catch (error) {
       console.error("[UPDATE BANNER ERROR]", error.message);
@@ -192,7 +192,7 @@ const bannerController = {
         return res.status(404).json({ success: false, error: "Banner no encontrado" });
       }
 
-      emitDataUpdate("banners", "deleted", { id: parseInt(id) });
+      emitDataUpdate("banners", "deleted", { id: parseInt(id) }, req.adminId);
       res.json({ success: true, message: "Banner eliminado" });
     } catch (error) {
       console.error("[DELETE BANNER ERROR]", error.message);

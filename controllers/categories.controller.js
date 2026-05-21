@@ -129,7 +129,7 @@ exports.create = async (req, res) => {
     );
 
     const newCategory = result.rows[0];
-    emitDataUpdate("categories", "created", newCategory);
+    emitDataUpdate("categories", "created", newCategory, req.adminId);
     res.status(201).json(newCategory);
   } catch (error) {
     console.error("CREATE CATEGORY ERROR:", error);
@@ -207,7 +207,7 @@ exports.update = async (req, res) => {
       return res.status(404).json({ success: false, message: "Categoría no encontrada" });
     }
 
-    emitDataUpdate("categories", "updated", result.rows[0]);
+    emitDataUpdate("categories", "updated", result.rows[0], req.adminId);
     res.json(result.rows[0]);
   } catch (error) {
     console.error("UPDATE CATEGORY ERROR:", error);
@@ -273,7 +273,7 @@ exports.remove = async (req, res) => {
       return res.status(404).json({ success: false, message: "Categoría no encontrada" });
     }
 
-    emitDataUpdate("categories", "deleted", { id: parseInt(id) });
+    emitDataUpdate("categories", "deleted", { id: parseInt(id) }, req.adminId);
     res.json({ success: true, message: "Categoría eliminada correctamente" });
   } catch (error) {
     console.error("DELETE CATEGORY ERROR:", error);

@@ -137,7 +137,7 @@ exports.createUser = async (req, res) => {
       `[USERS] Usuario creado: ${newUser.email || newUser.cedula} por admin ID: ${req.user.id}`
     );
 
-    emitDataUpdate("users", "created", { id: newUser.id, name: newUser.name });
+    emitDataUpdate("users", "created", { id: newUser.id, name: newUser.name }, req.adminId);
 
     return res.status(201).json({
       success: true,
@@ -234,7 +234,7 @@ exports.updateUser = async (req, res) => {
 
     await client.query("COMMIT");
 
-    emitDataUpdate("users", "updated", { id: parseInt(id) });
+    emitDataUpdate("users", "updated", { id: parseInt(id) }, req.adminId);
 
     return res.json({ success: true, message: "Usuario actualizado correctamente" });
   } catch (error) {
@@ -281,7 +281,7 @@ exports.toggleUserStatus = async (req, res) => {
     const user   = result.rows[0];
     const action = user.is_active ? "activado" : "desactivado";
 
-    emitDataUpdate("users", "updated", { id: parseInt(id) });
+    emitDataUpdate("users", "updated", { id: parseInt(id) }, req.adminId);
 
     return res.json({
       success: true,
@@ -353,7 +353,7 @@ exports.deleteUser = async (req, res) => {
       `[USERS] Usuario ${result.rows[0].email} eliminado por admin ID: ${req.user.id}`
     );
 
-    emitDataUpdate("users", "deleted", { id: parseInt(id) });
+    emitDataUpdate("users", "deleted", { id: parseInt(id) }, req.adminId);
 
     return res.json({ success: true, message: "Usuario eliminado correctamente" });
   } catch (error) {

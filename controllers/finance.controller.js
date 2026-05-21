@@ -1,6 +1,7 @@
 // controllers/finance.controller.js
 "use strict";
-const pool   = require("../config/db");
+const pool            = require("../config/db");
+const { emitDataUpdate } = require("../config/socket");
 const fmtNum = (v) => parseFloat(v) || 0;
 
 // ─────────────────────────────────────────────
@@ -268,6 +269,7 @@ exports.createInvoice = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    emitDataUpdate("invoices", "created", { id: inv.id, invoice_type }, req.adminId);
     res.status(201).json({
       message:    invoice_type === "service" ? "Factura de servicio registrada" : "Compra registrada",
       invoice_id: inv.id,
@@ -429,6 +431,7 @@ exports.createExpense = async (req, res) => {
       );
     }
 
+    emitDataUpdate("expenses", "created", { id: exp.id, expense_type }, req.adminId);
     res.status(201).json({ message: "Gasto registrado", expense_id: exp.id });
   } catch (err) {
     console.error("[FINANCE] createExpense:", err);

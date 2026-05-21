@@ -1,6 +1,7 @@
 // controllers/sales.controller.js
 const db = require("../config/db");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
+const { emitDataUpdate } = require("../config/socket");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 
@@ -406,6 +407,11 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    emitDataUpdate("sales", "created", {
+      id: saleId, sale_number: saleNumber, total,
+      payment_status: finalPaymentStatus, sale_type,
+    }, req.adminId);
+
     res.status(201).json({
       success: true,
       message: isOnline
@@ -540,6 +546,8 @@ exports.registerPayment = async (req, res) => {
 
     const { paid, status } = await syncPaymentStatus(client, id);
     await client.query("COMMIT");
+
+    emitDataUpdate("sales", "updated", { id: parseInt(id), amount_paid: paid, payment_status: status }, req.adminId);
 
     res.json({
       success: true,

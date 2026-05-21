@@ -652,6 +652,7 @@ router.get("/customers", requireApiPermission("customers:read"), async (req, res
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
+    
 
     return res.json({ success: true, data: result.rows });
   } catch (error) {

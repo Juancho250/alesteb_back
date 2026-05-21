@@ -1,6 +1,7 @@
 // src/controllers/variants.controller.js
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
+const { emitDataUpdate } = require("../config/socket");
 
 // ─── Helper: obtener variantes completas de un producto ──────────────────────
 const getVariantsForProduct = async (productId) => {
@@ -83,6 +84,7 @@ exports.create = async (req, res) => {
     await client.query("COMMIT");
     const [variant] = await getVariantsForProduct(productId)
       .then(arr => arr.filter(v => v.id === variantId));
+    emitDataUpdate("products", "updated", { id: parseInt(productId), variant_created: variantId }, req.adminId);
     res.status(201).json({ success: true, data: variant });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -117,6 +119,7 @@ exports.update = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    emitDataUpdate("products", "updated", { variant_updated: parseInt(variantId) }, req.adminId);
     res.json({ success: true, message: "Variante actualizada" });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -154,6 +157,7 @@ exports.remove = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    emitDataUpdate("products", "updated", { id: parseInt(productId), variant_deleted: parseInt(variantId) }, req.adminId);
     res.json({ success: true, message: "Variante eliminada" });
   } catch (e) {
     await client.query("ROLLBACK");

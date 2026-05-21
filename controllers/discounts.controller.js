@@ -44,7 +44,7 @@ exports.create = async (req, res) => {
     }
 
     await client.query("COMMIT");
-    emitDataUpdate("discounts", "created", { ...discount, targets: targets || [] });
+    emitDataUpdate("discounts", "created", { ...discount, targets: targets || [] }, req.adminId);
     res.status(201).json({ id: discount.id, message: "Descuento creado con éxito" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -122,7 +122,7 @@ exports.update = async (req, res) => {
     }
 
     await client.query("COMMIT");
-    emitDataUpdate("discounts", "updated", { ...updateRes.rows[0], targets: targets || [] });
+    emitDataUpdate("discounts", "updated", { ...updateRes.rows[0], targets: targets || [] }, req.adminId);
     res.json({ message: "Descuento actualizado con éxito" });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -150,7 +150,7 @@ exports.remove = async (req, res) => {
     }
 
     await db.query("DELETE FROM discounts WHERE id = $1", [id]);
-    emitDataUpdate("discounts", "deleted", { id: parseInt(id) });
+    emitDataUpdate("discounts", "deleted", { id: parseInt(id) }, req.adminId);
     res.json({ message: "Descuento eliminado" });
   } catch (error) {
     console.error("DISCOUNT REMOVE ERROR:", error);
@@ -188,7 +188,7 @@ exports.toggleActive = async (req, res) => {
       return res.status(404).json({ message: "Descuento no encontrado" });
     }
 
-    emitDataUpdate("discounts", "updated", result.rows[0]);
+    emitDataUpdate("discounts", "updated", result.rows[0], req.adminId);
     res.json({ id: result.rows[0].id, active: result.rows[0].active });
   } catch (error) {
     console.error("DISCOUNT TOGGLE ERROR:", error);

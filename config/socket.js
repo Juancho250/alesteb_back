@@ -24,8 +24,8 @@ const initSocket = (httpServer) => {
     pingInterval: 25_000,
   });
 
-  // Autenticación JWT obligatoria en cada conexión
-  io.use((socket, next) => {
+  // Autenticación JWT obligatoria + resolución de adminId para rooms de tenant
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
     try {
@@ -33,7 +33,16 @@ const initSocket = (httpServer) => {
         issuer:   'alesteb-api',
         audience: 'alesteb-client',
       });
-      socket.user = decoded;
+      // owner_admin_id: null = admin raíz, valor = sub-usuario
+      const { rows } = await db.query(
+        'SELECT owner_admin_id FROM users WHERE id = $1 AND is_active = true',
+        [decoded.id]
+      );
+      if (!rows.length) return next(new Error('USER_NOT_FOUND'));
+      socket.user = {
+        ...decoded,
+        adminId: rows[0].owner_admin_id ?? decoded.id,
+      };
       next();
     } catch {
       next(new Error('INVALID_TOKEN'));
@@ -41,11 +50,16 @@ const initSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
-    const { id, name } = socket.user;
+    const { id, name, roles, adminId } = socket.user;
 
-    // Unirse automáticamente a la sala personal usando el JWT verificado
+    // Sala personal (chat DM)
     socket.join(`user_${id}`);
-    console.log(`[Socket] ${name} (${id}) conectado: ${socket.id}`);
+    // Sala de tenant — recibe todos los data:update de ese admin
+    socket.join(`admin_${adminId}`);
+    // Superadmin ve actualizaciones de TODOS los tenants
+    if (roles?.includes('superadmin')) socket.join('superadmin');
+
+    console.log(`[Socket] ${name} (${id}) admin:${adminId} conectado: ${socket.id}`);
 
     // ── Mensaje directo — usa identidad del JWT, no del payload del cliente ──
     socket.on('chat:dm', async ({ recipientId, message }) => {
@@ -82,10 +96,23 @@ const initSocket = (httpServer) => {
 
 const getIO = () => io;
 
-const emitDataUpdate = (resource, action, payload = null) => {
+/**
+ * Emite un evento data:update al room del tenant correcto.
+ * @param {string} resource  - "products" | "sales" | "providers" | etc.
+ * @param {string} action    - "created" | "updated" | "deleted"
+ * @param {*}      payload   - datos del registro
+ * @param {number|null} adminId - owner_admin_id del tenant (req.adminId)
+ */
+const emitDataUpdate = (resource, action, payload = null, adminId = null) => {
   if (!io) return;
-  io.emit('data:update', { resource, action, payload });
-  console.log(`[Socket] data:update → ${resource}:${action}`);
+  const event = { resource, action, payload };
+  if (adminId) {
+    // Emite al admin dueño + superadmin (quien ve todo)
+    io.to(`admin_${adminId}`).to('superadmin').emit('data:update', event);
+  } else {
+    // Sin tenant (ej. superadmin operando) → solo sala superadmin
+    io.to('superadmin').emit('data:update', event);
+  }
 };
 
 module.exports = { initSocket, getIO, emitDataUpdate };

@@ -374,10 +374,10 @@ exports.create = async (req, res) => {
 
     try {
       const fullProduct = await fetchFullProduct(productId);
-      emitDataUpdate("products", "created", { id: productId, product: fullProduct });
+      emitDataUpdate("products", "created", { id: productId, product: fullProduct }, req.adminId);
     } catch (emitErr) {
       console.warn("[Socket] emit fallback:", emitErr.message);
-      emitDataUpdate("products", "created", { id: productId, product: null });
+      emitDataUpdate("products", "created", { id: productId, product: null }, req.adminId);
     }
 
     res.status(201).json({ success: true, message: "Producto creado correctamente", data: { id: productId } });
@@ -505,10 +505,10 @@ exports.update = async (req, res) => {
 
     try {
       const fullProduct = await fetchFullProduct(parseInt(id));
-      emitDataUpdate("products", "updated", { id: parseInt(id), product: fullProduct });
+      emitDataUpdate("products", "updated", { id: parseInt(id), product: fullProduct }, req.adminId);
     } catch (emitErr) {
       console.warn("[Socket] emit fallback:", emitErr.message);
-      emitDataUpdate("products", "updated", { id: parseInt(id), product: null });
+      emitDataUpdate("products", "updated", { id: parseInt(id), product: null }, req.adminId);
     }
 
     res.json({ success: true, message: "Producto actualizado correctamente" });
@@ -555,7 +555,7 @@ exports.remove = async (req, res) => {
     await client.query("DELETE FROM products WHERE id = $1", [id]);
     await client.query("COMMIT");
 
-    emitDataUpdate("products", "deleted", { id: parseInt(id) });
+    emitDataUpdate("products", "deleted", { id: parseInt(id) }, req.adminId);
     res.json({ success: true, message: "Producto eliminado correctamente" });
   } catch (error) {
     await client.query("ROLLBACK");
