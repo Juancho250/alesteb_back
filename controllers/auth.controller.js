@@ -329,13 +329,22 @@ exports.setupAdmin = async (req, res) => {
     }
 
     const adminRoleId = adminRoleRes.rows[0].id;
+    if (!req.body.cedula) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "La cédula es requerida",
+        code: "MISSING_FIELDS",
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     const userRes = await client.query(
-      `INSERT INTO users (email, password, name, is_active, is_verified)
-       VALUES ($1, $2, $3, true, true)
+      `INSERT INTO users (email, password, name, cedula, is_active, is_verified)
+       VALUES ($1, $2, $3, $4, true, true)
        RETURNING id, email, name`,
-      [email.toLowerCase().trim(), hashedPassword, name.trim()]
+      [email.toLowerCase().trim(), hashedPassword, name.trim(), req.body.cedula.trim()]
     );
 
     const newUser = userRes.rows[0];

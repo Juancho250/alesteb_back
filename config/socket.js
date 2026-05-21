@@ -45,7 +45,6 @@ const initSocket = (httpServer) => {
 
     // Unirse automáticamente a la sala personal usando el JWT verificado
     socket.join(`user_${id}`);
-    io.emit('chat:user_joined', { name, id });
     console.log(`[Socket] ${name} (${id}) conectado: ${socket.id}`);
 
     // ── Mensaje directo — usa identidad del JWT, no del payload del cliente ──
@@ -75,7 +74,6 @@ const initSocket = (httpServer) => {
     // ── Desconexión ─────────────────────────────────────────────────────────
     socket.on('disconnect', (reason) => {
       console.log(`[Socket] ${name} desconectado: ${socket.id} — ${reason}`);
-      io.emit('chat:user_left', { name, id });
     });
   });
 

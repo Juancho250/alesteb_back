@@ -1,15 +1,27 @@
 // app.js
-const express = require("express");
-const cors    = require("cors");
-const helmet  = require("helmet");
-const morgan  = require("morgan");
+const express     = require("express");
+const cors        = require("cors");
+const helmet      = require("helmet");
+const morgan      = require("morgan");
+const compression = require("compression");
+const crypto      = require("crypto");
 
-const app  = express();
+const app    = express();
 const isProd = process.env.NODE_ENV === "production";
 
 // ============================================
 // MIDDLEWARES GLOBALES
 // ============================================
+
+// X-Request-Id — trazabilidad en logs y respuestas
+app.use((req, _res, next) => {
+  req.id = crypto.randomUUID();
+  next();
+});
+
+// Compresión gzip/brotli — reduce payload hasta un 70%
+app.use(compression());
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 // CORS — solo origenes explícitamente permitidos
@@ -25,7 +37,19 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: process.env.REQUEST_LIMIT || "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: process.env.REQUEST_LIMIT || "10mb" }));
 app.use(morgan(isProd ? "combined" : "dev"));
+
+// Timeout por petición — evita que conexiones colgadas agoten el pool
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT) || 30_000;
+app.use((req, res, next) => {
+  res.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      res.status(503).json({ success: false, message: "Tiempo de espera agotado", code: "REQUEST_TIMEOUT" });
+    }
+  });
+  next();
+});
 
 // ============================================
 // 🔧 HELPER: Carga segura de módulos
@@ -169,13 +193,25 @@ app.get("/", (req, res) =>
 );
 
 // ============================================
+// 404 — Ruta no encontrada
+// ============================================
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Ruta no encontrada: ${req.method} ${req.path}`,
+    code: "NOT_FOUND",
+  });
+});
+
+// ============================================
 // MANEJO GLOBAL DE ERRORES
 // ============================================
 app.use((err, req, res, _next) => {
-  console.error("[EXPRESS ERROR]", err.stack);
-  const status  = err.status || err.statusCode || 500;
+  const reqId  = req.id || "-";
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(`[EXPRESS ERROR] [${reqId}]`, err.stack);
   const message = isProd && status === 500 ? "Error interno del servidor" : err.message;
-  res.status(status).json({ success: false, message });
+  res.status(status).json({ success: false, message, ...(isProd ? {} : { requestId: reqId }) });
 });
 
 module.exports = app;
