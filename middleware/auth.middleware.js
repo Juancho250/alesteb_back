@@ -257,13 +257,14 @@ const checkRateLimit = (identifier, maxAttempts = 5, windowMs = 15 * 60 * 1000) 
   };
 };
 
-// Limpiar entradas expiradas cada hora
-setInterval(() => {
+// Limpiar entradas expiradas cada 15 minutos; unref evita que bloquee el shutdown
+const _cleanupInterval = setInterval(() => {
   const now = Date.now();
-  Object.keys(_rateLimitStore).forEach((k) => {
+  for (const k of Object.keys(_rateLimitStore)) {
     if (now > _rateLimitStore[k].resetAt) delete _rateLimitStore[k];
-  });
-}, 60 * 60 * 1000);
+  }
+}, 15 * 60 * 1000);
+if (_cleanupInterval.unref) _cleanupInterval.unref();
 
 // ============================================
 // 🎯 ATAJOS

@@ -36,10 +36,11 @@ router.post(
 router.post("/refresh",    authController.refreshToken);
 
 // ============================================
-// 🛠️ SETUP INICIAL — DESHABILITAR EN PRODUCCIÓN
-// Solo funciona si no existe ningún superadmin
+// SETUP INICIAL — solo disponible fuera de producción
 // ============================================
-router.post("/setup",      authController.setupAdmin);
+if (process.env.NODE_ENV !== "production") {
+  router.post("/setup", authController.setupAdmin);
+}
 
 // ============================================
 // 🔐 RUTAS PROTEGIDAS

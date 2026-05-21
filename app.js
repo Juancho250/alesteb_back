@@ -4,15 +4,28 @@ const cors    = require("cors");
 const helmet  = require("helmet");
 const morgan  = require("morgan");
 
-const app = express();
+const app  = express();
+const isProd = process.env.NODE_ENV === "production";
 
 // ============================================
-// 🛡️ MIDDLEWARES GLOBALES
+// MIDDLEWARES GLOBALES
 // ============================================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(cors({ origin: "*" }));
-app.use(express.json({ limit: "50mb" }));
-app.use(morgan("dev"));
+
+// CORS — solo origenes explícitamente permitidos
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000")
+  .split(",").map((o) => o.trim()).filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(Object.assign(new Error("Origin no permitido"), { status: 403 }));
+  },
+  credentials: true,
+}));
+
+app.use(express.json({ limit: process.env.REQUEST_LIMIT || "10mb" }));
+app.use(morgan(isProd ? "combined" : "dev"));
 
 // ============================================
 // 🔧 HELPER: Carga segura de módulos
@@ -111,12 +124,13 @@ if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (publicApiRoutes)     app.use("/public-api/v1",     publicApiRoutes);
 
 // ============================================
-// ❤️ HEALTH CHECK
+// HEALTH CHECK
 // ============================================
 app.get("/api/health", (req, res) => {
+  const base = { status: "ok", timestamp: new Date().toISOString() };
+  if (isProd) return res.json(base);
   res.json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
+    ...base,
     routes: {
       auth:          !!authRoutes,
       superadmin:    !!superadminRoutes,
@@ -124,7 +138,7 @@ app.get("/api/health", (req, res) => {
       roles:         !!rolesRoutes,
       apiKeys:       !!apiKeysRoutes,
       adminProfile:  !!adminProfileRoutes,
-      subscriptions: !!subscriptionRoutes,   // ← nuevo
+      subscriptions: !!subscriptionRoutes,
       stats:         !!statsRoutes,
       providers:     !!providersRoutes,
       finance:       !!financeRoutes,
@@ -145,7 +159,7 @@ app.get("/api/health", (req, res) => {
     services: {
       agent_cron:             true,
       notification_scheduler: true,
-      subscription_cron:      true,          // ← nuevo
+      subscription_cron:      true,
     },
   });
 });
@@ -155,11 +169,13 @@ app.get("/", (req, res) =>
 );
 
 // ============================================
-// 🚨 MANEJO GLOBAL DE ERRORES
+// MANEJO GLOBAL DE ERRORES
 // ============================================
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error("[EXPRESS ERROR]", err.stack);
-  res.status(500).json({ success: false, message: err.message });
+  const status  = err.status || err.statusCode || 500;
+  const message = isProd && status === 500 ? "Error interno del servidor" : err.message;
+  res.status(status).json({ success: false, message });
 });
 
 module.exports = app;

@@ -21,7 +21,8 @@ const isStrongPassword = (password) =>
   password.length >= 8 &&
   /[A-Z]/.test(password) &&
   /[a-z]/.test(password) &&
-  /[0-9]/.test(password);
+  /[0-9]/.test(password) &&
+  /[^A-Za-z0-9]/.test(password);
 
 // ============================================
 // 🎫 GENERACIÓN DE TOKENS
@@ -274,7 +275,7 @@ exports.setupAdmin = async (req, res) => {
     if (!isStrongPassword(password)) {
       return res.status(400).json({
         success: false,
-        message: "La contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas y números",
+        message: "La contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas, números y un carácter especial",
         code: "WEAK_PASSWORD",
       });
     }
@@ -484,7 +485,7 @@ exports.register = async (req, res) => {
     if (!isStrongPassword(password)) {
       return res.status(400).json({
         success: false,
-        message: "La contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas y números",
+        message: "La contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas, números y un carácter especial",
         code: "WEAK_PASSWORD",
       });
     }
@@ -879,7 +880,7 @@ exports.changePassword = async (req, res) => {
     if (!isStrongPassword(newPassword)) {
       return res.status(400).json({
         success: false,
-        message: "La nueva contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas y números",
+        message: "La nueva contraseña debe tener mínimo 8 caracteres, mayúsculas, minúsculas, números y un carácter especial",
         code: "WEAK_PASSWORD",
       });
     }

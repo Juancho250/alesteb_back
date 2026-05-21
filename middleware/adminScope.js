@@ -115,19 +115,28 @@ const scopeByUserId = (isSuperAdmin, adminId, alias = "", paramOffset = 0) => {
   };
 };
 
+// Tablas y columnas permitidas en assertOwnership (evita interpolación arbitraria)
+const _OWNERSHIP_TABLES = new Set([
+  "products", "categories", "providers", "sales", "expenses",
+  "discounts", "discount_coupons", "purchase_orders", "invoices",
+  "financial_budgets", "users", "api_keys", "banners",
+  "attribute_types", "agent_conversations", "push_subscriptions",
+  "subscriptions", "subscription_invoices",
+]);
+
+const _OWNERSHIP_COLS = new Set([
+  "created_by", "owner_admin_id", "admin_id", "user_id",
+]);
+
 /**
  * Verifica ownership antes de UPDATE / DELETE.
  * El superadmin siempre puede; para el resto comprueba la columna indicada.
  *
- * Uso:
- *   const owns = await assertOwnership(db, "products", productId, adminId, "owner_admin_id", isSuperAdmin);
- *   if (!owns) return res.status(403).json({ success: false, message: "Sin permiso" });
- *
- * @param {object}  db            - instancia de pg pool/client
- * @param {string}  table         - nombre de la tabla
- * @param {number}  recordId      - id del registro a verificar
- * @param {number}  adminId       - id del admin autenticado (ya resuelto por adminScope)
- * @param {string}  [col]         - columna de ownership (default: "created_by")
+ * @param {object}  db
+ * @param {string}  table
+ * @param {number}  recordId
+ * @param {number}  adminId
+ * @param {string}  [col="created_by"]
  * @param {boolean} [isSuperAdmin=false]
  * @returns {Promise<boolean>}
  */
@@ -140,6 +149,8 @@ const assertOwnership = async (
   isSuperAdmin = false
 ) => {
   if (isSuperAdmin) return true;
+  if (!_OWNERSHIP_TABLES.has(table)) throw new Error(`assertOwnership: tabla "${table}" no permitida`);
+  if (!_OWNERSHIP_COLS.has(col))    throw new Error(`assertOwnership: columna "${col}" no permitida`);
   const res = await db.query(
     `SELECT id FROM ${table} WHERE id = $1 AND ${col} = $2`,
     [recordId, adminId]

@@ -1,11 +1,8 @@
-node_modules
-.env# 1. Deja de rastrear el archivo sin borrarlo de tu PC
-git rm --cached .env
-
-# 2. Commit
-git commit -m "fix: remove .env from git tracking"
-
-# 3. Push
-git push
-
+node_modules/
 .env
+.env.local
+.env.production
+.env.staging
+dist/
+logs/
+*.log
