@@ -1,20 +1,29 @@
 // src/services/push.service.js  (backend Node.js)
-// npm install web-push
 const webpush = require("web-push");
 const db = require("../config/db");
 
-// ── Inicializar VAPID ────────────────────────────────────────
-// Genera las claves una sola vez: npx web-push generate-vapid-keys
-// Guárdalas en .env:  VAPID_EMAIL / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
-
-webpush.setVapidDetails(
-  `mailto:${process.env.VAPID_EMAIL}`,
-  process.env.VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY
+// ── Inicializar VAPID solo si las claves están configuradas ──
+// Genera las claves con: npx web-push generate-vapid-keys
+// y agrégalas al .env / variables de entorno en Render.
+const VAPID_ENABLED = !!(
+  process.env.VAPID_PUBLIC_KEY &&
+  process.env.VAPID_PRIVATE_KEY &&
+  process.env.VAPID_EMAIL
 );
+
+if (VAPID_ENABLED) {
+  webpush.setVapidDetails(
+    `mailto:${process.env.VAPID_EMAIL}`,
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+} else {
+  console.warn("[Push] VAPID keys no configuradas — push notifications deshabilitadas.");
+}
 
 // ── Enviar a UNA suscripción ──────────────────────────────────
 async function sendPushToOne(subscription, payload) {
+  if (!VAPID_ENABLED) return { ok: false, error: "VAPID no configurado" };
   try {
     await webpush.sendNotification(subscription, JSON.stringify(payload));
     return { ok: true };
@@ -30,6 +39,7 @@ async function sendPushToOne(subscription, payload) {
 
 // ── Broadcast a TODOS los usuarios activos ──────────────────
 async function broadcast(payload) {
+  if (!VAPID_ENABLED) return { sent: 0, expired: 0 };
   const { rows } = await db.query(
     "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE is_active = true"
   );
@@ -57,6 +67,7 @@ async function broadcast(payload) {
 
 // ── Broadcast a UN usuario específico ───────────────────────
 async function notifyUser(userId, payload) {
+  if (!VAPID_ENABLED) return;
   const { rows } = await db.query(
     "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1 AND is_active = true",
     [userId]
