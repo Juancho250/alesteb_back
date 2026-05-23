@@ -7,18 +7,10 @@ const {
   requireApiPermission,
 } = require("../middleware/auth.middleware");
 
-router.use(apiKeyAuth);
+// Preflight extra — por si llega algún OPTIONS que no interceptó el cors global
+router.options("*", (req, res) => res.sendStatus(200));
 
-router.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin",  origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Key");
-  }
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
-});
+router.use(apiKeyAuth);
 
 // GET /public-api/v1/ping
 router.get("/ping", (req, res) => {
@@ -311,10 +303,10 @@ router.get("/banners", async (req, res) => {
 
     const result = await db.query(
       `SELECT id, title, description, image_url, button_text, button_link, display_order, is_active
-      FROM banners
-      WHERE is_active = true
-        AND created_by = $1
-      ORDER BY display_order ASC`,
+       FROM banners
+       WHERE is_active = true
+         AND owner_admin_id = $1
+       ORDER BY display_order ASC`,
       [adminId]
     );
 

@@ -28,13 +28,25 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000")
   .split(",").map((o) => o.trim()).filter(Boolean);
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    cb(Object.assign(new Error("Origin no permitido"), { status: 403 }));
-  },
-  credentials: true,
-}));
+// API pública: acepta cualquier origen (el control de acceso es por API Key en BD)
+// Panel admin: solo origenes en ALLOWED_ORIGINS
+app.use((req, res, next) => {
+  if (req.originalUrl.startsWith("/public-api/")) {
+    return cors({
+      origin: true,
+      methods: ["GET", "POST", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "X-API-Key"],
+      maxAge: 86400,
+    })(req, res, next);
+  }
+  return cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      cb(Object.assign(new Error("Origin no permitido"), { status: 403 }));
+    },
+    credentials: true,
+  })(req, res, next);
+});
 
 app.use(express.json({ limit: process.env.REQUEST_LIMIT || "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: process.env.REQUEST_LIMIT || "10mb" }));
