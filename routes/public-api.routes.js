@@ -7,9 +7,6 @@ const {
   requireApiPermission,
 } = require("../middleware/auth.middleware");
 
-// Preflight extra — por si llega algún OPTIONS que no interceptó el cors global
-router.options("*", (req, res) => res.sendStatus(200));
-
 router.use(apiKeyAuth);
 
 // GET /public-api/v1/ping
