@@ -1,7 +1,8 @@
 // config/socket.js
-const { Server } = require('socket.io');
-const jwt        = require('jsonwebtoken');
-const db         = require('./db');
+const { Server }            = require('socket.io');
+const jwt                   = require('jsonwebtoken');
+const db                    = require('./db');
+const { notifyUser, Payloads } = require('../services/push.service');
 
 let io;
 
@@ -73,6 +74,8 @@ const initSocket = (httpServer) => {
         const msg = result.rows[0];
         io.to(`user_${recipientId}`).emit('chat:dm', msg);
         socket.emit('chat:dm', msg);
+        // Push para cuando el destinatario está offline o en otra pestaña
+        notifyUser(recipientId, Payloads.newChat(name)).catch(() => {});
       } catch (err) {
         console.error('[Chat] Error DM:', err);
         socket.emit('chat:error', { code: 'DM_FAILED', message: 'No se pudo enviar el mensaje' });

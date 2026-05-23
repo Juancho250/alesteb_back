@@ -2,6 +2,7 @@
 const db = require("../config/db");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 const { emitDataUpdate } = require("../config/socket");
+const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 
@@ -412,6 +413,15 @@ exports.createOrder = async (req, res) => {
       payment_status: finalPaymentStatus, sale_type,
     }, req.adminId);
 
+    // Push al admin/gerentes del tenant
+    const adminPush = isOnline
+      ? Payloads.newOnlineOrder(saleNumber, total)
+      : Payloads.newSale(saleNumber, total);
+    notifyTenant(req.adminId, adminPush).catch(() => {});
+
+    // Push al cliente confirmando su pedido
+    notifyUser(customer_id, Payloads.orderConfirmed(orderCode, total)).catch(() => {});
+
     res.status(201).json({
       success: true,
       message: isOnline
@@ -483,15 +493,21 @@ exports.wompiWebhook = async (req, res) => {
 
     if (status === "paid") {
       const { rows: info } = await db.query(
-        `SELECT s.total, s.sale_number, u.name, u.email
+        `SELECT s.total, s.sale_number, s.customer_id, s.owner_admin_id,
+                u.name, u.email
          FROM sales s JOIN users u ON u.id = s.customer_id WHERE s.id = $1`,
         [sale.id]
       );
-      if (info[0]?.email) {
-        sendPaymentConfirmedEmail?.(info[0].email, info[0].name, {
-          orderCode: `AL-${info[0].sale_number?.slice(4)}`,
-          total: info[0].total, items: [],
-        }).catch(() => {});
+      if (info[0]) {
+        const { email, name, customer_id, owner_admin_id, total, sale_number } = info[0];
+        const orderCode = `AL-${sale_number?.slice(4)}`;
+        if (email) {
+          sendPaymentConfirmedEmail?.(email, name, { orderCode, total, items: [] }).catch(() => {});
+        }
+        notifyUser(customer_id, Payloads.paymentConfirmed(orderCode)).catch(() => {});
+        if (owner_admin_id) {
+          notifyTenant(owner_admin_id, Payloads.paymentReceived(sale_number, total)).catch(() => {});
+        }
       }
     }
     return res.sendStatus(200);
@@ -523,7 +539,7 @@ exports.registerPayment = async (req, res) => {
     if (access === "forbidden") { await client.query("ROLLBACK"); return res.status(403).json({ success: false, message: "No autorizado para registrar pagos en esta venta" }); }
 
     const { rows: saleRows } = await client.query(
-      "SELECT id, total, amount_paid, payment_status FROM sales WHERE id = $1 FOR UPDATE", [id]
+      "SELECT id, sale_number, total, amount_paid, payment_status, customer_id FROM sales WHERE id = $1 FOR UPDATE", [id]
     );
     const sale = saleRows[0];
 
@@ -548,6 +564,11 @@ exports.registerPayment = async (req, res) => {
     await client.query("COMMIT");
 
     emitDataUpdate("sales", "updated", { id: parseInt(id), amount_paid: paid, payment_status: status }, req.adminId);
+
+    notifyTenant(req.adminId, Payloads.paymentReceived(sale.sale_number, Number(amount))).catch(() => {});
+    if (status === "paid") {
+      notifyUser(sale.customer_id, Payloads.paymentConfirmed(sale.sale_number)).catch(() => {});
+    }
 
     res.json({
       success: true,

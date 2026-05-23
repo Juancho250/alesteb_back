@@ -5,7 +5,12 @@
       "Bash(Select-Object FullName)",
       "Bash(node --check server.js)",
       "Bash(npm install *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(node -e \"require\\('./services/push.service'\\)\")",
+      "Bash(node --check services/push.service.js)",
+      "Bash(node --check services/notificationScheduler.js)",
+      "Bash(node --check config/socket.js)",
+      "Bash(node --check controllers/sales.controller.js)"
     ]
   }
 }
