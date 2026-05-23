@@ -1,5 +1,6 @@
 // controllers/sales.controller.js
-const db = require("../config/db");
+const db         = require("../config/db");
+const cloudinary = require("../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 const { emitDataUpdate } = require("../config/socket");
 const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
@@ -609,7 +610,9 @@ exports.getSalePayments = async (req, res) => {
 
     const { rows: payments } = await db.query(
       `SELECT sp.id, sp.amount, sp.payment_method, sp.notes,
-              sp.payment_date, sp.created_at, u.name AS recorded_by
+              sp.payment_date, sp.created_at,
+              sp.proof_url, sp.proof_uploaded_at,
+              u.name AS recorded_by
        FROM sale_payments sp
        LEFT JOIN users u ON u.id = sp.created_by
        WHERE sp.sale_id = $1
@@ -749,6 +752,115 @@ exports.cancelOrder = async (req, res) => {
     res.status(500).json({ success: false, message: "Error al cancelar el pedido" });
   } finally {
     client.release();
+  }
+};
+
+// ============================================
+// 📎 SUBIR COMPROBANTE DE PAGO
+// POST /api/sales/:id/payments/:paymentId/proof
+// ============================================
+exports.uploadPaymentProof = async (req, res) => {
+  const { id: saleId, paymentId } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      message: "Se requiere un archivo (imagen JPG/PNG/WebP o PDF)",
+    });
+  }
+
+  try {
+    const access = await checkSaleAccess(req, saleId);
+    if (access === "not_found")
+      return res.status(404).json({ success: false, message: "Venta no encontrada" });
+    if (access === "forbidden")
+      return res.status(403).json({ success: false, message: "No autorizado" });
+
+    // Verificar que el pago pertenece a esta venta
+    const { rows } = await db.query(
+      "SELECT id, proof_url FROM sale_payments WHERE id = $1 AND sale_id = $2",
+      [paymentId, saleId]
+    );
+    if (!rows.length)
+      return res.status(404).json({ success: false, message: "Pago no encontrado en esta venta" });
+
+    // Eliminar comprobante anterior de Cloudinary si existe
+    const prev = rows[0].proof_url;
+    if (prev) {
+      const parts = prev.split("/upload/");
+      if (parts[1]) {
+        const publicId = parts[1]
+          .split("/").filter((p) => !p.startsWith("v")).join("/")
+          .replace(/\.[^/.]+$/, "");
+        await cloudinary.uploader.destroy(publicId).catch(() => {});
+      }
+    }
+
+    const proofUrl = req.file.path || req.file.secure_url;
+
+    await db.query(
+      `UPDATE sale_payments
+         SET proof_url = $1, proof_uploaded_at = NOW()
+       WHERE id = $2`,
+      [proofUrl, paymentId]
+    );
+
+    emitDataUpdate("sales", "updated", { id: parseInt(saleId), payment_proof: parseInt(paymentId) }, req.adminId);
+
+    return res.json({
+      success: true,
+      message: "Comprobante subido correctamente",
+      data: { payment_id: parseInt(paymentId), proof_url: proofUrl },
+    });
+  } catch (err) {
+    console.error("[UPLOAD PROOF]", err);
+    res.status(500).json({ success: false, message: "Error al subir el comprobante" });
+  }
+};
+
+// ============================================
+// 🗑️  ELIMINAR COMPROBANTE DE PAGO
+// DELETE /api/sales/:id/payments/:paymentId/proof
+// ============================================
+exports.deletePaymentProof = async (req, res) => {
+  const { id: saleId, paymentId } = req.params;
+
+  try {
+    const access = await checkSaleAccess(req, saleId);
+    if (access === "not_found")
+      return res.status(404).json({ success: false, message: "Venta no encontrada" });
+    if (access === "forbidden")
+      return res.status(403).json({ success: false, message: "No autorizado" });
+
+    const { rows } = await db.query(
+      "SELECT id, proof_url FROM sale_payments WHERE id = $1 AND sale_id = $2",
+      [paymentId, saleId]
+    );
+    if (!rows.length)
+      return res.status(404).json({ success: false, message: "Pago no encontrado en esta venta" });
+
+    if (!rows[0].proof_url)
+      return res.status(400).json({ success: false, message: "Este pago no tiene comprobante" });
+
+    const parts = rows[0].proof_url.split("/upload/");
+    if (parts[1]) {
+      const publicId = parts[1]
+        .split("/").filter((p) => !p.startsWith("v")).join("/")
+        .replace(/\.[^/.]+$/, "");
+      await cloudinary.uploader.destroy(publicId).catch(() => {});
+    }
+
+    await db.query(
+      "UPDATE sale_payments SET proof_url = NULL, proof_uploaded_at = NULL WHERE id = $1",
+      [paymentId]
+    );
+
+    emitDataUpdate("sales", "updated", { id: parseInt(saleId), proof_deleted: parseInt(paymentId) }, req.adminId);
+
+    res.json({ success: true, message: "Comprobante eliminado" });
+  } catch (err) {
+    console.error("[DELETE PROOF]", err);
+    res.status(500).json({ success: false, message: "Error al eliminar el comprobante" });
   }
 };
 
