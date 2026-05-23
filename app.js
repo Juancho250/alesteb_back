@@ -102,6 +102,7 @@ const bannersRoutes       = safeRequire("./routes/banners.routes",          "ban
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
+const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
 const wompiRoutes         = safeRequire("./routes/wompi.routes",            "wompi.routes");
 const analyticsRoutes     = safeRequire("./routes/analytics.routes",       "analytics.routes");
@@ -150,6 +151,7 @@ if (discountsRoutes)     app.use("/api/discounts",     discountsRoutes);
 if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (variantsRoutes)      app.use("/api",               variantsRoutes);
+if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes);
@@ -185,6 +187,7 @@ app.get("/api/health", (req, res) => {
       banners:       !!bannersRoutes,
       notifications: !!notificationsRoutes,
       variants:      !!variantsRoutes,
+      reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
       wompi:         !!wompiRoutes,
