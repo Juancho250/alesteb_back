@@ -97,6 +97,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
            p.id, p.name, p.sku, p.description,
            p.sale_price AS price,
            p.stock,
+           p.has_variants,
            CASE
              WHEN p.stock <= 0           THEN 'out'
              WHEN p.stock <= p.min_stock THEN 'low'
@@ -109,13 +110,32 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
              json_agg(
                DISTINCT jsonb_build_object('url', pi.url, 'is_main', pi.is_main)
              ) FILTER (WHERE pi.id IS NOT NULL), '[]'
-           ) AS images
+           ) AS images,
+           COALESCE(
+             (SELECT json_agg(DISTINCT jsonb_build_object(
+               'variant_id',     pv.id,
+               'attribute_slug', at.slug,
+               'value',          av.value,
+               'display_value',  COALESCE(av.display_value, av.value),
+               'hex_color',      av.hex_color,
+               'main_image',     (
+                 SELECT vi.url FROM variant_images vi
+                 WHERE vi.variant_id = pv.id AND vi.is_main = true LIMIT 1
+               )
+             ))
+             FROM product_variants pv
+             JOIN variant_attribute_values vav ON vav.variant_id = pv.id
+             JOIN attribute_values av ON av.id = vav.attribute_value_id
+             JOIN attribute_types  at ON at.id = av.attribute_type_id
+             WHERE pv.product_id = p.id AND pv.is_active = true AND pv.stock > 0),
+             '[]'
+           ) AS variant_swatches
          FROM products p
          LEFT JOIN categories c      ON c.id = p.category_id
          LEFT JOIN product_images pi ON pi.product_id = p.id
          ${where}
          GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                  p.stock, p.min_stock, c.name, c.slug,
+                  p.stock, p.min_stock, p.has_variants, c.name, c.slug,
                   p.created_at, p.owner_admin_id
          ORDER BY ${orderBy}
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -192,6 +212,8 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
                  SELECT COALESCE(json_agg(
                    jsonb_build_object(
                      'type',               at.name,
+                     'slug',               at.slug,
+                     'icon',               at.icon,
                      'value',              av.value,
                      'display_value',      COALESCE(av.display_value, av.value),
                      'hex_color',          av.hex_color,
@@ -302,7 +324,7 @@ router.get("/banners", async (req, res) => {
       `SELECT id, title, description, image_url, button_text, button_link, display_order, is_active
        FROM banners
        WHERE is_active = true
-         AND owner_admin_id = $1
+         AND created_by = $1
        ORDER BY display_order ASC`,
       [adminId]
     );
