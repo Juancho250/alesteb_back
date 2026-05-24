@@ -14,12 +14,14 @@ const refreshStats = () =>
 exports.createReview = async (req, res) => {
   const { product_id, rating, title, body, images = [] } = req.body;
 
-  if (!product_id)
-    return res.status(400).json({ success: false, message: "product_id es requerido" });
+  // VALIDATION 5 — Required fields
+  if (!product_id || rating === undefined || rating === null || rating === "")
+    return res.status(400).json({ success: false, message: "product_id y rating son requeridos" });
 
-  const ratingNum = parseInt(rating);
-  if (!ratingNum || ratingNum < 1 || ratingNum > 5)
-    return res.status(400).json({ success: false, message: "rating debe ser entre 1 y 5" });
+  // VALIDATION 4 — Rating range
+  const ratingNum = parseInt(rating, 10);
+  if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5)
+    return res.status(400).json({ success: false, message: "La calificación debe ser un número entre 1 y 5" });
 
   const client = await db.connect();
   try {
@@ -36,46 +38,50 @@ exports.createReview = async (req, res) => {
     }
     const ownerAdminId = prodRows[0].owner_admin_id;
 
-    // Verificar compra: ¿el usuario pagó por este producto?
+    // VALIDATION 3 — One review per user per product (explicit check, not just constraint)
+    const { rows: existingRows } = await client.query(
+      "SELECT id FROM reviews WHERE user_id = $1 AND product_id = $2",
+      [req.user.id, product_id]
+    );
+    if (existingRows.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ success: false, message: "Ya tienes una reseña para este producto" });
+    }
+
+    // VALIDATION 2 — Verified purchase (enforced: must have paid for the product)
     const { rows: purchaseRows } = await client.query(
       `SELECT si.id
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
-       WHERE s.customer_id   = $1
-         AND si.product_id   = $2
+       WHERE s.customer_id    = $1
+         AND si.product_id    = $2
          AND s.payment_status = 'paid'
        LIMIT 1`,
       [req.user.id, product_id]
     );
-    const isVerifiedPurchase = purchaseRows.length > 0;
-    const orderItemId        = isVerifiedPurchase ? purchaseRows[0].id : null;
-
-    // Insertar reseña
-    let review;
-    try {
-      const { rows } = await client.query(
-        `INSERT INTO reviews
-           (product_id, user_id, rating, title, body,
-            status, is_verified_purchase, order_item_id)
-         VALUES ($1, $2, $3, $4, $5, 'approved', $6, $7)
-         RETURNING *`,
-        [
-          product_id, req.user.id,
-          ratingNum, title?.trim() || null, body?.trim() || null,
-          isVerifiedPurchase, orderItemId,
-        ]
-      );
-      review = rows[0];
-    } catch (e) {
-      if (e.code === "23505") {
-        await client.query("ROLLBACK");
-        return res.status(409).json({
-          success: false,
-          message: "Ya tienes una reseña para este producto",
-        });
-      }
-      throw e;
+    if (!purchaseRows.length) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({
+        success: false,
+        message: "Solo puedes reseñar productos que hayas comprado y pagado",
+      });
     }
+    const orderItemId = purchaseRows[0].id;
+
+    // Insertar reseña — is_verified_purchase siempre true aquí (garantizado por V2)
+    const { rows } = await client.query(
+      `INSERT INTO reviews
+         (product_id, user_id, rating, title, body,
+          status, is_verified_purchase, order_item_id)
+       VALUES ($1, $2, $3, $4, $5, 'approved', true, $6)
+       RETURNING *`,
+      [
+        product_id, req.user.id,
+        ratingNum, title?.trim() || null, body?.trim() || null,
+        orderItemId,
+      ]
+    );
+    const review = rows[0];
 
     // Insertar imágenes (URLs ya subidas a Cloudinary)
     const insertedImages = [];
@@ -92,9 +98,7 @@ exports.createReview = async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Refrescar vista materializada
     refreshStats();
-
     emitDataUpdate("reviews", "created", { id: review.id, product_id }, ownerAdminId);
 
     return res.status(201).json({
