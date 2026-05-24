@@ -490,7 +490,12 @@ exports.getPendingReviews = async (req, res) => {
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, safeLimit, safeOffset]
       ),
-      db.query(`SELECT COUNT(*) FROM reviews r ${where}`, params),
+      db.query(
+        `SELECT COUNT(*) FROM reviews r
+         JOIN products p ON p.id = r.product_id
+         ${where}`,
+        params
+      ),
     ]);
 
     const total = parseInt(countRes.rows[0].count);

@@ -9,7 +9,7 @@ let io;
 const initSocket = (httpServer) => {
   const allowedOrigins = (
     process.env.CLIENT_URL ||
-    'https://alestebadmin.vercel.app,http://localhost:5173'
+    'https://alestebadmin.vercel.app,http://localhost:5173,http://localhost:5174'
   ).split(',').map((u) => u.trim());
 
   io = new Server(httpServer, {
