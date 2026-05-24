@@ -1,14 +1,16 @@
 // routes/public-api.routes.js
-const express = require("express");
-const router  = express.Router();
-const db      = require("../config/db");
+const express        = require("express");
+const router         = express.Router();
+const db             = require("../config/db");
 const {
   apiKeyAuth,
   requireApiPermission,
   auth,
   checkRateLimit,
 } = require("../middleware/auth.middleware");
-const storefrontAuth = require("../controllers/storefront.auth.controller");
+const storefrontAuth  = require("../controllers/storefront.auth.controller");
+const reviewsCtrl     = require("../controllers/reviews.controller");
+const { createUpload } = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
 
@@ -716,5 +718,90 @@ router.get("/auth/profile", auth, storefrontAuth.getProfile);
 
 // PUT  /public-api/v1/auth/profile  (requiere JWT del cliente)
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORIAL Y ESTADÍSTICAS DEL USUARIO (requieren JWT de cliente)
+// Los handlers del panel filtran por owner_admin_id aquí para aislar al tenant.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /public-api/v1/sales/user/history
+router.get("/sales/user/history", auth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT
+         s.id,
+         s.sale_number     AS order_code,
+         s.sale_date       AS created_at,
+         s.total, s.amount_paid, s.payment_status, s.payment_method,
+         s.sale_type, s.subtotal, s.tax_amount, s.discount_amount,
+         s.credit_due_date, s.shipping_address, s.shipping_city, s.shipping_notes
+       FROM sales s
+       WHERE s.customer_id    = $1
+         AND s.owner_admin_id = $2
+       ORDER BY s.sale_date DESC`,
+      [req.user.id, req.apiKey.adminId]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error("[PUBLIC API] GET /sales/user/history:", err);
+    res.status(500).json({ success: false, message: "Error al obtener historial" });
+  }
+});
+
+// GET /public-api/v1/sales/user/stats
+router.get("/sales/user/stats", auth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT
+         COUNT(DISTINCT s.id) AS total_orders,
+         COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0) AS total_invested,
+         COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) AS pending_amount,
+         COALESCE(SUM(CASE WHEN s.payment_status = 'partial' THEN (s.total - s.amount_paid) ELSE 0 END), 0) AS partial_pending,
+         COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END) AS completed_orders,
+         COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END) AS pending_orders,
+         COUNT(DISTINCT CASE WHEN s.payment_status = 'partial' THEN s.id END) AS partial_orders
+       FROM sales s
+       WHERE s.customer_id    = $1
+         AND s.owner_admin_id = $2`,
+      [req.user.id, req.apiKey.adminId]
+    );
+    res.json({ success: true, summary: rows[0] });
+  } catch (err) {
+    console.error("[PUBLIC API] GET /sales/user/stats:", err);
+    res.status(500).json({ success: false, message: "Error al obtener estadísticas" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESEÑAS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET  /public-api/v1/products/:productId/reviews  (JWT opcional — enriquece con has_reviewed)
+router.get("/products/:productId/reviews", reviewsCtrl.getProductReviews);
+
+// GET  /public-api/v1/reviews/my/:productId  (requiere JWT de cliente)
+router.get("/reviews/my/:productId", auth, reviewsCtrl.getUserReviewForProduct);
+
+// POST /public-api/v1/reviews  (requiere JWT de cliente)
+router.post("/reviews", auth, reviewsCtrl.createReview);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UPLOAD DE IMÁGENES (para reseñas u otros usos del storefront)
+// ─────────────────────────────────────────────────────────────────────────────
+const _uploadStorefront = createUpload("storefront", 5);
+
+// POST /public-api/v1/upload
+router.post("/upload", auth, _uploadStorefront.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: "No se recibió ningún archivo", code: "NO_FILE" });
+  }
+  res.json({
+    success: true,
+    data: {
+      url:       req.file.path,
+      public_id: req.file.filename,
+    },
+  });
+});
 
 module.exports = router;

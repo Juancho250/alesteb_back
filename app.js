@@ -28,15 +28,17 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000")
   .split(",").map((o) => o.trim()).filter(Boolean);
 
-// API pública: acepta cualquier origen (el control de acceso es por API Key en BD)
+const CORS_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+// API pública: acepta cualquier origen (acceso controlado por API Key en BD)
 // Panel admin: solo origenes en ALLOWED_ORIGINS
 app.use((req, res, next) => {
   if (req.originalUrl.startsWith("/public-api/")) {
     return cors({
-      origin: true,
-      methods: ["GET", "POST", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "X-API-Key"],
-      maxAge: 86400,
+      origin:         true,
+      methods:        CORS_METHODS,
+      allowedHeaders: ["Content-Type", "X-API-Key", "Authorization"],
+      maxAge:         86400,
     })(req, res, next);
   }
   return cors({
@@ -44,7 +46,9 @@ app.use((req, res, next) => {
       if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
       cb(Object.assign(new Error("Origin no permitido"), { status: 403 }));
     },
-    credentials: true,
+    credentials:    true,
+    methods:        CORS_METHODS,
+    allowedHeaders: ["Content-Type", "Authorization"],
   })(req, res, next);
 });
 
