@@ -791,7 +791,7 @@ router.post("/reviews", auth, reviewsCtrl.createReview);
 const _uploadStorefront = createUpload("storefront", 5);
 
 // POST /public-api/v1/upload
-router.post("/upload", auth, _uploadStorefront.single("file"), (req, res) => {
+router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: "No se recibió ningún archivo", code: "NO_FILE" });
   }

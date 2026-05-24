@@ -13,7 +13,8 @@
       "Bash(node --check controllers/sales.controller.js)",
       "Bash(node --check app.js)",
       "Bash(node --check routes/public-api.routes.js)",
-      "Bash(node --check routes/sales.routes.js)"
+      "Bash(node --check routes/sales.routes.js)",
+      "Bash(node --check controllers/reviews.controller.js)"
     ]
   }
 }

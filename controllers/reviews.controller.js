@@ -55,12 +55,12 @@ exports.createReview = async (req, res) => {
     try {
       const { rows } = await client.query(
         `INSERT INTO reviews
-           (product_id, user_id, owner_admin_id, rating, title, body,
+           (product_id, user_id, rating, title, body,
             status, is_verified_purchase, order_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7, $8)
+         VALUES ($1, $2, $3, $4, $5, 'approved', $6, $7)
          RETURNING *`,
         [
-          product_id, req.user.id, ownerAdminId,
+          product_id, req.user.id,
           ratingNum, title?.trim() || null, body?.trim() || null,
           isVerifiedPurchase, orderItemId,
         ]
@@ -283,7 +283,10 @@ exports.moderateReview = async (req, res) => {
 
   try {
     const { rows: prev } = await db.query(
-      "SELECT id, status, product_id, owner_admin_id FROM reviews WHERE id = $1",
+      `SELECT r.id, r.status, r.product_id, p.owner_admin_id
+       FROM reviews r
+       JOIN products p ON p.id = r.product_id
+       WHERE r.id = $1`,
       [id]
     );
     if (!prev.length)
@@ -456,7 +459,7 @@ exports.getPendingReviews = async (req, res) => {
 
   if (!req.isSuperAdmin) {
     params.push(req.adminId);
-    where += ` AND r.owner_admin_id = $${params.length}`;
+    where += ` AND p.owner_admin_id = $${params.length}`;
   }
 
   try {
@@ -508,7 +511,7 @@ exports.deleteReview = async (req, res) => {
 
   try {
     const { rows } = await db.query(
-      `SELECT r.id, r.user_id, r.product_id, r.owner_admin_id,
+      `SELECT r.id, r.user_id, r.product_id, p.owner_admin_id,
          COALESCE(
            json_agg(
              json_build_object('url', ri.url, 'public_id', ri.public_id)
@@ -516,9 +519,10 @@ exports.deleteReview = async (req, res) => {
            '[]'
          ) AS images
        FROM reviews r
+       JOIN products p ON p.id = r.product_id
        LEFT JOIN review_images ri ON ri.review_id = r.id
        WHERE r.id = $1
-       GROUP BY r.id`,
+       GROUP BY r.id, p.owner_admin_id`,
       [id]
     );
     if (!rows.length)
