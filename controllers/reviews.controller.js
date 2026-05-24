@@ -83,7 +83,7 @@ exports.createReview = async (req, res) => {
       const img = images[i];
       if (!img?.url) continue;
       const { rows: imgRows } = await client.query(
-        `INSERT INTO review_images (review_id, url, public_id, display_order)
+        `INSERT INTO review_images (review_id, url, public_id, position)
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [review.id, img.url, img.public_id || null, i]
       );
@@ -157,7 +157,7 @@ exports.getProductReviews = async (req, res) => {
            COALESCE(
              (SELECT json_agg(
                json_build_object('id', ri.id, 'url', ri.url)
-               ORDER BY ri.display_order
+               ORDER BY ri.position
              ) FROM review_images ri WHERE ri.review_id = r.id),
              '[]'
            ) AS images
@@ -176,7 +176,16 @@ exports.getProductReviews = async (req, res) => {
         params
       ),
       db.query(
-        "SELECT * FROM product_review_stats WHERE product_id = $1",
+        `SELECT
+           COUNT(*)                                    AS review_count,
+           AVG(rating)                                 AS avg_rating,
+           COUNT(*) FILTER (WHERE rating = 5)          AS stars_5,
+           COUNT(*) FILTER (WHERE rating = 4)          AS stars_4,
+           COUNT(*) FILTER (WHERE rating = 3)          AS stars_3,
+           COUNT(*) FILTER (WHERE rating = 2)          AS stars_2,
+           COUNT(*) FILTER (WHERE rating = 1)          AS stars_1
+         FROM reviews
+         WHERE product_id = $1 AND status = 'approved'`,
         [productId]
       ),
     ]);
@@ -252,7 +261,7 @@ exports.getUserReviewForProduct = async (req, res) => {
          COALESCE(
            (SELECT json_agg(
              json_build_object('id', ri.id, 'url', ri.url, 'public_id', ri.public_id)
-             ORDER BY ri.display_order
+             ORDER BY ri.position
            ) FROM review_images ri WHERE ri.review_id = r.id),
            '[]'
          ) AS images
@@ -410,7 +419,7 @@ exports.reportReview = async (req, res) => {
 
     try {
       await client.query(
-        `INSERT INTO review_reports (review_id, user_id, reason, details)
+        `INSERT INTO review_reports (review_id, reported_by, reason, details)
          VALUES ($1, $2, $3, $4)`,
         [reviewId, req.user.id, reason.trim(), details?.trim() || null]
       );
