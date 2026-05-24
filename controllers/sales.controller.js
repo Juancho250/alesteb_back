@@ -142,11 +142,17 @@ exports.getAllSales = async (req, res) => {
 // 📦 HISTORIAL DE PEDIDOS DEL USUARIO FINAL
 // ============================================
 exports.getUserOrderHistory = async (req, res) => {
-  const { userId } = req.query;
-  if (!userId)
+  let { userId } = req.query;
+
+  // Usuario final: nunca puede pasarse a sí mismo o a otro userId — siempre usa su propio id
+  if (!req.isSuperAdmin && !isManager(req)) {
+    userId = req.user.id;
+  } else if (!userId) {
     return res.status(400).json({ success: false, message: "userId requerido" });
+  }
 
   try {
+    // Manager/admin: confirmar que el userId pertenece a su tenant
     if (!req.isSuperAdmin && isManager(req)) {
       const { rows } = await db.query(
         "SELECT id FROM users WHERE id = $1 AND owner_admin_id = $2",
@@ -177,9 +183,14 @@ exports.getUserOrderHistory = async (req, res) => {
 // 📊 ESTADÍSTICAS DEL USUARIO
 // ============================================
 exports.getUserStats = async (req, res) => {
-  const { userId } = req.query;
-  if (!userId)
+  let { userId } = req.query;
+
+  // Mismo patrón que getUserOrderHistory: usuario final solo puede ver sus propios datos
+  if (!req.isSuperAdmin && !isManager(req)) {
+    userId = req.user.id;
+  } else if (!userId) {
     return res.status(400).json({ success: false, message: "userId requerido" });
+  }
 
   try {
     if (!req.isSuperAdmin && isManager(req)) {

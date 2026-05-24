@@ -5,7 +5,10 @@ const db      = require("../config/db");
 const {
   apiKeyAuth,
   requireApiPermission,
+  auth,
+  checkRateLimit,
 } = require("../middleware/auth.middleware");
+const storefrontAuth = require("../controllers/storefront.auth.controller");
 
 router.use(apiKeyAuth);
 
@@ -671,5 +674,47 @@ router.get("/customers", requireApiPermission("customers:read"), async (req, res
     res.status(500).json({ success: false, message: "Error al obtener clientes" });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔐 AUTH DEL STOREFRONT
+// Todas las rutas ya están cubiertas por apiKeyAuth (global arriba).
+// Las rutas que requieren usuario logueado añaden el middleware `auth` (JWT).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /public-api/v1/auth/register
+router.post(
+  "/auth/register",
+  checkRateLimit("ip", 10, 60 * 60 * 1000),
+  storefrontAuth.register
+);
+
+// POST /public-api/v1/auth/verify
+router.post("/auth/verify", storefrontAuth.verifyEmail);
+
+// POST /public-api/v1/auth/resend-code
+router.post(
+  "/auth/resend-code",
+  checkRateLimit("email", 3, 60 * 60 * 1000),
+  storefrontAuth.resendCode
+);
+
+// POST /public-api/v1/auth/login
+router.post(
+  "/auth/login",
+  checkRateLimit("email", 5, 15 * 60 * 1000),
+  storefrontAuth.login
+);
+
+// POST /public-api/v1/auth/refresh  (API Key + refresh token → nuevo access token)
+router.post("/auth/refresh", storefrontAuth.refreshToken);
+
+// POST /public-api/v1/auth/logout   (requiere JWT del cliente)
+router.post("/auth/logout", auth, storefrontAuth.logout);
+
+// GET  /public-api/v1/auth/profile  (requiere JWT del cliente)
+router.get("/auth/profile", auth, storefrontAuth.getProfile);
+
+// PUT  /public-api/v1/auth/profile  (requiere JWT del cliente)
+router.put("/auth/profile", auth, storefrontAuth.updateProfile);
 
 module.exports = router;

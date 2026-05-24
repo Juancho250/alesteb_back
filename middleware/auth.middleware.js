@@ -171,6 +171,13 @@ const apiKeyAuth = async (req, res, next) => {
       permissions: key.permissions || [],
     };
 
+    // Alias semántico para código de storefront (tenant siempre viene de la API Key, nunca del cliente)
+    req.tenant = {
+      admin_id:   key.admin_id,
+      api_key_id: key.id,
+      permissions: key.permissions || [],
+    };
+
     next();
   } catch (error) {
     console.error("[API KEY AUTH ERROR]", error);

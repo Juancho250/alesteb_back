@@ -3,6 +3,16 @@ const db = require("../config/db");
 
 exports.getAll = async (req, res) => {
   try {
+    // adminScope garantiza que req.isSuperAdmin y req.adminId siempre están disponibles.
+    const { isSuperAdmin = false, adminId } = req;
+
+    // Helpers de scoping: superadmin ve todo; cada admin solo ve sus propios datos.
+    const tf  = isSuperAdmin ? "" : "AND owner_admin_id = $1";       // tablas directas
+    const stf = isSuperAdmin ? "" : "AND s.owner_admin_id = $1";     // tabla sales con alias s
+    const itf = isSuperAdmin ? "" : "AND i.owner_admin_id = $1";     // tabla invoices con alias i
+    const ptf = isSuperAdmin ? "" : "AND po.owner_admin_id = $1";    // tabla purchase_orders con alias po
+    const p   = isSuperAdmin ? []  : [adminId];                      // parámetros de la query
+
     const [
       outOfStock,
       lowStock,
@@ -18,19 +28,19 @@ exports.getAll = async (req, res) => {
       db.query(`
         SELECT id, name, stock, sku
         FROM products
-        WHERE is_active = true AND stock = 0
+        WHERE is_active = true AND stock = 0 ${tf}
         ORDER BY updated_at DESC
         LIMIT 10
-      `),
+      `, p),
 
       // 2. Productos con stock bajo (stock > 0 pero <= min_stock)
       db.query(`
         SELECT id, name, stock, min_stock, sku
         FROM products
-        WHERE is_active = true AND stock > 0 AND stock <= min_stock
+        WHERE is_active = true AND stock > 0 AND stock <= min_stock ${tf}
         ORDER BY stock ASC
         LIMIT 10
-      `),
+      `, p),
 
       // 3. Pedidos online pendientes de pago
       db.query(`
@@ -40,9 +50,10 @@ exports.getAll = async (req, res) => {
         LEFT JOIN users u ON u.id = s.customer_id
         WHERE s.payment_status = 'pending'
           AND s.sale_type != 'fisica'
+          ${stf}
         ORDER BY s.sale_date DESC
         LIMIT 10
-      `),
+      `, p),
 
       // 4. Facturas vencidas sin pagar
       db.query(`
@@ -54,9 +65,10 @@ exports.getAll = async (req, res) => {
         LEFT JOIN providers p ON p.id = i.provider_id
         WHERE i.payment_status != 'paid'
           AND i.due_date < NOW()
+          ${itf}
         ORDER BY i.due_date ASC
         LIMIT 10
-      `),
+      `, p),
 
       // 5. Descuentos que vencen en los próximos 3 días
       db.query(`
@@ -65,18 +77,19 @@ exports.getAll = async (req, res) => {
         FROM discounts
         WHERE active = true
           AND ends_at BETWEEN NOW() AND NOW() + INTERVAL '3 days'
+          ${tf}
         ORDER BY ends_at ASC
         LIMIT 5
-      `),
+      `, p),
 
       // 6. Descuentos vencidos pero aún marcados como activos
       db.query(`
         SELECT id, name, ends_at
         FROM discounts
-        WHERE active = true AND ends_at < NOW()
+        WHERE active = true AND ends_at < NOW() ${tf}
         ORDER BY ends_at DESC
         LIMIT 5
-      `),
+      `, p),
 
       // 7. Órdenes de compra pendientes de recibir (> 7 días)
       db.query(`
@@ -88,9 +101,10 @@ exports.getAll = async (req, res) => {
         LEFT JOIN providers p ON p.id = po.provider_id
         WHERE po.status = 'pending'
           AND po.order_date < NOW() - INTERVAL '7 days'
+          ${ptf}
         ORDER BY po.order_date ASC
         LIMIT 5
-      `),
+      `, p),
 
       // 8. Proveedores con deuda alta (> 80% del crédito)
       db.query(`
@@ -100,9 +114,10 @@ exports.getAll = async (req, res) => {
         WHERE is_active = true
           AND credit_limit > 0
           AND balance >= credit_limit * 0.8
+          ${tf}
         ORDER BY credit_used_pct DESC
         LIMIT 5
-      `),
+      `, p),
     ]);
 
     // Construir array de notificaciones con tipo, severidad y enlace
