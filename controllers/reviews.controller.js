@@ -459,20 +459,35 @@ exports.reportReview = async (req, res) => {
 // getPendingReviews — GET /api/reviews/admin/pending  (admin)
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getPendingReviews = async (req, res) => {
-  const { page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20, status } = req.query;
   const safeLimit  = Math.min(parseInt(limit) || 20, 50);
   const safeOffset = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
 
-  const params = [];
-  let where = "WHERE r.status IN ('pending', 'flagged')";
+  const VALID_STATUSES = new Set(["pending", "flagged", "approved", "rejected"]);
 
-  if (!req.isSuperAdmin) {
-    params.push(req.adminId);
-    where += ` AND p.owner_admin_id = $${params.length}`;
+  const conditions = [];
+  const params     = [];
+
+  // Status filter — "all" or absent means no status restriction
+  if (status && status !== "all" && VALID_STATUSES.has(status)) {
+    params.push(status);
+    conditions.push(`r.status = $${params.length}`);
   }
 
+  // Tenant scope
+  if (!req.isSuperAdmin) {
+    params.push(req.adminId);
+    conditions.push(`p.owner_admin_id = $${params.length}`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  // Separate params for the counts query (tenant-only, no status filter)
+  const countParams  = req.isSuperAdmin ? [] : [req.adminId];
+  const countsTenant = req.isSuperAdmin ? "" : "WHERE p.owner_admin_id = $1";
+
   try {
-    const [rowsRes, countRes] = await Promise.all([
+    const [rowsRes, countRes, countsRes] = await Promise.all([
       db.query(
         `SELECT
            r.id, r.rating, r.title, r.body, r.status,
@@ -496,13 +511,30 @@ exports.getPendingReviews = async (req, res) => {
          ${where}`,
         params
       ),
+      // Tab badge counts — always all statuses, scoped to tenant
+      db.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE r.status = 'pending')  AS pending,
+           COUNT(*) FILTER (WHERE r.status = 'flagged')  AS flagged,
+           COUNT(*)                                       AS total
+         FROM reviews r
+         JOIN products p ON p.id = r.product_id
+         ${countsTenant}`,
+        countParams
+      ),
     ]);
 
     const total = parseInt(countRes.rows[0].count);
+    const c     = countsRes.rows[0];
 
     return res.json({
       success: true,
       data: rowsRes.rows,
+      counts: {
+        pending: Number(c.pending),
+        flagged: Number(c.flagged),
+        total:   Number(c.total),
+      },
       meta: {
         total,
         page:  parseInt(page),

@@ -14,7 +14,8 @@
       "Bash(node --check app.js)",
       "Bash(node --check routes/public-api.routes.js)",
       "Bash(node --check routes/sales.routes.js)",
-      "Bash(node --check controllers/reviews.controller.js)"
+      "Bash(node --check controllers/reviews.controller.js)",
+      "Bash(node --check \"C:\\\\Users\\\\juaz2\\\\Documents\\\\GitHub\\\\alesteb_back\\\\controllers\\\\reviews.controller.js\")"
     ]
   }
 }
