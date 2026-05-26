@@ -1,19 +1,18 @@
 // routes/wompi.routes.js
+// ⚠️  The webhook route is registered in app.js BEFORE express.json() so that
+//     express.raw() can capture the body as a Buffer for signature validation.
+//     Only the session and verify endpoints live here.
 const express  = require("express");
 const { auth } = require("../middleware/auth.middleware");
 const {
   getSession,
-  handleWebhook,
   verifyByReference,
 } = require("../controllers/wompi.controller");
 
 const router = express.Router();
 
-// ⚠️ El webhook NO lleva auth — Wompi lo llama directamente
-router.post("/webhook", handleWebhook);
-
-// Autenticados
-router.get("/session/:sale_id",       auth, getSession);
-router.get("/verify/:reference",      auth, verifyByReference);
+// Authenticated — storefront calls these after JWT login
+router.get("/session/:sale_id",  auth, getSession);
+router.get("/verify/:reference", auth, verifyByReference);
 
 module.exports = router;

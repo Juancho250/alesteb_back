@@ -52,6 +52,13 @@ app.use((req, res, next) => {
   })(req, res, next);
 });
 
+// Wompi webhook — raw body MUST be captured before express.json() parses other routes
+// express.raw() only runs for this exact path; all other routes use express.json() below
+app.post("/api/wompi/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res) => require("./controllers/wompi.controller").handleWebhook(req, res)
+);
+
 app.use(express.json({ limit: process.env.REQUEST_LIMIT || "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: process.env.REQUEST_LIMIT || "10mb" }));
 app.use(morgan(isProd ? "combined" : "dev"));
@@ -108,8 +115,9 @@ const agentRoutes         = safeRequire("./routes/agent.routes",            "age
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
 const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
-const wompiRoutes         = safeRequire("./routes/wompi.routes",            "wompi.routes");
-const analyticsRoutes     = safeRequire("./routes/analytics.routes",       "analytics.routes");
+const wompiRoutes              = safeRequire("./routes/wompi.routes",            "wompi.routes");
+const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
+const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 
 // ============================================
@@ -158,8 +166,9 @@ if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
-if (wompiRoutes)         app.use("/api/wompi",         wompiRoutes);
-if (analyticsRoutes)     app.use("/api/analytics",     analyticsRoutes);
+if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
+if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
+if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 
 // — API pública —
@@ -194,8 +203,9 @@ app.get("/api/health", (req, res) => {
       reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
-      wompi:         !!wompiRoutes,
-      analytics:     !!analyticsRoutes,
+      wompi:          !!wompiRoutes,
+      paymentAccounts: !!paymentAccountsRoutes,
+      analytics:      !!analyticsRoutes,
       contact:       !!contactRoutes,
       publicApi:     !!publicApiRoutes,
     },

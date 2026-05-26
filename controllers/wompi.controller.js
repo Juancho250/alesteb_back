@@ -1,19 +1,23 @@
 // controllers/wompi.controller.js
-const crypto = require("crypto");
-const pool   = require("../config/db");
+// Thin controller — all gateway logic lives in services/payment.service.js.
+// Credentials are NEVER read from .env here; each store loads its own account from the DB.
+const db = require("../config/db");
+const { buildCheckoutSession, processWompiWebhook } = require("../services/payment.service");
+const { emitDataUpdate } = require("../config/socket");
+const { sendPaymentConfirmedEmail }   = require("../config/emailConfig");
+const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
 
-function buildSignature(reference, amountInCents, currency = "COP") {
-  const amountStr = String(Math.round(Number(amountInCents)));
-  const chain = `${reference}${amountStr}${currency}${process.env.WOMPI_INTEGRITY_SECRET}`;
-  return crypto.createHash("sha256").update(chain).digest("hex");
-}
-
+// ── GET /api/wompi/session/:sale_id ──────────────────────────────────────────
+// Returns the checkout parameters for Wompi Widget / Redirect.
+// Amount is always read from the DB — never accepted from the client.
 const getSession = async (req, res) => {
   try {
     const { sale_id } = req.params;
 
-    const { rows } = await pool.query(
-      "SELECT id, sale_number, total, payment_status FROM sales WHERE id = $1",
+    // Load sale and resolve its owner admin
+    const { rows } = await db.query(
+      `SELECT id, sale_number, total, payment_status, owner_admin_id
+       FROM sales WHERE id = $1`,
       [sale_id]
     );
 
@@ -25,88 +29,84 @@ const getSession = async (req, res) => {
     if (sale.payment_status === "paid")
       return res.status(400).json({ success: false, message: "Esta venta ya fue pagada" });
 
-    const reference     = sale.sale_number;
-    const amountInCents = Math.round(parseFloat(sale.total) * 100);
-    const currency      = "COP";
-    const signature     = buildSignature(reference, amountInCents, currency);
+    // Build checkout session using the store's own payment account
+    let sessionData;
+    try {
+      sessionData = await buildCheckoutSession(sale, sale.owner_admin_id);
+    } catch (err) {
+      const status = err.status === 402 ? 402 : 500;
+      return res.status(status).json({ success: false, message: err.message });
+    }
 
-    return res.json({
-      success: true,
-      data: {
-        public_key:      process.env.WOMPI_PUBLIC_KEY,
-        reference,
-        amount_in_cents: amountInCents,
-        currency,
-        signature,
-        redirect_url: `${process.env.FRONTEND_URL}/order-success`,
-      },
-    });
+    return res.json({ success: true, data: sessionData });
   } catch (err) {
-    console.error("[wompi] getSession error:", err);
-    return res.status(500).json({ success: false, message: "Error interno" });
+    console.error("[wompi] getSession error:", err.message);
+    return res.status(500).json({ success: false, message: "Error interno al preparar el pago" });
   }
 };
 
+// ── POST /api/wompi/webhook ───────────────────────────────────────────────────
+// Raw body (Buffer) required — express.raw() is applied in the route file BEFORE
+// express.json() global middleware.
+// Always responds 200; never exposes internal errors to Wompi.
 const handleWebhook = async (req, res) => {
-  try {
-    const { event, data, timestamp, signature } = req.body;
+  const rawBody = req.body; // Buffer from express.raw()
 
-    if (signature?.properties && signature?.checksum) {
-      const transaction = data?.transaction ?? {};
-      const valuesStr   = signature.properties
-        .map((prop) => {
-          const key = prop.replace("transaction.", "");
-          return transaction[key] ?? "";
-        })
-        .join("");
-
-      const chain    = `${valuesStr}${timestamp}${process.env.WOMPI_EVENTS_SECRET}`;
-      const expected = crypto.createHash("sha256").update(chain).digest("hex");
-
-      if (expected !== signature.checksum) {
-        console.warn("[wompi] Firma de webhook inválida");
-        return res.status(401).json({ success: false, message: "Firma inválida" });
-      }
-    }
-
-    if (event === "transaction.updated") {
-      const tx = data?.transaction ?? {};
-      const { reference, status } = tx;
-
-      const statusMap = {
-        APPROVED: "paid",
-        DECLINED: "pending",
-        VOIDED:   "pending",
-        ERROR:    "pending",
-      };
-
-      const newStatus = statusMap[status] ?? "pending";
-
-      await pool.query(
-        `UPDATE sales SET payment_status = $1, updated_at = now()
-         WHERE sale_number = $2`,
-        [newStatus, reference]
-      );
-
-      if (status === "APPROVED") {
-        console.log(`[wompi] ✅ Pago aprobado: ${reference}`);
-      }
-    }
-
-    return res.status(200).json({ received: true });
-  } catch (err) {
-    console.error("[wompi] webhook error:", err);
-    return res.status(500).json({ success: false, message: "Error procesando webhook" });
+  if (!Buffer.isBuffer(rawBody) || !rawBody.length) {
+    // Unexpected — body parser may have run first; still respond 200
+    console.warn("[wompi] webhook received non-raw body");
+    return res.sendStatus(200);
   }
+
+  const result = await processWompiWebhook(rawBody);
+
+  // Fire side-effects after successful approval (outside the DB transaction)
+  if (result.processed && result.reason === "approved" && result.sale_id) {
+    try {
+      const { rows: info } = await db.query(
+        `SELECT s.total, s.sale_number, s.customer_id, s.owner_admin_id,
+                u.name, u.email
+         FROM sales s
+         JOIN users u ON u.id = s.customer_id
+         WHERE s.id = $1`,
+        [result.sale_id]
+      );
+      if (info.length) {
+        const { email, name, customer_id, owner_admin_id, total, sale_number } = info[0];
+        const orderCode = `AL-${sale_number?.slice(4)}`;
+
+        if (email) {
+          sendPaymentConfirmedEmail?.(email, name, { orderCode, total, items: [] }).catch(() => {});
+        }
+        notifyUser(customer_id, Payloads.paymentConfirmed(orderCode)).catch(() => {});
+        if (owner_admin_id) {
+          notifyTenant(owner_admin_id, Payloads.paymentReceived(sale_number, total)).catch(() => {});
+          emitDataUpdate("sales", "updated", { id: result.sale_id, payment_status: result.new_status }, owner_admin_id);
+        }
+      }
+    } catch (sideErr) {
+      // Side-effects failing must not cause a non-200 response to Wompi
+      console.error("[wompi] webhook side-effect error:", sideErr.message);
+    }
+  }
+
+  return res.sendStatus(200);
 };
 
+// ── GET /api/wompi/verify/:reference ─────────────────────────────────────────
+// Polling endpoint called by the storefront after Wompi redirect.
+// Returns the sale's current payment status by reference (sale_number).
 const verifyByReference = async (req, res) => {
   try {
     const { reference } = req.params;
 
-    const { rows } = await pool.query(
-      `SELECT id, sale_number, total, payment_status, created_at
-       FROM sales WHERE sale_number = $1`,
+    const { rows } = await db.query(
+      `SELECT s.id, s.sale_number, s.total, s.payment_status, s.created_at,
+              spt.status AS tx_status, spt.provider_tx_id
+       FROM sales s
+       LEFT JOIN sale_payment_transactions spt ON spt.reference = s.sale_number
+       WHERE s.sale_number = $1
+       LIMIT 1`,
       [reference]
     );
 
@@ -115,7 +115,7 @@ const verifyByReference = async (req, res) => {
 
     return res.json({ success: true, data: rows[0] });
   } catch (err) {
-    console.error("[wompi] verifyByReference error:", err);
+    console.error("[wompi] verifyByReference error:", err.message);
     return res.status(500).json({ success: false, message: "Error interno" });
   }
 };

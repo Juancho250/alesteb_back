@@ -51,5 +51,17 @@ metadata:
 - Removidos: `@supabase/supabase-js`, `sqlite3`, `recharts`, `@reduxjs/toolkit`, `postgres`, `@neondatabase/serverless`
 - Agregado: `compression`
 
+## Pagos multi-tienda (implementado 2026-05-25)
+- `store_payment_accounts` → credenciales Wompi por tienda (AES-256-GCM en reposo vía `utils/crypto.js`)
+- `sale_payment_transactions` → log de cada intento de cobro (reference UNIQUE)
+- `payment_webhook_events` → idempotencia del webhook (provider, event_id UNIQUE)
+- `services/payment.service.js` → toda la lógica de Wompi (agnóstico de proveedor)
+- `controllers/paymentAccounts.controller.js` + `routes/paymentAccounts.routes.js` → `/api/payment-accounts`
+- Webhook: `POST /api/wompi/webhook` registrado ANTES de `express.json()` con `express.raw()` en app.js
+- Feature flag `has_wompi_payments` en `subscription_plans` controla acceso al CRUD de cuentas
+- `PAYMENTS_ENCRYPTION_KEY` requerida en entorno (32 bytes hex/base64)
+- `routes/payments.controller.js` eliminado (era duplicado de `controllers/payments.controller.js`)
+- `exports.wompiWebhook` eliminado de `sales.controller.js` (nunca estuvo ruteado; reemplazado por el nuevo webhook)
+
 **Why:** Reducir superficie de ataque, mejorar rendimiento y garantizar correcto funcionamiento en producción.
 **How to apply:** Al hacer cambios de seguridad o agregar features, respetar la arquitectura multi-tenant (siempre filtrar por owner_admin_id o created_by según la tabla).

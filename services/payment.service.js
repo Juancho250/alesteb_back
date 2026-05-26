@@ -1,0 +1,343 @@
+// services/payment.service.js
+// Provider-agnostic payment gateway layer.
+// Today: Wompi. Adding Mercado Pago / PayU = another implementation of the same interface.
+//
+// Interface each provider must satisfy:
+//   buildCheckoutSession(sale, adminId)  → { public_key, reference, amount_in_cents, currency, signature, redirect_url, account_id }
+//   validateWebhookSignature(rawBody, headers, eventsSecret) → boolean
+//   deriveEventId(payload)               → string (stable, unique per event)
+//   mapStatus(providerStatus)            → 'approved'|'declined'|'voided'|'error'|'pending'
+const crypto = require("crypto");
+const https  = require("https");
+const db     = require("../config/db");
+const { encrypt, decrypt } = require("../utils/crypto");
+
+// ─── Wompi endpoints ──────────────────────────────────────────────────────────
+const WOMPI_BASE = {
+  sandbox:    process.env.WOMPI_SANDBOX_URL    || "https://sandbox.wompi.co/v1",
+  production: process.env.WOMPI_PRODUCTION_URL || "https://production.wompi.co/v1",
+};
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function wompiGet(path, environment, privateKey) {
+  const base = WOMPI_BASE[environment] || WOMPI_BASE.sandbox;
+  const url  = `${base}${path}`;
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { headers: { Authorization: `Bearer ${privateKey}` } },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(body) }); }
+          catch { reject(new Error("Non-JSON response from Wompi")); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(8000, () => { req.destroy(new Error("Wompi request timed out")); });
+  });
+}
+
+// ─── Store account helpers ────────────────────────────────────────────────────
+
+/**
+ * Load the active payment account for an admin.
+ * Returns null if none exists or (when requireConnected) if not yet verified.
+ */
+async function getStoreAccount(adminId, { requireConnected = true } = {}) {
+  const { rows } = await db.query(
+    `SELECT id, provider, environment, status, public_key,
+            private_key_enc, events_secret_enc, integrity_secret_enc, admin_id
+     FROM store_payment_accounts
+     WHERE admin_id = $1 AND is_active = true
+     LIMIT 1`,
+    [adminId]
+  );
+  if (!rows.length) return null;
+  if (requireConnected && rows[0].status !== "connected") return null;
+  return rows[0];
+}
+
+/**
+ * Decrypt credentials from a store_payment_accounts row.
+ * Call only when needed; never store decrypted values beyond request scope.
+ */
+function decryptCredentials(acct) {
+  return {
+    private_key:      decrypt(acct.private_key_enc),
+    events_secret:    decrypt(acct.events_secret_enc),
+    integrity_secret: decrypt(acct.integrity_secret_enc),
+  };
+}
+
+// ─── Wompi — provider implementation ─────────────────────────────────────────
+
+/**
+ * Compute the Wompi checkout integrity signature.
+ * SHA-256( reference + amount_in_cents + currency + integrity_secret )
+ */
+function wompiIntegritySignature(reference, amountInCents, currency, integritySecret) {
+  const chain = `${reference}${Math.round(Number(amountInCents))}${currency}${integritySecret}`;
+  return crypto.createHash("sha256").update(chain).digest("hex");
+}
+
+/**
+ * Validate a Wompi webhook event signature from raw body + headers.
+ * rawBody must be a Buffer (pre-parsed with express.raw).
+ * Returns true if valid, false otherwise.
+ */
+function wompiValidateWebhookSignature(rawBody, headers, eventsSecret) {
+  try {
+    const payload   = JSON.parse(rawBody.toString("utf8"));
+    const { signature, timestamp, data } = payload;
+    if (!signature?.properties || !signature?.checksum) return false;
+
+    const transaction = data?.transaction ?? {};
+    const valuesStr   = signature.properties
+      .map((prop) => {
+        const key = prop.replace(/^transaction\./, "");
+        return String(transaction[key] ?? "");
+      })
+      .join("");
+
+    const chain    = `${valuesStr}${timestamp}${eventsSecret}`;
+    const expected = crypto.createHash("sha256").update(chain).digest("hex");
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature.checksum));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Derive a stable, unique event_id for idempotency.
+ * Wompi doesn't expose a native event UUID, so we derive from tx id + status.
+ */
+function wompiDeriveEventId(payload) {
+  const tx = payload?.data?.transaction;
+  if (!tx?.id || !tx?.status) return null;
+  return `${tx.id}:${tx.status}`;
+}
+
+/**
+ * Map a Wompi transaction status string to our internal status.
+ */
+function wompiMapStatus(wompiStatus) {
+  const map = {
+    APPROVED: "approved",
+    DECLINED: "declined",
+    VOIDED:   "voided",
+    ERROR:    "error",
+  };
+  return map[wompiStatus] || "pending";
+}
+
+/**
+ * Verify Wompi credentials by calling the merchant endpoint.
+ * Returns true only when the API accepts the private key.
+ */
+async function verifyWompiCredentials(privateKey, environment) {
+  try {
+    const { status, body } = await wompiGet(
+      `/merchants/${encodeURIComponent(privateKey)}`,
+      environment,
+      privateKey
+    );
+    return status === 200 && !!body?.data?.id;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Build the checkout session data for a sale.
+ * Throws { status: 402, message } if the store has no connected payment account.
+ * Registers the attempt in sale_payment_transactions.
+ */
+async function buildCheckoutSession(sale, adminId) {
+  const acct = await getStoreAccount(adminId);
+  if (!acct) {
+    const err = new Error("Esta tienda no tiene cuenta de pago activa. El administrador debe conectar su cuenta de Wompi.");
+    err.status = 402;
+    throw err;
+  }
+
+  const { integrity_secret } = decryptCredentials(acct);
+  const reference     = sale.sale_number;
+  const amountInCents = Math.round(parseFloat(sale.total) * 100);
+  const currency      = "COP";
+  const signature     = wompiIntegritySignature(reference, amountInCents, currency, integrity_secret);
+
+  // Register the transaction attempt (idempotent — reference is UNIQUE)
+  await db.query(
+    `INSERT INTO sale_payment_transactions
+       (sale_id, account_id, provider, reference, amount_in_cents, currency, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+     ON CONFLICT (reference) DO NOTHING`,
+    [sale.id, acct.id, acct.provider, reference, amountInCents, currency]
+  );
+
+  return {
+    public_key:      acct.public_key,
+    reference,
+    amount_in_cents: amountInCents,
+    currency,
+    signature,
+    redirect_url:    `${process.env.FRONTEND_URL}/order-success`,
+    account_id:      acct.id,
+  };
+}
+
+/**
+ * Process a raw Wompi webhook payload (Buffer).
+ * Returns { processed: boolean, reason: string }.
+ * Never throws — all errors are swallowed so the caller can always respond 200.
+ */
+async function processWompiWebhook(rawBody) {
+  let payload;
+  try {
+    payload = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    return { processed: false, reason: "invalid_json" };
+  }
+
+  const { event, data, timestamp } = payload;
+  const tx        = data?.transaction ?? {};
+  const reference = tx.reference ?? "";
+  const eventId   = wompiDeriveEventId(payload);
+
+  if (!eventId) return { processed: false, reason: "no_event_id" };
+
+  // ── Load the sale and its store account via reference ──────────────────────
+  const { rows: txRows } = await db.query(
+    `SELECT spt.id AS tx_id, spt.sale_id, spt.account_id, spt.status AS tx_status,
+            spa.events_secret_enc, spa.admin_id
+     FROM sale_payment_transactions spt
+     JOIN store_payment_accounts spa ON spa.id = spt.account_id
+     WHERE spt.reference = $1`,
+    [reference]
+  );
+
+  // Signature validation — requires the store's events_secret
+  let sigValid = null;
+  if (txRows.length) {
+    const eventsSecret = decrypt(txRows[0].events_secret_enc);
+    sigValid = wompiValidateWebhookSignature(rawBody, {}, eventsSecret);
+  }
+
+  // Record the event (idempotency guard)
+  let eventRow;
+  try {
+    const ins = await db.query(
+      `INSERT INTO payment_webhook_events
+         (provider, event_id, event_type, status, reference, processed, sig_valid, raw_payload)
+       VALUES ('wompi', $1, $2, $3, $4, false, $5, $6)
+       ON CONFLICT (provider, event_id) DO NOTHING
+       RETURNING id`,
+      [eventId, event ?? null, tx.status ?? null, reference, sigValid, payload]
+    );
+    eventRow = ins.rows[0];
+  } catch {
+    return { processed: false, reason: "db_error_inserting_event" };
+  }
+
+  // Already processed in a prior delivery
+  if (!eventRow) return { processed: false, reason: "duplicate_event" };
+
+  // Invalid signature — record but do not process
+  if (sigValid === false) {
+    return { processed: false, reason: "invalid_signature" };
+  }
+
+  // Only process APPROVED transactions
+  if (event !== "transaction.updated" || tx.status !== "APPROVED" || !txRows.length) {
+    await db.query("UPDATE payment_webhook_events SET processed = true WHERE id = $1", [eventRow.id]);
+    return { processed: false, reason: "not_applicable" };
+  }
+
+  const { tx_id, sale_id, account_id, tx_status, admin_id } = txRows[0];
+  const amountCOP = Number(tx.amount_in_cents ?? 0) / 100;
+
+  // ── Transactional update ───────────────────────────────────────────────────
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Update transaction record
+    await client.query(
+      `UPDATE sale_payment_transactions
+       SET status = 'approved', provider_tx_id = $1, updated_at = now()
+       WHERE id = $2 AND status != 'approved'`,
+      [String(tx.id ?? ""), tx_id]
+    );
+
+    // Load sale with lock
+    const { rows: saleRows } = await client.query(
+      "SELECT id, total, payment_status, customer_id, owner_admin_id FROM sales WHERE id = $1 FOR UPDATE",
+      [sale_id]
+    );
+    if (!saleRows.length) { await client.query("ROLLBACK"); return { processed: false, reason: "sale_not_found" }; }
+
+    const sale = saleRows[0];
+    if (sale.payment_status === "paid") {
+      // Idempotent — already paid, mark event processed and exit
+      await client.query("UPDATE payment_webhook_events SET processed = true WHERE id = $1", [eventRow.id]);
+      await client.query("COMMIT");
+      return { processed: true, reason: "already_paid" };
+    }
+
+    // Insert into sale_payments (idempotent via ON CONFLICT)
+    await client.query(
+      `INSERT INTO sale_payments (sale_id, amount, payment_method, notes, created_by)
+       VALUES ($1, $2, 'gateway', 'Pago aprobado por pasarela (Wompi)', NULL)
+       ON CONFLICT DO NOTHING`,
+      [sale_id, amountCOP]
+    );
+
+    // Sync payment status
+    const { rows: sumRows } = await client.query(
+      "SELECT COALESCE(SUM(amount), 0) AS paid FROM sale_payments WHERE sale_id = $1",
+      [sale_id]
+    );
+    const totalPaid   = Number(sumRows[0].paid);
+    const saleTotal   = Number(sale.total);
+    const newStatus   = totalPaid <= 0 ? "pending" : totalPaid < saleTotal ? "partial" : "paid";
+
+    await client.query(
+      "UPDATE sales SET amount_paid = $1, payment_status = $2, updated_at = now() WHERE id = $3",
+      [totalPaid, newStatus, sale_id]
+    );
+
+    await client.query("UPDATE payment_webhook_events SET processed = true WHERE id = $1", [eventRow.id]);
+    await client.query("COMMIT");
+
+    return { processed: true, reason: "approved", sale_id, admin_id: sale.owner_admin_id, new_status: newStatus, total_paid: totalPaid };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[payment.service] webhook tx error:", err.message);
+    return { processed: false, reason: "tx_error" };
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = {
+  // Store account
+  getStoreAccount,
+  decryptCredentials,
+  // Checkout
+  buildCheckoutSession,
+  // Webhook
+  processWompiWebhook,
+  wompiValidateWebhookSignature,
+  wompiDeriveEventId,
+  wompiMapStatus,
+  // Credential verification
+  verifyWompiCredentials,
+  // Encryption (re-exported for convenience in paymentAccounts controller)
+  encrypt,
+};
