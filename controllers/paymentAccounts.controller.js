@@ -8,10 +8,7 @@ const { decryptCredentials, verifyWompiCredentials } = require("../services/paym
 const ALLOWED_PROVIDERS    = ["wompi"];
 const ALLOWED_ENVIRONMENTS = ["sandbox", "production"];
 
-function maskSecret(s) {
-  if (!s || s.length < 8) return "••••••••";
-  return s.slice(0, 4) + "•".repeat(Math.min(s.length - 8, 12)) + s.slice(-4);
-}
+const MASKED = "••••••••••••";
 
 // ── GET /api/payment-accounts ──────────────────────────────────────────────
 exports.getAccount = async (req, res) => {
@@ -38,9 +35,9 @@ exports.getAccount = async (req, res) => {
         environment:      row.environment,
         status:           row.status,
         public_key:       row.public_key,
-        private_key:      maskSecret("hidden"),
-        events_secret:    maskSecret("hidden"),
-        integrity_secret: maskSecret("hidden"),
+        private_key:      MASKED,
+        events_secret:    MASKED,
+        integrity_secret: MASKED,
         last_verified_at: row.last_verified_at,
         is_active:        row.is_active,
         created_at:       row.created_at,
