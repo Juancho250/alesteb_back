@@ -53,7 +53,7 @@ function wompiGet(path, environment, privateKey) {
 async function getStoreAccount(adminId, { requireConnected = true } = {}) {
   const { rows } = await db.query(
     `SELECT id, provider, environment, status, public_key,
-            private_key_enc, events_secret_enc, integrity_secret_enc, admin_id
+            private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted, admin_id
      FROM store_payment_accounts
      WHERE admin_id = $1 AND is_active = true
      LIMIT 1`,
@@ -70,9 +70,9 @@ async function getStoreAccount(adminId, { requireConnected = true } = {}) {
  */
 function decryptCredentials(acct) {
   return {
-    private_key:      decrypt(acct.private_key_enc),
-    events_secret:    decrypt(acct.events_secret_enc),
-    integrity_secret: decrypt(acct.integrity_secret_enc),
+    private_key:      decrypt(acct.private_key_encrypted),
+    events_secret:    decrypt(acct.events_secret_encrypted),
+    integrity_secret: decrypt(acct.integrity_secret_encrypted),
   };
 }
 
@@ -238,7 +238,7 @@ async function processWompiWebhook(rawBody) {
   try {
     const res = await db.query(
       `SELECT spt.id AS tx_id, spt.sale_id, spt.account_id, spt.status AS tx_status,
-              spa.events_secret_enc, spa.admin_id
+              spa.events_secret_encrypted, spa.admin_id
        FROM sale_payment_transactions spt
        JOIN store_payment_accounts spa ON spa.id = spt.account_id
        WHERE spt.reference = $1`,
@@ -256,7 +256,7 @@ async function processWompiWebhook(rawBody) {
   let sigValid = null;
   if (txRows.length) {
     try {
-      const eventsSecret = decrypt(txRows[0].events_secret_enc);
+      const eventsSecret = decrypt(txRows[0].events_secret_encrypted);
       sigValid = wompiValidateWebhookSignature(rawBody, {}, eventsSecret);
     } catch (err) {
       console.error("[payment.service] webhook: signature validation error:", err.message);

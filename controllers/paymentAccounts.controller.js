@@ -81,25 +81,25 @@ exports.createOrUpdate = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    const private_key_enc      = encrypt(private_key);
-    const events_secret_enc    = encrypt(events_secret);
-    const integrity_secret_enc = encrypt(integrity_secret);
+    const private_key_encrypted      = encrypt(private_key);
+    const events_secret_encrypted    = encrypt(events_secret);
+    const integrity_secret_encrypted = encrypt(integrity_secret);
 
     const { rows } = await client.query(
       `INSERT INTO store_payment_accounts
          (admin_id, provider, environment, status, public_key,
-          private_key_enc, events_secret_enc, integrity_secret_enc, updated_at)
+          private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted, updated_at)
        VALUES ($1,$2,$3,'pending',$4,$5,$6,$7,now())
        ON CONFLICT (admin_id, provider, environment) DO UPDATE SET
          status               = 'pending',
          public_key           = EXCLUDED.public_key,
-         private_key_enc      = EXCLUDED.private_key_enc,
-         events_secret_enc    = EXCLUDED.events_secret_enc,
-         integrity_secret_enc = EXCLUDED.integrity_secret_enc,
+         private_key_encrypted      = EXCLUDED.private_key_encrypted,
+         events_secret_encrypted    = EXCLUDED.events_secret_encrypted,
+         integrity_secret_encrypted = EXCLUDED.integrity_secret_encrypted,
          updated_at           = now()
        RETURNING id, provider, environment, status, public_key, created_at, updated_at`,
       [adminId, provider, environment, public_key,
-       private_key_enc, events_secret_enc, integrity_secret_enc]
+       private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted]
     );
 
     await client.query("COMMIT");
@@ -130,7 +130,7 @@ exports.verify = async (req, res) => {
 
   try {
     const { rows } = await db.query(
-      `SELECT id, provider, environment, private_key_enc, events_secret_enc, integrity_secret_enc
+      `SELECT id, provider, environment, private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted
        FROM store_payment_accounts
        WHERE admin_id = $1 AND is_active = true
        LIMIT 1`,
