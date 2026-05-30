@@ -5,6 +5,7 @@ const REQUIRED = [
   'CLOUDINARY_API_KEY',
   'CLOUDINARY_API_SECRET',
   'CLOUDINARY_CLOUD_NAME',
+  'PAYMENTS_ENCRYPTION_KEY',
 ];
 
 const INSECURE_DEFAULTS = {
@@ -18,6 +19,15 @@ module.exports = function validateEnv() {
   const missing = REQUIRED.filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`[ENV] Faltan variables de entorno requeridas: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  // PAYMENTS_ENCRYPTION_KEY must decode to exactly 32 bytes for AES-256-GCM
+  const encKeyRaw = process.env.PAYMENTS_ENCRYPTION_KEY;
+  const encKeyBuf = Buffer.from(encKeyRaw, encKeyRaw.length === 64 ? 'hex' : 'base64');
+  if (encKeyBuf.length !== 32) {
+    console.error('[ENV] PAYMENTS_ENCRYPTION_KEY debe decodificar a exactamente 32 bytes. Usa 64 caracteres hex o 44 caracteres base64.');
+    console.error('[ENV] Genera una clave válida con: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
     process.exit(1);
   }
 

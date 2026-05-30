@@ -90,8 +90,7 @@ exports.createOrUpdate = async (req, res) => {
          (admin_id, provider, environment, status, public_key,
           private_key_enc, events_secret_enc, integrity_secret_enc, updated_at)
        VALUES ($1,$2,$3,'pending',$4,$5,$6,$7,now())
-       ON CONFLICT (admin_id, provider) DO UPDATE SET
-         environment          = EXCLUDED.environment,
+       ON CONFLICT (admin_id, provider, environment) DO UPDATE SET
          status               = 'pending',
          public_key           = EXCLUDED.public_key,
          private_key_enc      = EXCLUDED.private_key_enc,
@@ -112,7 +111,12 @@ exports.createOrUpdate = async (req, res) => {
     });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("[paymentAccounts] createOrUpdate:", err.message);
+    console.error("[paymentAccounts] POST error:", {
+      adminId,
+      code:    err.code,
+      message: err.message,
+      stack:   err.stack,
+    });
     return res.status(500).json({ success: false, message: "Error al guardar la cuenta de pago" });
   } finally {
     client.release();
