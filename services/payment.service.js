@@ -208,10 +208,10 @@ async function buildCheckoutSession(sale, adminId) {
     [sale.id, adminId, acct.id, acct.provider, reference, amountInCents, currency]
   );
 
-  return {
+    return {
     public_key:      acct.public_key,
     reference,
-    amount_in_cents: amountInCents,
+    amount_in_cents: Math.round(amountInCents), // ← asegura entero
     currency,
     signature,
     redirect_url:    `${process.env.FRONTEND_URL}/order-success`,
