@@ -168,12 +168,27 @@ async function verifyWompiCredentials(privateKey, environment) {
  * Registers the attempt in sale_payment_transactions (idempotent on reference).
  */
 async function buildCheckoutSession(sale, adminId) {
-  const acct = await getStoreAccount(adminId);
+  // Query without requireConnected so we can distinguish "no account" from "not verified"
+  const acct = await getStoreAccount(adminId, { requireConnected: false });
+
   if (!acct) {
-    const err = new Error(
-      "Esta tienda no tiene cuenta de pago activa. El administrador debe conectar su cuenta de Wompi."
-    );
+    console.error("[payment.service] buildCheckoutSession: no payment account found", { adminId, saleId: sale.id });
+    const err = new Error("Esta tienda no tiene cuenta de pago configurada. El administrador debe conectar su cuenta de Wompi.");
     err.status = 402;
+    err.code   = "NO_PAYMENT_ACCOUNT";
+    throw err;
+  }
+
+  if (acct.status !== "connected") {
+    console.error("[payment.service] buildCheckoutSession: account exists but not connected", {
+      adminId, saleId: sale.id, accountId: acct.id, status: acct.status,
+    });
+    const msg = acct.status === "error"
+      ? "Las credenciales de Wompi son inválidas. El administrador debe revisar y volver a verificar su cuenta de pago."
+      : "La cuenta de pago aún no está verificada. El administrador debe completar la verificación de credenciales Wompi.";
+    const err = new Error(msg);
+    err.status = 402;
+    err.code   = "PAYMENT_ACCOUNT_NOT_CONNECTED";
     throw err;
   }
 
