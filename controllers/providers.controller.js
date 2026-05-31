@@ -6,12 +6,7 @@ const { emitDataUpdate } = require("../config/socket");
 
 // ─────────────────────────────────────────────
 // Helpers de scope
-// Todas las rutas de providers pasan por auth + adminScope,
-// así que req.isSuperAdmin y req.adminId siempre existen.
 // ─────────────────────────────────────────────
-
-// Devuelve { clause, params, nextIdx }
-// startIdx = primer $N disponible DESPUÉS de los params ya usados
 const tenantClause = (req, alias, startIdx = 1) => {
   if (req.isSuperAdmin) return { clause: "", params: [], nextIdx: startIdx };
   const col = alias ? `${alias}.owner_admin_id` : "owner_admin_id";
@@ -25,9 +20,6 @@ const tenantClause = (req, alias, startIdx = 1) => {
 // ─────────────────────────────────────────────
 // GET /providers
 // ─────────────────────────────────────────────
-// IMPORTANTE: v_provider_balance NO tiene owner_admin_id.
-// Filtramos sobre la tabla providers directamente y replicamos
-// los cálculos de la vista con JOINs.
 exports.getAll = async (req, res) => {
   const { is_active, category } = req.query;
 
@@ -278,7 +270,7 @@ exports.remove = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// POST /providers/payments  — registrar pago
+// POST /providers/payments
 // ─────────────────────────────────────────────
 exports.registerPayment = async (req, res) => {
   const { provider_id, amount, payment_method, reference_number, notes, purchase_order_id } = req.body;
@@ -400,7 +392,6 @@ exports.getPurchaseHistory = async (req, res) => {
     if (owns === "not_found") return res.status(404).json({ message: "Proveedor no encontrado" });
     if (owns === "forbidden") return res.status(403).json({ message: "No autorizado" });
 
-    // El proveedor ya fue validado → filtrar por provider_id es suficiente
     let query = `SELECT * FROM v_purchase_orders_summary WHERE provider_id = $1`;
     const params = [id];
     let idx = 2;
@@ -521,8 +512,158 @@ exports.getStats = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// HELPER PRIVADO — verifica existencia y ownership
-// Retorna: "ok" | "not_found" | "forbidden"
+// PATCH /providers/purchase-orders/:orderId/receive
+// Recibe una PO: actualiza stock de cada ítem, marca la orden como
+// 'received' y suma el total al balance del proveedor.
+// ─────────────────────────────────────────────
+exports.receivePurchaseOrder = async (req, res) => {
+  const { orderId } = req.params;
+  // received_quantities: { [purchase_order_item_id]: qty_received }
+  // Si no se envía, se asume "recibir todo" (quantity completa de cada ítem).
+  const { received_quantities, notes } = req.body;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1. Verificar que la orden existe y pertenece al tenant
+    const ownerClause = req.isSuperAdmin ? "" : "AND po.owner_admin_id = $2";
+    const checkParams = req.isSuperAdmin ? [orderId] : [orderId, req.adminId];
+
+    const orderRes = await client.query(
+      `SELECT po.*, p.id AS p_id
+       FROM purchase_orders po
+       JOIN providers p ON p.id = po.provider_id
+       WHERE po.id = $1 ${ownerClause}
+       FOR UPDATE`,
+      checkParams
+    );
+
+    if (!orderRes.rowCount) {
+      const exists = await client.query("SELECT id FROM purchase_orders WHERE id = $1", [orderId]);
+      throw {
+        status:  exists.rowCount ? 403 : 404,
+        message: exists.rowCount ? "No autorizado" : "Orden no encontrada",
+      };
+    }
+
+    const order = orderRes.rows[0];
+
+    if (order.status === "received") {
+      throw { status: 400, message: "Esta orden ya fue recibida anteriormente" };
+    }
+    if (order.status === "cancelled") {
+      throw { status: 400, message: "No se puede recibir una orden cancelada" };
+    }
+
+    // 2. Obtener ítems de la orden
+    const itemsRes = await client.query(
+      `SELECT poi.id, poi.product_id, poi.quantity, poi.received_quantity,
+              poi.unit_cost, poi.subtotal
+       FROM purchase_order_items poi
+       WHERE poi.purchase_order_id = $1`,
+      [orderId]
+    );
+
+    if (!itemsRes.rowCount) {
+      throw { status: 400, message: "La orden no tiene ítems" };
+    }
+
+    let totalReceived = 0;
+
+    // 3. Por cada ítem, determinar cantidad a recibir y actualizar stock
+    for (const item of itemsRes.rows) {
+      const qtyToReceive = received_quantities
+        ? Math.max(0, parseInt(received_quantities[item.id] ?? 0))
+        : item.quantity - (item.received_quantity || 0); // "recibir todo"
+
+      if (qtyToReceive <= 0) continue;
+
+      // Actualizar received_quantity en el ítem
+      await client.query(
+        `UPDATE purchase_order_items
+         SET received_quantity = COALESCE(received_quantity, 0) + $1
+         WHERE id = $2`,
+        [qtyToReceive, item.id]
+      );
+
+      // Incrementar stock del producto
+      const stockBefore = await client.query(
+        "SELECT stock FROM products WHERE id = $1 FOR UPDATE",
+        [item.product_id]
+      );
+      const qtyBefore = stockBefore.rows[0]?.stock ?? 0;
+      const qtyAfter  = qtyBefore + qtyToReceive;
+
+      await client.query(
+        "UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
+        [qtyToReceive, item.product_id]
+      );
+
+      // Registrar movimiento en stock_ledger
+      await client.query(
+        `INSERT INTO stock_ledger
+           (product_id, movement_type, qty_delta, qty_before, qty_after,
+            reference_id, reference_type, notes, created_by, owner_admin_id)
+         VALUES ($1, 'purchase_received', $2, $3, $4, $5, 'purchase_order', $6, $7, $8)`,
+        [
+          item.product_id,
+          qtyToReceive,
+          qtyBefore,
+          qtyAfter,
+          parseInt(orderId),
+          notes || `Recepción OC #${order.order_number}`,
+          req.user.id,
+          req.isSuperAdmin ? null : req.adminId,
+        ]
+      );
+
+      totalReceived += qtyToReceive;
+    }
+
+    if (totalReceived === 0) {
+      throw { status: 400, message: "No hay cantidades válidas para recibir" };
+    }
+
+    // 4. Marcar la orden como recibida
+    await client.query(
+      `UPDATE purchase_orders
+       SET status        = 'received',
+           received_date = CURRENT_DATE,
+           updated_at    = NOW()
+       WHERE id = $1`,
+      [orderId]
+    );
+
+    // 5. Sumar el total al balance del proveedor (deuda con el proveedor)
+    //    Solo si el pago_status no es 'paid' (si ya estaba pagada no sumamos)
+    if (order.payment_status !== "paid") {
+      await client.query(
+        "UPDATE providers SET balance = balance + $1, updated_at = NOW() WHERE id = $2",
+        [order.total_cost, order.provider_id]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    emitDataUpdate("purchase_orders", "updated", { id: parseInt(orderId), status: "received" }, req.adminId);
+    emitDataUpdate("providers", "updated", { id: order.provider_id }, req.adminId);
+
+    res.json({
+      message:        `Orden ${order.order_number} recibida exitosamente`,
+      items_received: totalReceived,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("RECEIVE PO ERROR:", error);
+    res.status(error.status || 500).json({ message: error.message || "Error al recibir la orden" });
+  } finally {
+    client.release();
+  }
+};
+
+// ─────────────────────────────────────────────
+// HELPER PRIVADO
 // ─────────────────────────────────────────────
 const _checkOwnership = async (req, id) => {
   if (req.isSuperAdmin) {

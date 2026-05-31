@@ -328,6 +328,97 @@ exports.getById = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+// GET /products/:id/ledger
+// ─────────────────────────────────────────────
+exports.getLedger = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || isNaN(id))
+      return res.status(400).json({ success: false, message: "ID inválido" });
+
+    const { isSuperAdmin, adminId } = req;
+    const variant_id = req.query.variant_id || null;
+    const limit      = Math.min(200, parseInt(req.query.limit) || 50);
+    const offset     = Math.max(0,   parseInt(req.query.offset) || 0);
+
+    // Verificar ownership del producto
+    const ownerClause = isSuperAdmin ? "" : "AND owner_admin_id = $2";
+    const checkParams = isSuperAdmin ? [id] : [id, adminId];
+    const check = await db.query(
+      `SELECT id FROM products WHERE id = $1 ${ownerClause}`, checkParams
+    );
+    if (!check.rowCount)
+      return res.status(404).json({ success: false, message: "Producto no encontrado" });
+
+    const params = [id];
+    let idx = 2;
+    let variantFilter = "";
+
+    if (variant_id) {
+      variantFilter = `AND sl.variant_id = $${idx++}`;
+      params.push(variant_id);
+    }
+
+    params.push(limit, offset);
+
+    const result = await db.query(`
+      SELECT
+        sl.id,
+        sl.movement_type,
+        sl.qty_delta,
+        sl.qty_before,
+        sl.qty_after,
+        sl.reference_id,
+        sl.reference_type,
+        sl.notes,
+        sl.created_at,
+        sl.variant_id,
+        u.name AS created_by_name,
+        -- Atributos de la variante (si aplica)
+        (
+          SELECT json_agg(
+            json_build_object(
+              'type',          at.name,
+              'display_value', COALESCE(av.display_value, av.value),
+              'hex_color',     av.hex_color
+            ) ORDER BY at.id
+          )
+          FROM variant_attribute_values vav
+          JOIN attribute_values av ON av.id = vav.attribute_value_id
+          JOIN attribute_types  at ON at.id = av.attribute_type_id
+          WHERE vav.variant_id = sl.variant_id
+        ) AS variant_attrs
+      FROM stock_ledger sl
+      LEFT JOIN users u ON u.id = sl.created_by
+      WHERE sl.product_id = $1
+        ${variantFilter}
+      ORDER BY sl.created_at DESC
+      LIMIT $${idx++} OFFSET $${idx++}
+    `, params);
+
+    // Total para paginación
+    const countParams = [id];
+    let ci = 2;
+    let cvf = "";
+    if (variant_id) { cvf = `AND variant_id = $${ci++}`; countParams.push(variant_id); }
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM stock_ledger WHERE product_id = $1 ${cvf}`, countParams
+    );
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: Number(countRes.rows[0].count),
+      limit,
+      offset,
+    });
+  } catch (error) {
+    console.error("[GET LEDGER ERROR]", error.message, error.stack);
+    res.status(500).json({ success: false, message: "Error al obtener movimientos de stock" });
+  }
+};
+
+// ─────────────────────────────────────────────
 // POST /products
 // ─────────────────────────────────────────────
 exports.create = async (req, res) => {

@@ -16,6 +16,9 @@ router.use(adminScope);
 router.get("/",    ctrl.getAll);
 router.get("/:id", ctrl.getById);
 
+// ── Ledger de stock ───────────────────────────────────────────
+router.get("/:id/ledger", requireRole(["admin", "gerente"]), ctrl.getLedger);
+
 router.post(
   "/",
   requireRole(["admin", "gerente"]),

@@ -23,8 +23,9 @@ router.delete("/:id",              requireManager, ctrl.remove);
 router.patch ("/:id/toggle-active",requireManager, ctrl.toggleActive);
 
 // ── Sub-recursos ──────────────────────────────────────────────
-router.get   ("/:id/payments",     requireManager, ctrl.getPaymentHistory);
-router.get   ("/:id/purchases",    requireManager, ctrl.getPurchaseHistory);
-router.get   ("/:id/stats",        requireManager, ctrl.getStats);
+router.get   ("/:id/payments",                              requireManager, ctrl.getPaymentHistory);
+router.get   ("/:id/purchases",                             requireManager, ctrl.getPurchaseHistory);
+router.get   ("/:id/stats",                                 requireManager, ctrl.getStats);
+router.patch ("/:id/purchase-orders/:orderId/receive",      requireManager, ctrl.receivePurchaseOrder);
 
 module.exports = router;
