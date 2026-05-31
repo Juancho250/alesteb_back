@@ -493,7 +493,7 @@ router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
 });
 
 // POST /public-api/v1/sales
-router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
+router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res) => {
   const client = await db.connect();
   try {
     const adminId = req.apiKey.adminId;
@@ -599,12 +599,13 @@ router.post("/sales", requireApiPermission("sales:write"), async (req, res) => {
          sale_number, subtotal, discount_amount, total,
          payment_method, payment_status, sale_type,
          shipping_address, shipping_city, shipping_notes,
-         customer_phone, owner_admin_id, created_by
-       ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10)
+         customer_phone, owner_admin_id, created_by, customer_id
+       ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10,$11)
        RETURNING id, sale_number, subtotal, discount_amount, total`,
       [saleNumber, subtotal, discountAmount, total, payment_method,
        shipping_address || null, shipping_city || null,
-       shipping_notes || null, customer_phone || null, adminId]
+       shipping_notes || null, customer_phone || null, adminId,
+       req.user.id]
     );
 
     const saleId = saleRes.rows[0].id;
