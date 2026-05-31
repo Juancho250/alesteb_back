@@ -49,7 +49,8 @@ const getSubscriptionByAdmin = async (adminId) => {
        sp.has_analytics, sp.has_ai_agent, sp.has_api_access,
        sp.has_multi_admin, sp.has_custom_branding, sp.has_wompi_payments,
        sp.has_export, sp.has_priority_support, sp.has_push_notifications,
-       sp.has_financial_reports, sp.has_purchase_orders, sp.has_discount_system
+       sp.has_financial_reports, sp.has_purchase_orders, sp.has_discount_system,
+       sp.has_inventory
      FROM subscriptions s
      JOIN subscription_plans sp ON sp.id = s.plan_id
      WHERE s.admin_id = $1`,
@@ -79,6 +80,7 @@ const checkLimits = async (adminId) => {
     financial_reports:  sub.has_financial_reports,
     purchase_orders:    sub.has_purchase_orders,
     discount_system:    sub.has_discount_system,
+    inventory:          sub.has_inventory,
   };
 
   const { rows: usageRows } = await db.query(
