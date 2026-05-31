@@ -10,6 +10,8 @@ const {
 } = require("../middleware/auth.middleware");
 const storefrontAuth  = require("../controllers/storefront.auth.controller");
 const reviewsCtrl     = require("../controllers/reviews.controller");
+const wompiCtrl       = require("../controllers/wompi.controller");
+const analyticsCtrl   = require("../controllers/analytics.controller");
 const { createUpload } = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
@@ -24,6 +26,10 @@ router.get("/ping", (req, res) => {
     timestamp:   new Date().toISOString(),
   });
 });
+
+// POST /public-api/v1/analytics/pageview
+// No JWT required — fires and forgets on every page load.
+router.post("/analytics/pageview", analyticsCtrl.trackPageview);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/profile
@@ -803,5 +809,16 @@ router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
     },
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WOMPI — checkout desde el storefront (requieren JWT de cliente)
+// El controller ya valida que el cliente sea dueño de la venta.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /public-api/v1/wompi/session/:sale_id
+router.get("/wompi/session/:sale_id", auth, wompiCtrl.getSession);
+
+// GET /public-api/v1/wompi/verify/:reference
+router.get("/wompi/verify/:reference", auth, wompiCtrl.verifyByReference);
 
 module.exports = router;
