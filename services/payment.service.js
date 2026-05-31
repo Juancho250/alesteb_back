@@ -199,12 +199,13 @@ async function buildCheckoutSession(sale, adminId) {
   const signature     = wompiIntegritySignature(reference, amountInCents, currency, integrity_secret);
 
   // Register the transaction attempt — idempotent (reference is UNIQUE)
+  // Register the transaction attempt — idempotent (reference is UNIQUE)
   await db.query(
     `INSERT INTO sale_payment_transactions
-       (sale_id, account_id, provider, reference, amount_in_cents, currency, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-     ON CONFLICT (reference) DO NOTHING`,
-    [sale.id, acct.id, acct.provider, reference, amountInCents, currency]
+      (sale_id, owner_admin_id, store_payment_account_id, provider, reference, amount_in_cents, currency, status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+    ON CONFLICT (reference) DO NOTHING`,
+    [sale.id, adminId, acct.id, acct.provider, reference, amountInCents, currency]
   );
 
   return {
