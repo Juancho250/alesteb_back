@@ -24,6 +24,7 @@ const getSubscriptionData = async (adminId) => {
        sp.has_multi_admin, sp.has_custom_branding, sp.has_wompi_payments,
        sp.has_export, sp.has_priority_support, sp.has_push_notifications,
        sp.has_financial_reports, sp.has_purchase_orders, sp.has_discount_system,
+       sp.has_inventory,
        sp.max_products, sp.max_users, sp.max_api_keys, sp.max_categories,
        sp.max_banners, sp.max_providers, sp.max_monthly_sales,
        su.products_count, su.users_count, su.api_keys_count,

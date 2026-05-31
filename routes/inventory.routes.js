@@ -4,10 +4,12 @@ const express  = require('express');
 const router   = express.Router();
 const db       = require('../config/db');
 const { auth, requireAdmin } = require('../middleware/auth.middleware');
+const { requireFeature } = require("../middleware/subscription.middleware");
 const { adminScope }         = require('../middleware/adminScope');
 const inv      = require('../services/inventory.service');
 
 router.use(auth, adminScope);
+router.use(requireFeature("has_inventory"));
 
 // ─── Util ─────────────────────────────────────────────────────────────────────
 function send(res, err) {

@@ -140,6 +140,14 @@ export const NAV_ITEMS = [
         roles:   ["superadmin", "admin"],
       },
       {
+        id:    "inventory",
+        label: "Inventario",
+        path:  "/tools/inventory",
+        icon:  Package,       // o el ícono que uses para inventario
+        feature: "inventory",
+        locked:  true,
+      },
+      {
         id:    "business-profile",
         label: "Mi Negocio",
         path:  "/tools/business-profile",
