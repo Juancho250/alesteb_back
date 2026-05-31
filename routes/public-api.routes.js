@@ -12,6 +12,7 @@ const storefrontAuth  = require("../controllers/storefront.auth.controller");
 const reviewsCtrl     = require("../controllers/reviews.controller");
 const wompiCtrl       = require("../controllers/wompi.controller");
 const analyticsCtrl   = require("../controllers/analytics.controller");
+const inv             = require("../services/inventory.service");
 const { createUpload } = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
@@ -815,6 +816,54 @@ router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
 // WOMPI — checkout desde el storefront (requieren JWT de cliente)
 // El controller ya valida que el cliente sea dueño de la venta.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESERVAS DE STOCK — checkout del storefront
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /public-api/v1/inventory/reservations
+// body: { items: [{productId, variantId?, quantity}], sessionId?, ttlMinutes? }
+router.post("/inventory/reservations", async (req, res) => {
+  try {
+    const { items, sessionId, ttlMinutes } = req.body;
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ success: false, message: "items es requerido", code: "MISSING_ITEMS" });
+    }
+    const result = await inv.createReservation({
+      items,
+      sessionId: sessionId ?? null,
+      userId:    req.user?.id ?? null,
+      ownerAdminId: req.apiKey.adminId,
+      ttlMinutes,
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    if (err?.code === 'INSUFFICIENT_STOCK') return res.status(409).json({ success: false, message: err.message, code: err.code });
+    res.status(400).json({ success: false, message: err.message ?? 'Error al crear reserva' });
+  }
+});
+
+// DELETE /public-api/v1/inventory/reservations/:id
+router.delete("/inventory/reservations/:id", async (req, res) => {
+  try {
+    const { rows: [r] } = await db.query(
+      `SELECT owner_admin_id FROM stock_reservations WHERE id = $1`,
+      [req.params.id],
+    );
+    if (!r) return res.status(404).json({ success: false, message: "Reserva no encontrada" });
+    if (r.owner_admin_id !== req.apiKey.adminId) {
+      return res.status(403).json({ success: false, message: "No autorizado" });
+    }
+    const result = await inv.releaseReservation(
+      Number(req.params.id),
+      { ownerAdminId: req.apiKey.adminId, userId: req.user?.id ?? 0 },
+      'cancelled',
+    );
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message ?? 'Error al liberar reserva' });
+  }
+});
 
 // GET /public-api/v1/wompi/session/:sale_id
 router.get("/wompi/session/:sale_id", auth, wompiCtrl.getSession);

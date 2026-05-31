@@ -1,5 +1,6 @@
 // controllers/sales.controller.js
 const db         = require("../config/db");
+const inv        = require("../services/inventory.service");
 const cloudinary = require("../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 const { emitDataUpdate } = require("../config/socket");
@@ -370,24 +371,13 @@ exports.createOrder = async (req, res) => {
          item.subtotal, item.profit_per_unit, item.total_profit]
       );
 
-      if (item.variant_id) {
-        await client.query(
-          "UPDATE product_variants SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
-          [item.quantity, item.variant_id]
-        );
-        await client.query(
-          `UPDATE products SET
-             stock = (SELECT COALESCE(SUM(pv.stock),0) FROM product_variants pv
-                      WHERE pv.product_id = $1 AND pv.is_active = true),
-             updated_at = NOW() WHERE id = $1`,
-          [item.product_id]
-        );
-      } else {
-        await client.query(
-          "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
-          [item.quantity, item.product_id]
-        );
-      }
+      await inv.applyStockMovement(
+        client,
+        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
+        -1, 'sale_confirmed',
+        { ownerAdminId, userId: req.user?.id ?? 0,
+          referenceType: 'sale', referenceId: saleId },
+      );
     }
 
     if (amountPaidInitial > 0) {
@@ -654,24 +644,14 @@ exports.cancelOrder = async (req, res) => {
     );
 
     for (const item of items) {
-      if (item.variant_id) {
-        await client.query(
-          "UPDATE product_variants SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
-          [item.quantity, item.variant_id]
-        );
-        await client.query(
-          `UPDATE products SET
-             stock = (SELECT COALESCE(SUM(pv.stock),0) FROM product_variants pv
-                      WHERE pv.product_id = $1 AND pv.is_active = true),
-             updated_at = NOW() WHERE id = $1`,
-          [item.product_id]
-        );
-      } else {
-        await client.query(
-          "UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
-          [item.quantity, item.product_id]
-        );
-      }
+      await inv.applyStockMovement(
+        client,
+        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
+        +1, 'sale_cancelled',
+        { ownerAdminId: order.owner_admin_id, userId: req.user?.id ?? 0,
+          referenceType: 'sale', referenceId: Number(id),
+          notes: `Reingreso por cancelación #${id}` },
+      );
     }
 
     await client.query(

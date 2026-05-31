@@ -119,6 +119,7 @@ const wompiRoutes              = safeRequire("./routes/wompi.routes",           
 const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
+const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -136,6 +137,10 @@ require("./services/notificationScheduler"); // Push notifications
 // Cron de suscripciones: vencimientos, sync de uso y notificaciones
 const { startSubscriptionCron } = require("./services/subscription.cron");
 startSubscriptionCron();
+
+// Motor de inventario: reservas expiradas + alertas de stock bajo
+const { startInventoryJobs } = require("./services/inventory.jobs");
+startInventoryJobs();
 
 // ============================================
 // 🔌 REGISTRO DE RUTAS
@@ -170,6 +175,7 @@ if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
 if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
+if (inventoryRoutes)     app.use("/api/inventory",     inventoryRoutes);
 
 // — API pública —
 if (publicApiRoutes)     app.use("/public-api/v1",     publicApiRoutes);
