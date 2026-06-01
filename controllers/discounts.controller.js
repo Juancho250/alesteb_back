@@ -17,18 +17,28 @@ const assertDiscountOwnership = async (discountId, adminId, isSuperAdmin) => {
 // ➕ CREAR DESCUENTO
 // ============================================
 exports.create = async (req, res) => {
-  const { name, type, value, starts_at, ends_at, targets } = req.body;
+  const { name, type, value, starts_at, ends_at, targets, code, description } = req.body;
   const { isSuperAdmin, adminId } = req;
-  const ownerAdminId = isSuperAdmin ? null : adminId;
+
+  // ✅ FIX: superadmin también necesita owner_admin_id para que la API pública funcione
+  // Si isSuperAdmin, usamos adminId igualmente (el admin del tenant que está activo)
+  const ownerAdminId = adminId; // ← ya no null para nadie
 
   const client = await db.connect();
   try {
     await client.query("BEGIN");
 
     const discountRes = await client.query(
-      `INSERT INTO discounts (name, type, value, starts_at, ends_at, created_by, owner_admin_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [name, type, value, starts_at, ends_at, req.user.id, ownerAdminId]
+      `INSERT INTO discounts 
+         (name, type, value, starts_at, ends_at, code, description, created_by, owner_admin_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [
+        name, type, value, starts_at, ends_at,
+        code ? code.toUpperCase().trim() : null,  // ✅ guardar code
+        description || null,
+        req.user.id,
+        ownerAdminId,
+      ]
     );
 
     const discount = discountRes.rows[0];
@@ -66,7 +76,15 @@ exports.getAll = async (req, res) => {
 
   try {
     const result = await db.query(`
-      SELECT d.*,
+      SELECT 
+        d.*,
+        -- ✅ incluir estos campos que usa la API pública:
+        d.code,
+        d.description,
+        d.min_purchase_amount,
+        d.max_discount_amount,
+        d.usage_limit,
+        d.times_used,
         (SELECT json_agg(dt)
          FROM discount_targets dt
          WHERE dt.discount_id = d.id) AS targets
