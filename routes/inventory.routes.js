@@ -84,6 +84,17 @@ router.get('/ledger', requireAdmin, async (req, res) => {
   } catch (err) { send(res, err); }
 });
 
+// GET /api/inventory/valuation  — valorización total del inventario (v_inventory_valuation)
+router.get('/valuation', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM v_inventory_valuation WHERE owner_admin_id = $1`,
+      [req.adminId],
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) { send(res, err); }
+});
+
 // GET /api/inventory/alerts  — alertas no resueltas del tenant
 router.get('/alerts', requireAdmin, async (req, res) => {
   try {
@@ -172,6 +183,26 @@ router.post('/return', requireAdmin, async (req, res) => {
       ownerAdminId: req.adminId,
       userId:       req.user.id,
     });
+    res.json({ success: true, data: result });
+  } catch (err) { send(res, err); }
+});
+
+// POST /api/inventory/initial-stock
+// body: { productId, variantId?, quantity, purchasePrice?, reason }
+router.post('/initial-stock', requireAdmin, async (req, res) => {
+  try {
+    const { productId, variantId, quantity, purchasePrice, reason } = req.body;
+    if (!productId || !quantity) {
+      return res.status(400).json({ success: false, message: 'productId y quantity son requeridos' });
+    }
+    const result = await inv.registerInitialStock(
+      { productId:     Number(productId),
+        variantId:     variantId ? Number(variantId) : null,
+        quantity:      Number(quantity),
+        purchasePrice: purchasePrice != null ? Number(purchasePrice) : null,
+        reason },
+      { ownerAdminId: req.adminId, userId: req.user.id },
+    );
     res.json({ success: true, data: result });
   } catch (err) { send(res, err); }
 });
