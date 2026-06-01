@@ -617,7 +617,13 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [saleId, item.product_id, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId]
       );
-      await client.query("UPDATE products SET stock = stock - $1 WHERE id = $2", [item.quantity, item.product_id]);
+      await inv.applyStockMovement(
+        client,
+        { productId: item.product_id, variantId: null, quantity: item.quantity },
+        -1, 'sale_confirmed',
+        { ownerAdminId: adminId, userId: req.user?.id ?? 0,
+          referenceType: 'sale', referenceId: saleId }
+      );
     }
 
     await client.query("COMMIT");

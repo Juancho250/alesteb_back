@@ -1,7 +1,8 @@
 // controllers/providers.controller.js
 "use strict";
 
-const db = require("../config/db");
+const db     = require("../config/db");
+const invSvc = require("../services/inventory.service");
 const { emitDataUpdate } = require("../config/socket");
 
 // ─────────────────────────────────────────────
@@ -587,35 +588,14 @@ exports.receivePurchaseOrder = async (req, res) => {
         [qtyToReceive, item.id]
       );
 
-      // Incrementar stock del producto
-      const stockBefore = await client.query(
-        "SELECT stock FROM products WHERE id = $1 FOR UPDATE",
-        [item.product_id]
-      );
-      const qtyBefore = stockBefore.rows[0]?.stock ?? 0;
-      const qtyAfter  = qtyBefore + qtyToReceive;
-
-      await client.query(
-        "UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
-        [qtyToReceive, item.product_id]
-      );
-
-      // Registrar movimiento en stock_ledger
-      await client.query(
-        `INSERT INTO stock_ledger
-           (product_id, movement_type, qty_delta, qty_before, qty_after,
-            reference_id, reference_type, notes, created_by, owner_admin_id)
-         VALUES ($1, 'purchase_received', $2, $3, $4, $5, 'purchase_order', $6, $7, $8)`,
-        [
-          item.product_id,
-          qtyToReceive,
-          qtyBefore,
-          qtyAfter,
-          parseInt(orderId),
-          notes || `Recepción OC #${order.order_number}`,
-          req.user.id,
-          req.isSuperAdmin ? null : req.adminId,
-        ]
+      // Stock movement via inventory service (FOR UPDATE + ledger in one call)
+      await invSvc.applyStockMovement(
+        client,
+        { productId: item.product_id, variantId: null, quantity: qtyToReceive },
+        +1, 'purchase_received',
+        { ownerAdminId: order.owner_admin_id, userId: req.user.id,
+          referenceType: 'purchase_order', referenceId: parseInt(orderId),
+          notes: notes || `Recepción OC #${order.order_number}` }
       );
 
       totalReceived += qtyToReceive;

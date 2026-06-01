@@ -4,7 +4,8 @@ const { auth, requireRole } = require("../middleware/auth.middleware");
 const { adminScope }        = require("../middleware/adminScope");
 const { uploadProduct }     = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");
-const db   = require("../config/db");
+const db     = require("../config/db");
+const invSvc = require("../services/inventory.service");
 
 const router = express.Router();
 
@@ -53,15 +54,21 @@ router.patch(
       const params      = isSuperAdmin ? [req.params.id] : [req.params.id, adminId];
 
       const check = await db.query(
-        `SELECT id FROM products WHERE id = $1 ${ownerClause}`, params
+        `SELECT stock, owner_admin_id FROM products WHERE id = $1 ${ownerClause}`, params
       );
       if (!check.rowCount)
         return res.status(403).json({ success: false, message: "No autorizado o producto no encontrado" });
 
-      await db.query(
-        "UPDATE products SET stock = $1, updated_at = NOW() WHERE id = $2",
-        [stock, req.params.id]
-      );
+      const current = check.rows[0];
+      const delta   = stock - current.stock;
+
+      if (delta !== 0) {
+        await invSvc.manualAdjustment(
+          { productId: Number(req.params.id), variantId: null, delta,
+            reason: 'Ajuste manual de stock desde panel admin' },
+          { ownerAdminId: current.owner_admin_id, userId: req.user.id }
+        );
+      }
       res.json({ success: true, message: "Stock actualizado correctamente" });
     } catch (err) {
       console.error("UPDATE STOCK ERROR:", err);

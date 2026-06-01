@@ -1,7 +1,7 @@
 // controllers/finance.controller.js
 "use strict";
 const pool            = require("../config/db");
-const inv             = require("../services/inventory.service");
+const invSvc          = require("../services/inventory.service");
 const { emitDataUpdate } = require("../config/socket");
 const fmtNum = (v) => parseFloat(v) || 0;
 
@@ -230,26 +230,20 @@ exports.createInvoice = async (req, res) => {
           [product_id]
         );
 
-        if (prod?.has_variants && variant_id) {
-          const { rows: vCheck } = await client.query(
-            `SELECT id FROM product_variants WHERE id = $1 AND product_id = $2`,
-            [variant_id, product_id]
-          );
-          if (!vCheck.length) throw new Error(`Variante ${variant_id} inválida`);
-          await client.query(
-            `UPDATE product_variants SET stock = stock + $1, updated_at = NOW() WHERE id = $2`,
-            [quantity, variant_id]
-          );
-          await client.query(
-            `UPDATE products SET purchase_price = $1, updated_at = NOW() WHERE id = $2`,
-            [unit_price, product_id]
-          );
-        } else {
-          await client.query(
-            `UPDATE products SET purchase_price = $1, stock = stock + $2, updated_at = NOW() WHERE id = $3`,
-            [unit_price, quantity, product_id]
-          );
-        }
+        // Stock movement through inventory service (ledger + FOR UPDATE)
+        await invSvc.applyStockMovement(
+          client,
+          { productId: product_id, variantId: variant_id || null, quantity },
+          +1, 'purchase_received',
+          { ownerAdminId, userId: req.user?.id ?? 0,
+            referenceType: 'invoice', referenceId: inv.id,
+            notes: `Factura de compra` }
+        );
+        // purchase_price is a pricing update — separate from stock movement
+        await client.query(
+          `UPDATE products SET purchase_price = $1, updated_at = NOW() WHERE id = $2`,
+          [unit_price, product_id]
+        );
 
         if (prod && fmtNum(prod.purchase_price) !== fmtNum(unit_price)) {
           await client.query(
@@ -426,10 +420,35 @@ exports.createExpense = async (req, res) => {
     );
 
     if (expense_type === "purchase" && product_id && quantity > 0) {
+      // Pricing metadata update (not a stock movement)
       await pool.query(
-        `UPDATE products SET purchase_price = $1, stock = stock + $2, updated_at = NOW() WHERE id = $3`,
-        [amount / quantity, quantity, product_id]
+        `UPDATE products SET purchase_price = $1, updated_at = NOW() WHERE id = $2`,
+        [amount / quantity, product_id]
       );
+      // Stock movement in its own mini-transaction (expense has no surrounding tx)
+      const sc = await pool.connect();
+      try {
+        await sc.query('BEGIN');
+        const { rows: [pRow] } = await sc.query(
+          `SELECT owner_admin_id FROM products WHERE id = $1`, [product_id]
+        );
+        if (pRow) {
+          await invSvc.applyStockMovement(
+            sc,
+            { productId: product_id, variantId: null, quantity },
+            +1, 'purchase_received',
+            { ownerAdminId: pRow.owner_admin_id, userId: req.user?.id ?? 0,
+              referenceType: 'expense', referenceId: exp.id,
+              notes: description }
+          );
+        }
+        await sc.query('COMMIT');
+      } catch (se) {
+        await sc.query('ROLLBACK');
+        console.error('[finance] expense stock ledger failed:', se.message);
+      } finally {
+        sc.release();
+      }
     }
 
     emitDataUpdate("expenses", "created", { id: exp.id, expense_type }, req.adminId);
