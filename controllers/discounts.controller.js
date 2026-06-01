@@ -17,7 +17,7 @@ const assertDiscountOwnership = async (discountId, adminId, isSuperAdmin) => {
 // ➕ CREAR DESCUENTO
 // ============================================
 exports.create = async (req, res) => {
-  const { name, type, value, starts_at, ends_at, targets, code, description } = req.body;
+  const { name, type, value, starts_at, ends_at, targets, code, description, scope = 'all' } = req.body;
   const { isSuperAdmin, adminId } = req;
 
   // ✅ FIX: superadmin también necesita owner_admin_id para que la API pública funcione
@@ -30,15 +30,12 @@ exports.create = async (req, res) => {
 
     const discountRes = await client.query(
       `INSERT INTO discounts 
-         (name, type, value, starts_at, ends_at, code, description, created_by, owner_admin_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [
-        name, type, value, starts_at, ends_at,
-        code ? code.toUpperCase().trim() : null,  // ✅ guardar code
-        description || null,
-        req.user.id,
-        ownerAdminId,
-      ]
+        (name, type, value, starts_at, ends_at, code, description, created_by, owner_admin_id, scope)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [name, type, value, starts_at, ends_at,
+      code ? code.toUpperCase().trim() : null,
+      description || null,
+      req.user.id, ownerAdminId, scope]
     );
 
     const discount = discountRes.rows[0];
@@ -105,7 +102,7 @@ exports.getAll = async (req, res) => {
 // ============================================
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { name, type, value, starts_at, ends_at, targets } = req.body;
+  const { name, type, value, starts_at, ends_at, targets, scope } = req.body;
   const { isSuperAdmin, adminId } = req;
 
   const client = await db.connect();
@@ -122,9 +119,10 @@ exports.update = async (req, res) => {
 
     const updateRes = await client.query(
       `UPDATE discounts
-       SET name=$1, type=$2, value=$3, starts_at=$4, ends_at=$5, updated_at=NOW()
-       WHERE id=$6 RETURNING *`,
-      [name, type, value, starts_at, ends_at, id]
+      SET name=$1, type=$2, value=$3, starts_at=$4, ends_at=$5,
+          scope=COALESCE($6, scope), updated_at=NOW()
+      WHERE id=$7 RETURNING *`,
+      [name, type, value, starts_at, ends_at, scope || null, id]
     );
 
     await client.query("DELETE FROM discount_targets WHERE discount_id = $1", [id]);

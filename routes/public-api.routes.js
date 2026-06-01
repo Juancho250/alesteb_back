@@ -29,7 +29,6 @@ router.get("/ping", (req, res) => {
 });
 
 // POST /public-api/v1/analytics/pageview
-// No JWT required — fires and forgets on every page load.
 router.post("/analytics/pageview", analyticsCtrl.trackPageview);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,39 +40,28 @@ router.get("/profile", async (req, res) => {
 
     const result = await db.query(
       `SELECT
-         ap.business_name,
-         ap.tagline,
-         ap.description,
-         ap.logo_url,
-         ap.favicon_url,
-         ap.primary_color,
-         ap.secondary_color,
-         ap.accent_color,
-         ap.business_email,
-         ap.business_phone,
-         ap.website,
-         ap.address,
-         ap.city,
-         ap.department,
-         ap.country,
-         ap.currency,
-         ap.social_links
+         ap.business_name, ap.tagline, ap.description,
+         ap.logo_url, ap.favicon_url,
+         ap.primary_color, ap.secondary_color, ap.accent_color,
+         ap.business_email, ap.business_phone, ap.website,
+         ap.address, ap.city, ap.department, ap.country,
+         ap.currency, ap.social_links
        FROM admin_profiles ap
        WHERE ap.user_id = $1`,
       [adminId]
     );
 
-    return res.json({
-      success: true,
-      data:    result.rows[0] ?? null,
-    });
+    return res.json({ success: true, data: result.rows[0] ?? null });
   } catch (error) {
     console.error("[PUBLIC API] GET /profile", error);
     res.status(500).json({ success: false, message: "Error al obtener el perfil del negocio" });
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/products
+// Incluye LATERAL JOIN para precio final con descuentos de scope 'web' o 'all'
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/products", requireApiPermission("products:read"), async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
@@ -107,6 +95,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
       db.query(
         `SELECT
            p.id, p.name, p.sku, p.description,
+           p.sale_price,
            p.sale_price AS price,
            p.stock,
            p.has_variants,
@@ -141,14 +130,41 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
              JOIN attribute_types  at ON at.id = av.attribute_type_id
              WHERE pv.product_id = p.id AND pv.is_active = true AND pv.stock > 0),
              '[]'
-           ) AS variant_swatches
+           ) AS variant_swatches,
+           best_discount.type  AS discount_type,
+           best_discount.value AS discount_value,
+           COALESCE(best_discount.final_price, p.sale_price) AS final_price
          FROM products p
          LEFT JOIN categories c      ON c.id = p.category_id
          LEFT JOIN product_images pi ON pi.product_id = p.id
+         LEFT JOIN LATERAL (
+           SELECT d.type, d.value,
+             CASE
+               WHEN d.type = 'percentage'
+                 THEN ROUND((p.sale_price - (p.sale_price * (d.value / 100)))::numeric, 2)
+               WHEN d.type = 'fixed'
+                 THEN p.sale_price - d.value
+               ELSE p.sale_price
+             END AS final_price
+           FROM discount_targets dt
+           JOIN discounts d ON d.id = dt.discount_id
+           WHERE (
+             (dt.target_type = 'product'  AND dt.target_id = p.id::text)
+             OR
+             (dt.target_type = 'category' AND dt.target_id = p.category_id::text
+              AND p.category_id IS NOT NULL)
+           )
+             AND d.active = true
+             AND NOW() BETWEEN d.starts_at AND d.ends_at
+             AND (d.scope = 'web' OR d.scope = 'all')
+           ORDER BY final_price ASC
+           LIMIT 1
+         ) best_discount ON true
          ${where}
          GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
                   p.stock, p.min_stock, p.has_variants, c.name, c.slug,
-                  p.created_at, p.owner_admin_id
+                  p.created_at, p.owner_admin_id,
+                  best_discount.type, best_discount.value, best_discount.final_price
          ORDER BY ${orderBy}
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
@@ -182,8 +198,6 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/products/:id
-// CORRECCIÓN: se agrega subquery de variant_images para que el carrusel
-// de color funcione correctamente en el frontend (selectedVariant.images).
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/products/:id", requireApiPermission("products:read"), async (req, res) => {
   try {
@@ -249,12 +263,32 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
            FROM product_variants pv
            WHERE pv.product_id = p.id AND pv.is_active = true),
            '[]'
-         ) AS variants
+         ) AS variants,
+         d.name  AS discount_name,
+         d.type  AS discount_type,
+         d.value AS discount_value,
+         CASE
+           WHEN d.type = 'percentage'
+             THEN ROUND((p.sale_price - (p.sale_price * (d.value / 100)))::numeric, 2)
+           WHEN d.type = 'fixed' THEN p.sale_price - d.value
+           ELSE p.sale_price
+         END AS final_price
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN discount_targets dt ON (
+         (dt.target_type = 'product'  AND dt.target_id = p.id::text) OR
+         (dt.target_type = 'category' AND dt.target_id = p.category_id::text
+          AND p.category_id IS NOT NULL)
+       )
+       LEFT JOIN discounts d
+         ON dt.discount_id = d.id
+         AND d.active = true
+         AND NOW() BETWEEN d.starts_at AND d.ends_at
+         AND (d.scope = 'web' OR d.scope = 'all')
        WHERE p.id = $1
          AND p.is_active = true
-         AND p.owner_admin_id = $2`,
+         AND p.owner_admin_id = $2
+       LIMIT 1`,
       [req.params.id, adminId]
     );
 
@@ -348,7 +382,11 @@ router.get("/banners", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/discounts
+// Solo retorna descuentos con scope 'web' o 'all', activos y vigentes.
+// Incluye targets para que el frontend pueda aplicar descuentos por producto/categoría.
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/discounts", async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
@@ -356,18 +394,28 @@ router.get("/discounts", async (req, res) => {
 
     const result = await db.query(
       `SELECT
-         id, name, code, type, value,
-         min_purchase_amount, max_discount_amount,
-         starts_at, ends_at,
-         usage_limit, times_used,
-         description
-       FROM discounts
-       WHERE active = true
-         AND owner_admin_id = $1
-         AND starts_at <= $2
-         AND ends_at   >= $2
-         AND (usage_limit IS NULL OR times_used < usage_limit)
-       ORDER BY ends_at ASC`,
+         d.id, d.name, d.code, d.type, d.value, d.scope,
+         d.min_purchase_amount, d.max_discount_amount,
+         d.starts_at, d.ends_at,
+         d.usage_limit, d.times_used,
+         d.description,
+         COALESCE(
+           (SELECT json_agg(json_build_object(
+             'target_type', dt.target_type,
+             'target_id',   dt.target_id
+           ))
+           FROM discount_targets dt
+           WHERE dt.discount_id = d.id),
+           '[]'
+         ) AS targets
+       FROM discounts d
+       WHERE d.active = true
+         AND d.owner_admin_id = $1
+         AND d.starts_at <= $2
+         AND d.ends_at   >= $2
+         AND (d.scope = 'web' OR d.scope = 'all')
+         AND (d.usage_limit IS NULL OR d.times_used < d.usage_limit)
+       ORDER BY d.ends_at ASC`,
       [adminId, now]
     );
 
@@ -401,6 +449,7 @@ router.post("/discounts/validate", async (req, res) => {
          AND active = true
          AND starts_at <= $3
          AND ends_at   >= $3
+         AND (scope = 'web' OR scope = 'all')
          AND (usage_limit IS NULL OR times_used < usage_limit)`,
       [code.toUpperCase().trim(), adminId, now]
     );
@@ -565,6 +614,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
          FROM discounts
          WHERE code = $1 AND owner_admin_id = $2 AND active = true
            AND starts_at <= $3 AND ends_at >= $3
+           AND (scope = 'web' OR scope = 'all')
            AND (usage_limit IS NULL OR times_used < usage_limit)`,
         [coupon_code.toUpperCase().trim(), adminId, now]
       );
@@ -682,7 +732,6 @@ router.get("/customers", requireApiPermission("customers:read"), async (req, res
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
-    
 
     return res.json({ success: true, data: result.rows });
   } catch (error) {
@@ -692,53 +741,22 @@ router.get("/customers", requireApiPermission("customers:read"), async (req, res
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔐 AUTH DEL STOREFRONT
-// Todas las rutas ya están cubiertas por apiKeyAuth (global arriba).
-// Las rutas que requieren usuario logueado añaden el middleware `auth` (JWT).
+// AUTH DEL STOREFRONT
 // ─────────────────────────────────────────────────────────────────────────────
 
-// POST /public-api/v1/auth/register
-router.post(
-  "/auth/register",
-  checkRateLimit("ip", 10, 60 * 60 * 1000),
-  storefrontAuth.register
-);
-
-// POST /public-api/v1/auth/verify
+router.post("/auth/register", checkRateLimit("ip", 10, 60 * 60 * 1000), storefrontAuth.register);
 router.post("/auth/verify", storefrontAuth.verifyEmail);
-
-// POST /public-api/v1/auth/resend-code
-router.post(
-  "/auth/resend-code",
-  checkRateLimit("email", 3, 60 * 60 * 1000),
-  storefrontAuth.resendCode
-);
-
-// POST /public-api/v1/auth/login
-router.post(
-  "/auth/login",
-  checkRateLimit("email", 5, 15 * 60 * 1000),
-  storefrontAuth.login
-);
-
-// POST /public-api/v1/auth/refresh  (API Key + refresh token → nuevo access token)
+router.post("/auth/resend-code", checkRateLimit("email", 3, 60 * 60 * 1000), storefrontAuth.resendCode);
+router.post("/auth/login", checkRateLimit("email", 5, 15 * 60 * 1000), storefrontAuth.login);
 router.post("/auth/refresh", storefrontAuth.refreshToken);
-
-// POST /public-api/v1/auth/logout   (requiere JWT del cliente)
 router.post("/auth/logout", auth, storefrontAuth.logout);
-
-// GET  /public-api/v1/auth/profile  (requiere JWT del cliente)
 router.get("/auth/profile", auth, storefrontAuth.getProfile);
-
-// PUT  /public-api/v1/auth/profile  (requiere JWT del cliente)
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HISTORIAL Y ESTADÍSTICAS DEL USUARIO (requieren JWT de cliente)
-// Los handlers del panel filtran por owner_admin_id aquí para aislar al tenant.
+// HISTORIAL Y ESTADÍSTICAS DEL USUARIO
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GET /public-api/v1/sales/user/history
 router.get("/sales/user/history", auth, async (req, res) => {
   try {
     const { rows } = await db.query(
@@ -762,7 +780,6 @@ router.get("/sales/user/history", auth, async (req, res) => {
   }
 });
 
-// GET /public-api/v1/sales/user/stats
 router.get("/sales/user/stats", auth, async (req, res) => {
   try {
     const { rows } = await db.query(
@@ -790,45 +807,30 @@ router.get("/sales/user/stats", auth, async (req, res) => {
 // RESEÑAS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GET  /public-api/v1/products/:productId/reviews  (JWT opcional — enriquece con has_reviewed)
 router.get("/products/:productId/reviews", reviewsCtrl.getProductReviews);
-
-// GET  /public-api/v1/reviews/my/:productId  (requiere JWT de cliente)
 router.get("/reviews/my/:productId", auth, reviewsCtrl.getUserReviewForProduct);
-
-// POST /public-api/v1/reviews  (requiere JWT de cliente)
 router.post("/reviews", auth, reviewsCtrl.createReview);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UPLOAD DE IMÁGENES (para reseñas u otros usos del storefront)
+// UPLOAD
 // ─────────────────────────────────────────────────────────────────────────────
+
 const _uploadStorefront = createUpload("storefront", 5);
 
-// POST /public-api/v1/upload
 router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: "No se recibió ningún archivo", code: "NO_FILE" });
   }
   res.json({
     success: true,
-    data: {
-      url:       req.file.path,
-      public_id: req.file.filename,
-    },
+    data: { url: req.file.path, public_id: req.file.filename },
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WOMPI — checkout desde el storefront (requieren JWT de cliente)
-// El controller ya valida que el cliente sea dueño de la venta.
+// RESERVAS DE STOCK
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESERVAS DE STOCK — checkout del storefront
-// ─────────────────────────────────────────────────────────────────────────────
-
-// POST /public-api/v1/inventory/reservations
-// body: { items: [{productId, variantId?, quantity}], sessionId?, ttlMinutes? }
 router.post("/inventory/reservations", async (req, res) => {
   try {
     const { items, sessionId, ttlMinutes } = req.body;
@@ -837,8 +839,8 @@ router.post("/inventory/reservations", async (req, res) => {
     }
     const result = await inv.createReservation({
       items,
-      sessionId: sessionId ?? null,
-      userId:    req.user?.id ?? null,
+      sessionId:    sessionId ?? null,
+      userId:       req.user?.id ?? null,
       ownerAdminId: req.apiKey.adminId,
       ttlMinutes,
     });
@@ -849,7 +851,6 @@ router.post("/inventory/reservations", async (req, res) => {
   }
 });
 
-// DELETE /public-api/v1/inventory/reservations/:id
 router.delete("/inventory/reservations/:id", async (req, res) => {
   try {
     const { rows: [r] } = await db.query(
@@ -871,10 +872,11 @@ router.delete("/inventory/reservations/:id", async (req, res) => {
   }
 });
 
-// GET /public-api/v1/wompi/session/:sale_id
-router.get("/wompi/session/:sale_id", auth, wompiCtrl.getSession);
+// ─────────────────────────────────────────────────────────────────────────────
+// WOMPI
+// ─────────────────────────────────────────────────────────────────────────────
 
-// GET /public-api/v1/wompi/verify/:reference
+router.get("/wompi/session/:sale_id", auth, wompiCtrl.getSession);
 router.get("/wompi/verify/:reference", auth, wompiCtrl.verifyByReference);
 
 module.exports = router;

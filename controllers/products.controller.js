@@ -32,7 +32,9 @@ const fetchFullProduct = async (id) => {
       JOIN discounts d ON d.id = dt.discount_id
       WHERE ((dt.target_type = 'product'  AND dt.target_id = p.id::text)
           OR (dt.target_type = 'category' AND dt.target_id = p.category_id::text))
-        AND d.active = true AND NOW() BETWEEN d.starts_at AND d.ends_at
+        AND d.active = true
+        AND NOW() BETWEEN d.starts_at AND d.ends_at
+        AND (d.scope = 'pos' OR d.scope = 'all')
       ORDER BY final_price ASC LIMIT 1
     ) best_discount ON true
     WHERE p.id = $1
@@ -150,6 +152,7 @@ exports.getAll = async (req, res) => {
         )
           AND d.active = true
           AND NOW() BETWEEN d.starts_at AND d.ends_at
+          AND (d.scope = 'pos' OR d.scope = 'all')
         ORDER BY final_price ASC
         LIMIT 1
       ) best_discount ON true
@@ -247,6 +250,7 @@ exports.getById = async (req, res) => {
         ON dt.discount_id = d.id
         AND d.active = true
         AND NOW() BETWEEN d.starts_at AND d.ends_at
+        AND (d.scope = 'pos' OR d.scope = 'all')
       WHERE p.id = $1 ${ownerClause}
       LIMIT 1
     `, queryParams);
@@ -374,7 +378,6 @@ exports.getLedger = async (req, res) => {
         sl.created_at,
         sl.variant_id,
         u.name AS created_by_name,
-        -- Atributos de la variante (si aplica)
         (
           SELECT json_agg(
             json_build_object(
@@ -396,7 +399,6 @@ exports.getLedger = async (req, res) => {
       LIMIT $${idx++} OFFSET $${idx++}
     `, params);
 
-    // Total para paginación
     const countParams = [id];
     let ci = 2;
     let cvf = "";
