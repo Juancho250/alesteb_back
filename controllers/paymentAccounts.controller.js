@@ -19,7 +19,8 @@ exports.getAccount = async (req, res) => {
       `SELECT id, provider, environment, status, public_key,
               last_verified_at, is_active, created_at, updated_at
        FROM store_payment_accounts
-       WHERE admin_id = $1 AND is_active = true
+       WHERE admin_id = $1
+       ORDER BY is_active DESC, updated_at DESC
        LIMIT 1`,
       [adminId]
     );
@@ -165,6 +166,153 @@ exports.verify = async (req, res) => {
   } catch (err) {
     console.error("[paymentAccounts] verify:", err.message);
     return res.status(500).json({ success: false, message: "Error al verificar credenciales con Wompi" });
+  }
+};
+
+// ── POST /api/payment-accounts/:id/verify ─────────────────────────────────
+// Same logic as /verify but the frontend sends the account id in the path.
+// Validates ownership before running the credential check.
+exports.verifyById = async (req, res) => {
+  const adminId = req.user.owner_admin_id ?? req.user.id;
+  const { id }  = req.params;
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id, provider, environment,
+              private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted
+       FROM store_payment_accounts
+       WHERE id = $1 AND admin_id = $2 AND is_active = true`,
+      [id, adminId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Cuenta de pago no encontrada. Guárdala primero.",
+      });
+    }
+
+    const acct = rows[0];
+    const { private_key } = decryptCredentials(acct);
+
+    const ok     = await verifyWompiCredentials(private_key, acct.environment);
+    const status = ok ? "connected" : "error";
+    const now    = new Date();
+
+    await db.query(
+      `UPDATE store_payment_accounts
+       SET status = $1, last_verified_at = $2, updated_at = $2
+       WHERE id = $3`,
+      [status, now, acct.id]
+    );
+
+    return res.json({
+      success: true,
+      message: ok
+        ? "Credenciales verificadas correctamente. Tu cuenta está conectada."
+        : "Las credenciales no son válidas en Wompi. Revísalas y vuelve a intentarlo.",
+      data: { status, last_verified_at: now },
+    });
+  } catch (err) {
+    console.error("[paymentAccounts] verifyById:", err.message);
+    return res.status(500).json({ success: false, message: "Error al verificar credenciales con Wompi" });
+  }
+};
+
+// ── PATCH /api/payment-accounts/:id/toggle ────────────────────────────────
+// Alternates is_active for the payment account. Status resets to 'pending' on re-activation
+// so the admin must re-verify credentials before payments go live again.
+exports.toggle = async (req, res) => {
+  const adminId = req.user.owner_admin_id ?? req.user.id;
+  const { id }  = req.params;
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id, is_active, status FROM store_payment_accounts
+       WHERE id = $1 AND admin_id = $2`,
+      [id, adminId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Cuenta de pago no encontrada" });
+    }
+
+    const current     = rows[0].is_active;
+    const nextActive  = !current;
+    // Re-activation resets to 'pending' so admin must re-verify before payments resume
+    const nextStatus  = nextActive ? "pending" : rows[0].status ?? "pending";
+
+    const { rows: updated } = await db.query(
+      `UPDATE store_payment_accounts
+       SET is_active = $1, status = $2, updated_at = now()
+       WHERE id = $3
+       RETURNING id, is_active, status`,
+      [nextActive, nextStatus, id]
+    );
+
+    const msg = nextActive ? "Cuenta de pagos activada" : "Cuenta de pagos desactivada";
+    return res.json({ success: true, message: msg, data: updated[0] });
+  } catch (err) {
+    console.error("[paymentAccounts] toggle:", err.message);
+    return res.status(500).json({ success: false, message: "Error al cambiar el estado de la cuenta" });
+  }
+};
+
+// ── PUT /api/payment-accounts/:id ─────────────────────────────────────────
+// Update credentials on an existing account. Secrets are optional — omit to keep
+// existing encrypted values. Always resets status to 'pending' until re-verified.
+exports.updateById = async (req, res) => {
+  const adminId = req.user.owner_admin_id ?? req.user.id;
+  const { id }  = req.params;
+  const { environment, public_key, private_key, events_secret, integrity_secret } = req.body;
+
+  if (!public_key?.trim()) {
+    return res.status(400).json({ success: false, message: "La llave pública es requerida" });
+  }
+
+  if (environment && !ALLOWED_ENVIRONMENTS.includes(environment)) {
+    return res.status(400).json({ success: false, message: `Ambiente inválido. Use: ${ALLOWED_ENVIRONMENTS.join(", ")}` });
+  }
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id FROM store_payment_accounts WHERE id = $1 AND admin_id = $2`,
+      [id, adminId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Cuenta de pago no encontrada" });
+    }
+
+    // Build the SET clause dynamically — only update secrets that were provided
+    const sets   = [
+      "status = 'pending'",
+      "public_key = $1",
+      "updated_at = now()",
+    ];
+    const params = [public_key.trim()];
+    let   idx    = 2;
+
+    if (environment)      { sets.push(`environment = $${idx++}`);               params.push(environment); }
+    if (private_key?.trim())      { sets.push(`private_key_encrypted = $${idx++}`);      params.push(encrypt(private_key.trim())); }
+    if (events_secret?.trim())    { sets.push(`events_secret_encrypted = $${idx++}`);    params.push(encrypt(events_secret.trim())); }
+    if (integrity_secret?.trim()) { sets.push(`integrity_secret_encrypted = $${idx++}`); params.push(encrypt(integrity_secret.trim())); }
+
+    params.push(id);
+    const { rows: result } = await db.query(
+      `UPDATE store_payment_accounts SET ${sets.join(", ")}
+       WHERE id = $${idx}
+       RETURNING id, provider, environment, status, public_key, updated_at`,
+      params
+    );
+
+    return res.json({
+      success: true,
+      message: "Credenciales actualizadas. Verifica la conexión con Wompi para re-activar los pagos.",
+      data: result[0],
+    });
+  } catch (err) {
+    console.error("[paymentAccounts] updateById:", err.message);
+    return res.status(500).json({ success: false, message: "Error al actualizar la cuenta de pago" });
   }
 };
 

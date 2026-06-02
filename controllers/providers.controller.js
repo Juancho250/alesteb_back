@@ -571,6 +571,7 @@ exports.receivePurchaseOrder = async (req, res) => {
     }
 
     let totalReceived = 0;
+    const affectedProductIds = [];
 
     // 3. Por cada ítem, determinar cantidad a recibir y actualizar stock
     for (const item of itemsRes.rows) {
@@ -598,6 +599,16 @@ exports.receivePurchaseOrder = async (req, res) => {
           notes: notes || `Recepción OC #${order.order_number}` }
       );
 
+      // Sync purchase_price if unit_cost changed
+      if (item.unit_cost != null) {
+        await client.query(
+          `UPDATE products SET purchase_price = $1, updated_at = NOW()
+           WHERE id = $2 AND purchase_price IS DISTINCT FROM $1::numeric`,
+          [item.unit_cost, item.product_id],
+        );
+      }
+
+      affectedProductIds.push(item.product_id);
       totalReceived += qtyToReceive;
     }
 
@@ -621,6 +632,41 @@ exports.receivePurchaseOrder = async (req, res) => {
       await client.query(
         "UPDATE providers SET balance = balance + $1, updated_at = NOW() WHERE id = $2",
         [order.total_cost, order.provider_id]
+      );
+    }
+
+    // 6. Registrar gasto contable (idempotente por purchase_order_id)
+    const dupCheck = await client.query(
+      `SELECT id FROM expenses WHERE purchase_order_id = $1 LIMIT 1`, [parseInt(orderId)]
+    );
+    if (!dupCheck.rowCount) {
+      await client.query(
+        `INSERT INTO expenses
+           (expense_type, description, amount, payment_method,
+            provider_id, purchase_order_id, notes, expense_date, created_by, owner_admin_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)`,
+        ['purchase', `Recepción OC #${order.order_number}`, order.total_cost, 'credit',
+         order.provider_id, parseInt(orderId),
+         notes || `OC #${order.order_number} recibida`,
+         req.user.id, order.owner_admin_id],
+      );
+    }
+
+    // 7. Resolver alertas de stock bajo para los productos afectados
+    const uniqueProductIds = [...new Set(affectedProductIds)];
+    if (uniqueProductIds.length) {
+      await client.query(
+        `UPDATE stock_alerts sa
+         SET resolved = true, resolved_at = NOW()
+         FROM v_stock_disponible v
+         WHERE sa.product_id     = v.product_id
+           AND sa.variant_id     IS NOT DISTINCT FROM v.variant_id
+           AND sa.owner_admin_id = $1
+           AND sa.resolved       = false
+           AND sa.alert_type     IN ('low_stock', 'out_of_stock')
+           AND sa.product_id     = ANY($2)
+           AND v.disponible      > COALESCE(v.min_stock, 0)`,
+        [order.owner_admin_id, uniqueProductIds],
       );
     }
 

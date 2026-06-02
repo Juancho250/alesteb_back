@@ -271,7 +271,8 @@ exports.createOrder = async (req, res) => {
       const prodParams  = req.isSuperAdmin ? [item.product_id] : [item.product_id, req.adminId];
 
       const { rows: prodRows } = await client.query(
-        `SELECT id, name, sku, sale_price, stock, purchase_price, has_variants
+        `SELECT id, name, sku, sale_price, stock, stock_reserved, stock_safety,
+                purchase_price, has_variants
          FROM products p WHERE p.id = $1 AND p.is_active = true ${ownerCheck}`,
         prodParams
       );
@@ -281,12 +282,16 @@ exports.createOrder = async (req, res) => {
 
       let variantId  = null;
       let unitCost   = Number(product.purchase_price ?? 0);
-      let availStock = Number(product.stock);
       let unitPrice  = item.unit_price != null ? Number(item.unit_price) : Number(product.sale_price);
+      let availStock = Math.max(
+        0,
+        Number(product.stock) - Number(product.stock_reserved ?? 0) - Number(product.stock_safety ?? 0)
+      );
 
       if (item.variant_id) {
         const { rows: varRows } = await client.query(
-          `SELECT id, sku, sale_price, stock FROM product_variants
+          `SELECT id, sku, sale_price, stock, stock_reserved, stock_safety
+           FROM product_variants
            WHERE id = $1 AND product_id = $2 AND is_active = true`,
           [item.variant_id, item.product_id]
         );
@@ -294,7 +299,10 @@ exports.createOrder = async (req, res) => {
           throw new Error(`Variante ${item.variant_id} no encontrada o inactiva`);
         const v = varRows[0];
         variantId  = v.id;
-        availStock = Number(v.stock);
+        availStock = Math.max(
+          0,
+          Number(v.stock) - Number(v.stock_reserved ?? 0) - Number(v.stock_safety ?? 0)
+        );
         if (item.unit_price == null && v.sale_price != null) unitPrice = Number(v.sale_price);
       } else if (product.has_variants) {
         throw new Error(`"${product.name}" tiene variantes — selecciona una`);

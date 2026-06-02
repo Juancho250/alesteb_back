@@ -164,7 +164,7 @@ router.post('/damage', requireAdmin, async (req, res) => {
     }
     const result = await inv.recordDamage(
       { productId: Number(productId), variantId: variantId ? Number(variantId) : null,
-        quantity: Number(quantity), reason },
+        qty: Number(quantity), reason },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });
