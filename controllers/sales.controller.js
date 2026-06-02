@@ -163,15 +163,17 @@ exports.getUserOrderHistory = async (req, res) => {
         return res.status(403).json({ success: false, message: "No autorizado para ver pedidos de este usuario" });
     }
 
+    const histParams = [userId];
+    const tenantFilter = req.isSuperAdmin ? '' : `AND s.owner_admin_id = $${histParams.push(req.adminId)}`;
     const { rows } = await db.query(
       `SELECT s.id, s.sale_number AS order_code, s.sale_date AS created_at,
               s.total, s.amount_paid, s.payment_status, s.payment_method,
               s.sale_type, s.subtotal, s.tax_amount, s.discount_amount,
               s.credit_due_date, s.shipping_address, s.shipping_city, s.shipping_notes
        FROM sales s
-       WHERE s.customer_id = $1
+       WHERE s.customer_id = $1 ${tenantFilter}
        ORDER BY s.sale_date DESC`,
-      [userId]
+      histParams
     );
     res.json({ success: true, data: rows });
   } catch (err) {

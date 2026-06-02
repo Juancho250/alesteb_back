@@ -7,28 +7,58 @@ const db   = require('../config/db');
 const inv  = require('./inventory.service');
 
 // ─── Job 1: liberar reservas vencidas ────────────────────────────────────────
+const CLEANUP_BATCH       = 100;
+const CLEANUP_TIMEOUT_MS  = 30_000;
+
 function startReservationCleanupJob() {
   cron.schedule('* * * * *', async () => {
-    let released = 0;
+    let released    = 0;
+    let batchCount  = 0;
+    const start     = Date.now();
     try {
-      const { rows: expired } = await db.query(
-        `SELECT id, owner_admin_id
-         FROM stock_reservations
-         WHERE status = 'active' AND expires_at < NOW()
-         LIMIT 100`,
-      );
-
-      for (const r of expired) {
-        try {
-          await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: 0 }, 'expired');
-          released++;
-        } catch (err) {
-          console.error('[inventory-cleanup] error liberando reserva', r.id, err.message);
+      do {
+        if (Date.now() - start > CLEANUP_TIMEOUT_MS) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(), event: 'reservation_cleanup_timeout',
+            released, durationMs: Date.now() - start,
+          }));
+          break;
         }
+
+        const { rows: expired } = await db.query(
+          `SELECT id, owner_admin_id
+           FROM stock_reservations
+           WHERE status = 'active' AND expires_at < NOW()
+           LIMIT $1`,
+          [CLEANUP_BATCH],
+        );
+
+        batchCount = expired.length;
+        if (!batchCount) break;
+
+        for (const r of expired) {
+          try {
+            await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: 0 }, 'expired');
+            released++;
+          } catch (err) {
+            console.log(JSON.stringify({
+              ts: new Date().toISOString(), event: 'reservation_release_error',
+              adminId: r.owner_admin_id, reservationId: r.id, error: err.message,
+            }));
+          }
+        }
+      } while (batchCount === CLEANUP_BATCH);
+
+      if (released > 0) {
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(), event: 'reservation_cleanup_done',
+          released, durationMs: Date.now() - start,
+        }));
       }
-      if (released > 0) console.log(`[inventory-cleanup] liberadas ${released} reservas`);
     } catch (err) {
-      console.error('[inventory-cleanup] error en job:', err.message);
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), event: 'reservation_cleanup_error', error: err.message,
+      }));
     }
   });
 }
@@ -69,12 +99,21 @@ function startLowStockAlertJob() {
           );
           created++;
         } catch (err) {
-          console.error('[inventory-alerts] error creando alerta producto', row.product_id, err.message);
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(), event: 'stock_alert_create_error',
+            productId: row.product_id, adminId: row.owner_admin_id, error: err.message,
+          }));
         }
       }
-      if (created > 0) console.log(`[inventory-alerts] creadas ${created} alertas`);
+      if (created > 0) {
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(), event: 'stock_alerts_created', count: created,
+        }));
+      }
     } catch (err) {
-      console.error('[inventory-alerts] error en job:', err.message);
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), event: 'stock_alert_job_error', error: err.message,
+      }));
     }
   });
 }

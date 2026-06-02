@@ -575,9 +575,10 @@ exports.receivePurchaseOrder = async (req, res) => {
 
     // 3. Por cada ítem, determinar cantidad a recibir y actualizar stock
     for (const item of itemsRes.rows) {
+      const maxPending = Math.max(0, item.quantity - (item.received_quantity || 0));
       const qtyToReceive = received_quantities
-        ? Math.max(0, parseInt(received_quantities[item.id] ?? 0))
-        : item.quantity - (item.received_quantity || 0); // "recibir todo"
+        ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
+        : maxPending; // "recibir todo"
 
       if (qtyToReceive <= 0) continue;
 

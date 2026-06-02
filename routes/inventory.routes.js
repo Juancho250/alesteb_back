@@ -46,13 +46,18 @@ router.get('/availability', async (req, res) => {
     const variantId = req.query.variantId ? Number(req.query.variantId) : null;
     if (!productId) return res.status(400).json({ success: false, message: 'productId requerido' });
 
-    const condition = variantId
-      ? 'WHERE product_id = $1 AND variant_id = $2'
-      : 'WHERE product_id = $1 AND variant_id IS NULL';
+    const conditions = variantId
+      ? ['product_id = $1', 'variant_id = $2']
+      : ['product_id = $1', 'variant_id IS NULL'];
     const params = variantId ? [productId, variantId] : [productId];
 
+    if (!req.isSuperAdmin) {
+      conditions.push(`owner_admin_id = $${params.length + 1}`);
+      params.push(req.adminId);
+    }
+
     const { rows } = await db.query(
-      `SELECT * FROM v_stock_disponible ${condition} LIMIT 1`,
+      `SELECT * FROM v_stock_disponible WHERE ${conditions.join(' AND ')} LIMIT 1`,
       params,
     );
     res.json({ success: true, data: rows[0] ?? null });
@@ -145,9 +150,13 @@ router.post('/adjustment', requireAdmin, async (req, res) => {
     if (!productId || delta == null) {
       return res.status(400).json({ success: false, message: 'productId y delta son requeridos' });
     }
+    const parsedDelta = Number(delta);
+    if (!Number.isFinite(parsedDelta) || !Number.isInteger(parsedDelta)) {
+      return res.status(400).json({ success: false, message: 'delta debe ser un número entero válido', code: 'VALIDATION' });
+    }
     const result = await inv.manualAdjustment(
       { productId: Number(productId), variantId: variantId ? Number(variantId) : null,
-        delta: Number(delta), reason },
+        delta: parsedDelta, reason },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });
@@ -162,9 +171,13 @@ router.post('/damage', requireAdmin, async (req, res) => {
     if (!productId || !quantity) {
       return res.status(400).json({ success: false, message: 'productId y quantity son requeridos' });
     }
+    const parsedQty = Number(quantity);
+    if (!Number.isFinite(parsedQty) || !Number.isInteger(parsedQty) || parsedQty <= 0) {
+      return res.status(400).json({ success: false, message: 'quantity debe ser un entero positivo válido', code: 'VALIDATION' });
+    }
     const result = await inv.recordDamage(
       { productId: Number(productId), variantId: variantId ? Number(variantId) : null,
-        qty: Number(quantity), reason },
+        qty: parsedQty, reason },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });

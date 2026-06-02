@@ -56,7 +56,7 @@ async function _applyStockDelta(client, { productId, variantId, quantity }, delt
       [variantId],
     );
     if (!rows.length) throw _err(`Variante ${variantId} no encontrada`, 'NOT_FOUND');
-    if (rows[0].owner_admin_id !== ctx.ownerAdminId) throw _err('Variante de otro tenant', 'FORBIDDEN');
+    if (ctx.ownerAdminId && rows[0].owner_admin_id !== ctx.ownerAdminId) throw _err('Variante de otro tenant', 'FORBIDDEN');
 
     const qtyBefore = rows[0].stock;
     const qtyAfter  = qtyBefore + delta;
@@ -84,7 +84,7 @@ async function _applyStockDelta(client, { productId, variantId, quantity }, delt
     [productId],
   );
   if (!rows.length) throw _err(`Producto ${productId} no encontrado`, 'NOT_FOUND');
-  if (rows[0].owner_admin_id !== ctx.ownerAdminId) throw _err('Producto de otro tenant', 'FORBIDDEN');
+  if (ctx.ownerAdminId && rows[0].owner_admin_id !== ctx.ownerAdminId) throw _err('Producto de otro tenant', 'FORBIDDEN');
 
   const qtyBefore = rows[0].stock;
   const qtyAfter  = qtyBefore + delta;
@@ -115,7 +115,7 @@ async function _adjustReserved(client, { productId, variantId, quantity }, delta
     `SELECT stock_reserved, stock, owner_admin_id FROM products WHERE id = $1 FOR UPDATE`, [productId],
   );
   if (!rows.length) throw _err(`Producto ${productId} no encontrado`, 'NOT_FOUND');
-  if (rows[0].owner_admin_id !== ownerAdminId) throw _err('Producto de otro tenant', 'FORBIDDEN');
+  if (ownerAdminId && rows[0].owner_admin_id !== ownerAdminId) throw _err('Producto de otro tenant', 'FORBIDDEN');
   const next = rows[0].stock_reserved + delta;
   if (next < 0)            throw _err('stock_reserved no puede ser negativo', 'INVARIANT');
   if (next > rows[0].stock) throw _err('stock_reserved excede stock físico', 'INVARIANT');
@@ -666,21 +666,28 @@ async function recordDamage({ productId, variantId, qty, reason }, ctx) {
       { ...ctx, referenceType: 'damage', notes: reason },
     );
 
-    // Accounting: register loss as an expense
+    // Accounting: register loss as an expense (always, even if cost price is zero)
     const purchasePrice = Number(prod?.purchase_price ?? 0);
-    if (purchasePrice > 0) {
-      await _createExpense(client, {
-        expenseType:  'other',
-        description:  `Merma/daño: ${prod?.name ?? `Producto #${productId}`} — ${reason}`,
-        amount:       qty * purchasePrice,
-        paymentMethod:'cash',
-        productId,
-        quantity:     qty,
-        notes:        reason,
-        createdBy:    ctx.userId,
-        ownerAdminId: ctx.ownerAdminId,
-      });
+    if (purchasePrice === 0) {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), event: 'damage_no_cost_price',
+        productId, ownerAdminId: ctx.ownerAdminId, qty,
+        warning: 'expense registrado con amount=0 porque purchase_price no está configurado',
+      }));
     }
+    await _createExpense(client, {
+      expenseType:  'other',
+      description:  `Merma/daño: ${prod?.name ?? `Producto #${productId}`} — ${reason}`,
+      amount:       qty * purchasePrice,
+      paymentMethod:'cash',
+      productId,
+      quantity:     qty,
+      notes:        purchasePrice > 0
+        ? reason
+        : `${reason} — ADVERTENCIA: precio de costo no configurado al momento de la merma`,
+      createdBy:    ctx.userId,
+      ownerAdminId: ctx.ownerAdminId,
+    });
 
     await client.query('COMMIT');
     return { ok: true, ...result };

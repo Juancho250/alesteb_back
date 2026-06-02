@@ -236,9 +236,16 @@ const requireApiPermission = (permission) => (req, res, next) => {
 // ============================================
 const _rateLimitStore = {};
 
-const checkRateLimit = (identifier, maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
+const checkRateLimit = (identifierOrFn, maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
   return (req, res, next) => {
-    const key = identifier === "ip" ? req.ip : (req.body?.email || req.ip);
+    let key;
+    if (typeof identifierOrFn === 'function') {
+      key = identifierOrFn(req) || req.ip;
+    } else if (identifierOrFn === 'ip') {
+      key = req.ip;
+    } else {
+      key = req.body?.email || req.ip;
+    }
     if (!key) return next();
 
     const now    = Date.now();

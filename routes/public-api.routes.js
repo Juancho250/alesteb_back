@@ -549,6 +549,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
     const adminId = req.apiKey.adminId;
     const {
       items,
+      session_id:     sessionId,
       customer_phone,
       shipping_address,
       shipping_city,
@@ -573,7 +574,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       }
 
       const productRes = await client.query(
-        `SELECT id, name, sale_price, stock, purchase_price
+        `SELECT id, name, sale_price, stock, stock_reserved, stock_safety, purchase_price, has_variants
          FROM products
          WHERE id = $1 AND is_active = true AND owner_admin_id = $2`,
         [item.product_id, adminId]
@@ -585,22 +586,51 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       }
 
       const product = productRes.rows[0];
+      let variantId = null;
+      let unitPrice = Number(product.sale_price);
+      const unitCost = Number(product.purchase_price ?? 0);
 
-      if (product.stock < item.quantity) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`, code: "INSUFFICIENT_STOCK" });
+      if (product.has_variants) {
+        if (!item.variant_id) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ success: false, message: `"${product.name}" tiene variantes — especifica variant_id`, code: "VARIANT_REQUIRED" });
+        }
+        const varRes = await client.query(
+          `SELECT id, sale_price, stock, stock_reserved, stock_safety
+           FROM product_variants WHERE id = $1 AND product_id = $2 AND is_active = true`,
+          [item.variant_id, item.product_id]
+        );
+        if (!varRes.rowCount) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({ success: false, message: `Variante ${item.variant_id} no encontrada o inactiva`, code: "VARIANT_NOT_FOUND" });
+        }
+        const variant = varRes.rows[0];
+        variantId = variant.id;
+        if (variant.sale_price != null) unitPrice = Number(variant.sale_price);
+        const disponible = Math.max(0, variant.stock - variant.stock_reserved - (variant.stock_safety ?? 0));
+        if (disponible < item.quantity) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
+        }
+      } else {
+        const disponible = Math.max(0, product.stock - product.stock_reserved - (product.stock_safety ?? 0));
+        if (disponible < item.quantity) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
+        }
       }
 
-      const itemSubtotal = product.sale_price * item.quantity;
+      const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
       saleItems.push({
         product_id:   product.id,
+        variant_id:   variantId,
         quantity:     item.quantity,
-        unit_price:   product.sale_price,
-        unit_cost:    product.purchase_price,
+        unit_price:   unitPrice,
+        unit_cost:    unitCost,
         subtotal:     itemSubtotal,
-        profit_unit:  product.sale_price - product.purchase_price,
-        total_profit: (product.sale_price - product.purchase_price) * item.quantity,
+        profit_unit:  unitPrice - unitCost,
+        total_profit: (unitPrice - unitCost) * item.quantity,
       });
     }
 
@@ -645,6 +675,34 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
     const total      = Math.max(0, subtotal - discountAmount);
     const saleNumber = `WEB-${adminId}-${Date.now()}`;
 
+    // MEDIO-1: liberar reservas activas de la sesión dentro de la misma tx
+    // para que stock_reserved quede en sync antes del descuento de stock físico.
+    if (sessionId) {
+      const { rows: releasedRes } = await client.query(
+        `DELETE FROM stock_reservations
+         WHERE session_id = $1 AND status = 'active' AND owner_admin_id = $2
+         RETURNING product_id, variant_id, quantity`,
+        [sessionId, adminId]
+      );
+      for (const r of releasedRes) {
+        if (r.variant_id) {
+          await client.query(
+            `UPDATE product_variants
+             SET stock_reserved = GREATEST(0, stock_reserved - $1)
+             WHERE id = $2`,
+            [r.quantity, r.variant_id]
+          );
+        } else {
+          await client.query(
+            `UPDATE products
+             SET stock_reserved = GREATEST(0, stock_reserved - $1)
+             WHERE id = $2`,
+            [r.quantity, r.product_id]
+          );
+        }
+      }
+    }
+
     const saleRes = await client.query(
       `INSERT INTO sales (
          sale_number, subtotal, discount_amount, total,
@@ -663,13 +721,13 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
 
     for (const item of saleItems) {
       await client.query(
-        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, unit_cost, subtotal, profit_per_unit, total_profit, discount_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [saleId, item.product_id, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId]
+        `INSERT INTO sale_items (sale_id, product_id, variant_id, quantity, unit_price, unit_cost, subtotal, profit_per_unit, total_profit, discount_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [saleId, item.product_id, item.variant_id ?? null, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId]
       );
       await inv.applyStockMovement(
         client,
-        { productId: item.product_id, variantId: null, quantity: item.quantity },
+        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
         -1, 'sale_confirmed',
         { ownerAdminId: adminId, userId: req.user?.id ?? 0,
           referenceType: 'sale', referenceId: saleId }
@@ -831,7 +889,9 @@ router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
 // RESERVAS DE STOCK
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.post("/inventory/reservations", async (req, res) => {
+router.post("/inventory/reservations",
+  checkRateLimit((req) => `rl:rsv:${req.apiKey?.id ?? req.ip}`, 10, 60_000),
+  async (req, res) => {
   try {
     const { items, sessionId, ttlMinutes } = req.body;
     if (!Array.isArray(items) || !items.length) {
