@@ -145,17 +145,23 @@ function wompiMapStatus(wompiStatus) {
 
 /**
  * Verify Wompi credentials by calling the merchant endpoint.
- * Returns true only when the API accepts the private key.
+ * publicKey goes in the URL path; privateKey goes only in the Authorization header.
+ * Returns true only when the API responds 200 with a valid merchant id.
  */
-async function verifyWompiCredentials(privateKey, environment) {
+async function verifyWompiCredentials(publicKey, privateKey, environment) {
   try {
     const { status, body } = await wompiGet(
-      `/merchants/${encodeURIComponent(privateKey)}`,
+      `/merchants/${encodeURIComponent(publicKey)}`,
       environment,
       privateKey
     );
-    return status === 200 && !!body?.data?.id;
-  } catch {
+    const ok = status === 200 && !!body?.data?.id;
+    if (!ok) {
+      console.warn("[payment.service] verifyWompiCredentials: status=%d body=%j", status, body);
+    }
+    return ok;
+  } catch (err) {
+    console.error("[payment.service] verifyWompiCredentials error:", err.message);
     return false;
   }
 }

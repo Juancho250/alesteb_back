@@ -124,14 +124,48 @@ exports.createOrUpdate = async (req, res) => {
   }
 };
 
+// ── Shared verify logic ────────────────────────────────────────────────────
+async function _runVerify(acct, res, label) {
+  let private_key;
+  try {
+    ({ private_key } = decryptCredentials(acct));
+  } catch (decryptErr) {
+    console.error(`[paymentAccounts] ${label}: decrypt failed —`, decryptErr.message, decryptErr.stack);
+    return res.status(500).json({
+      success: false,
+      message: "Error al desencriptar las credenciales. Verifica que PAYMENTS_ENCRYPTION_KEY sea correcta.",
+    });
+  }
+
+  const ok     = await verifyWompiCredentials(acct.public_key, private_key, acct.environment);
+  const status = ok ? "connected" : "error";
+  const now    = new Date();
+
+  await db.query(
+    `UPDATE store_payment_accounts
+     SET status = $1, last_verified_at = $2, updated_at = $2
+     WHERE id = $3`,
+    [status, now, acct.id]
+  );
+
+  return res.json({
+    success: true,
+    message: ok
+      ? "Credenciales verificadas correctamente. Tu cuenta está conectada."
+      : "Las credenciales no son válidas en Wompi. Revísalas y vuelve a intentarlo.",
+    data: { status, last_verified_at: now },
+  });
+}
+
 // ── POST /api/payment-accounts/verify ─────────────────────────────────────
-// Tests credentials against Wompi; sets status='connected' on success.
+// Legacy route — no :id. Tests credentials against Wompi.
 exports.verify = async (req, res) => {
   const adminId = req.user.owner_admin_id ?? req.user.id;
 
   try {
     const { rows } = await db.query(
-      `SELECT id, provider, environment, private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted
+      `SELECT id, provider, environment, public_key,
+              private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted
        FROM store_payment_accounts
        WHERE admin_id = $1 AND is_active = true
        LIMIT 1`,
@@ -142,80 +176,39 @@ exports.verify = async (req, res) => {
       return res.status(404).json({ success: false, message: "No tienes cuenta de pago configurada. Guárdala primero." });
     }
 
-    const acct = rows[0];
-    const { private_key } = decryptCredentials(acct);
-
-    const ok     = await verifyWompiCredentials(private_key, acct.environment);
-    const status = ok ? "connected" : "error";
-    const now    = new Date();
-
-    await db.query(
-      `UPDATE store_payment_accounts
-       SET status = $1, last_verified_at = $2, updated_at = $2
-       WHERE id = $3`,
-      [status, now, acct.id]
-    );
-
-    return res.json({
-      success: true,
-      message: ok
-        ? "Credenciales verificadas correctamente. Tu cuenta está conectada."
-        : "Las credenciales no son válidas en Wompi. Revísalas y vuelve a intentarlo.",
-      data: { status, last_verified_at: now },
-    });
+    return await _runVerify(rows[0], res, "verify");
   } catch (err) {
-    console.error("[paymentAccounts] verify:", err.message);
-    return res.status(500).json({ success: false, message: "Error al verificar credenciales con Wompi" });
+    console.error("[paymentAccounts] verify:", err.message, err.stack);
+    return res.status(500).json({ success: false, message: "Error interno al verificar credenciales" });
   }
 };
 
 // ── POST /api/payment-accounts/:id/verify ─────────────────────────────────
-// Same logic as /verify but the frontend sends the account id in the path.
-// Validates ownership before running the credential check.
+// Validates ownership then tests credentials. public_key in URL, private_key in header.
 exports.verifyById = async (req, res) => {
   const adminId = req.user.owner_admin_id ?? req.user.id;
   const { id }  = req.params;
 
   try {
     const { rows } = await db.query(
-      `SELECT id, provider, environment,
+      `SELECT id, provider, environment, public_key,
               private_key_encrypted, events_secret_encrypted, integrity_secret_encrypted
        FROM store_payment_accounts
-       WHERE id = $1 AND admin_id = $2 AND is_active = true`,
+       WHERE id = $1 AND admin_id = $2`,
       [id, adminId]
     );
 
     if (!rows.length) {
       return res.status(404).json({
         success: false,
-        message: "Cuenta de pago no encontrada. Guárdala primero.",
+        message: "Cuenta de pago no encontrada.",
       });
     }
 
-    const acct = rows[0];
-    const { private_key } = decryptCredentials(acct);
-
-    const ok     = await verifyWompiCredentials(private_key, acct.environment);
-    const status = ok ? "connected" : "error";
-    const now    = new Date();
-
-    await db.query(
-      `UPDATE store_payment_accounts
-       SET status = $1, last_verified_at = $2, updated_at = $2
-       WHERE id = $3`,
-      [status, now, acct.id]
-    );
-
-    return res.json({
-      success: true,
-      message: ok
-        ? "Credenciales verificadas correctamente. Tu cuenta está conectada."
-        : "Las credenciales no son válidas en Wompi. Revísalas y vuelve a intentarlo.",
-      data: { status, last_verified_at: now },
-    });
+    return await _runVerify(rows[0], res, "verifyById");
   } catch (err) {
-    console.error("[paymentAccounts] verifyById:", err.message);
-    return res.status(500).json({ success: false, message: "Error al verificar credenciales con Wompi" });
+    console.error("[paymentAccounts] verifyById:", err.message, err.stack);
+    return res.status(500).json({ success: false, message: "Error interno al verificar credenciales" });
   }
 };
 
