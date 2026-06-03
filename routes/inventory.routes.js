@@ -25,14 +25,28 @@ function send(res, err) {
 
 // ─── LECTURA ──────────────────────────────────────────────────────────────────
 
-// GET /api/inventory/products  — vista completa con disponible
+// GET /api/inventory/products  — vista completa con disponible + label de variante
 router.get('/products', requireAdmin, async (req, res) => {
   try {
     const ownerId = req.adminId;
     const { rows } = await db.query(
-      `SELECT * FROM v_stock_disponible
-       WHERE owner_admin_id = $1
-       ORDER BY name ASC`,
+      `SELECT
+         v.*,
+         -- Agrega label legible de atributos: "Talla M / Rojo"
+         CASE WHEN v.variant_id IS NOT NULL THEN (
+           SELECT string_agg(
+             COALESCE(av.display_value, av.value),
+             ' / '
+             ORDER BY at.sort_order NULLS LAST, at.id
+           )
+           FROM variant_attribute_values vav
+           JOIN attribute_values av ON av.id = vav.attribute_value_id
+           JOIN attribute_types  at ON at.id = av.attribute_type_id
+           WHERE vav.variant_id = v.variant_id
+         ) ELSE NULL END AS variant_label
+       FROM v_stock_disponible v
+       WHERE v.owner_admin_id = $1
+       ORDER BY v.name ASC, v.variant_id ASC NULLS FIRST`,
       [ownerId],
     );
     res.json({ success: true, data: rows });
