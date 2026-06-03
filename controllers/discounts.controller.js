@@ -65,31 +65,43 @@ exports.create = async (req, res) => {
 // ============================================
 // 📋 OBTENER TODOS
 // ============================================
+// ?scope=pos → solo activos del canal POS (para el selector del POS)
+// ?scope=web → solo activos del canal web
+// (sin scope) → todos, sin filtrar (CRUD de gestión)
 exports.getAll = async (req, res) => {
   const { isSuperAdmin, adminId } = req;
+  const { scope } = req.query; // 'pos' | 'web' | undefined
 
-  const tenantClause = isSuperAdmin ? "" : "WHERE d.owner_admin_id = $1";
-  const params       = isSuperAdmin ? [] : [adminId];
+  const conditions = [];
+  const params     = [];
+
+  if (!isSuperAdmin) {
+    params.push(adminId);
+    conditions.push(`d.owner_admin_id = $${params.length}`);
+  }
+
+  // Cuando se pide por canal, aplicar filtros de disponibilidad completos
+  if (scope === 'pos' || scope === 'web') {
+    conditions.push(`d.scope IN ('${scope}', 'all')`);
+    conditions.push(`d.active = true`);
+    conditions.push(`NOW() BETWEEN d.starts_at AND d.ends_at`);
+    conditions.push(`(d.usage_limit IS NULL OR d.times_used < d.usage_limit)`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
-    const result = await db.query(`
-      SELECT 
-        d.*,
-        -- ✅ incluir estos campos que usa la API pública:
-        d.code,
-        d.description,
-        d.min_purchase_amount,
-        d.max_discount_amount,
-        d.usage_limit,
-        d.times_used,
-        (SELECT json_agg(dt)
-         FROM discount_targets dt
-         WHERE dt.discount_id = d.id) AS targets
-      FROM discounts d
-      ${tenantClause}
-      ORDER BY d.created_at DESC
-    `, params);
-
+    const result = await db.query(
+      `SELECT
+         d.*,
+         (SELECT json_agg(dt)
+          FROM discount_targets dt
+          WHERE dt.discount_id = d.id) AS targets
+       FROM discounts d
+       ${where}
+       ORDER BY d.created_at DESC`,
+      params
+    );
     res.json(result.rows);
   } catch (error) {
     console.error("DISCOUNT GET ALL ERROR:", error);

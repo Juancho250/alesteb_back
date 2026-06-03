@@ -229,7 +229,8 @@ exports.getUserStats = async (req, res) => {
 // ============================================
 exports.createOrder = async (req, res) => {
   const {
-    customer_id, items, discount_amount = 0, tax_amount = 0,
+    customer_id, items, discount_amount: rawDiscountAmount = 0, tax_amount = 0,
+    discount_id = null,
     sale_type = "online", payment_method = "cash",
     credit_due_date = null, credit_notes = null, initial_payment = 0,
     shipping_address, shipping_city, shipping_notes,
@@ -326,7 +327,68 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    const total   = subtotal - Number(discount_amount) + Number(tax_amount);
+    // ── Validar y resolver descuento ──────────────────────────────────────────
+    let resolvedDiscountAmount = Number(rawDiscountAmount) || 0;
+    let resolvedDiscountId     = null;
+
+    if (discount_id) {
+      const { rows: [disc] } = await client.query(
+        `SELECT id, name, type, value, scope, active, starts_at, ends_at,
+                usage_limit, times_used, min_purchase_amount, max_discount_amount
+         FROM discounts WHERE id = $1 FOR UPDATE`,
+        [discount_id]
+      );
+
+      if (!disc)
+        throw Object.assign(new Error("Descuento no encontrado"), { status: 400 });
+      if (!disc.active)
+        throw Object.assign(new Error("El descuento está inactivo"), { status: 400 });
+
+      const now = new Date();
+      if (disc.starts_at && new Date(disc.starts_at) > now)
+        throw Object.assign(new Error("El descuento aún no está vigente"), { status: 400 });
+      if (disc.ends_at && new Date(disc.ends_at) < now)
+        throw Object.assign(new Error("El descuento ha expirado"), { status: 400 });
+      if (disc.usage_limit != null && disc.times_used >= disc.usage_limit)
+        throw Object.assign(new Error("Este descuento ha alcanzado su límite de usos"), { status: 409, code: "DISCOUNT_EXHAUSTED" });
+
+      // Validar scope vs canal de venta
+      const isPosSale = ["fisica", "pos"].includes(sale_type);
+      const isWebSale = ["web", "online"].includes(sale_type);
+      const scopeOk   = disc.scope === "all"
+        || (isPosSale && disc.scope === "pos")
+        || (isWebSale && disc.scope === "web");
+      if (!scopeOk)
+        throw Object.assign(
+          new Error(`Este descuento no aplica para ventas de tipo "${sale_type}" (scope: ${disc.scope})`),
+          { status: 400, code: "SCOPE_MISMATCH" }
+        );
+
+      if (disc.min_purchase_amount && subtotal < Number(disc.min_purchase_amount))
+        throw Object.assign(
+          new Error(`Compra mínima requerida: $${Number(disc.min_purchase_amount).toLocaleString("es-CO")}`),
+          { status: 400, code: "MIN_PURCHASE_NOT_MET" }
+        );
+
+      // Calcular monto de descuento
+      if (disc.type === "percentage") {
+        resolvedDiscountAmount = (subtotal * Number(disc.value)) / 100;
+        if (disc.max_discount_amount)
+          resolvedDiscountAmount = Math.min(resolvedDiscountAmount, Number(disc.max_discount_amount));
+      } else {
+        resolvedDiscountAmount = Number(disc.value);
+      }
+      resolvedDiscountAmount = Math.min(Math.round(resolvedDiscountAmount), subtotal);
+      resolvedDiscountId = disc.id;
+
+      // Incrementar usos atómicamente dentro de la misma tx
+      await client.query(
+        "UPDATE discounts SET times_used = times_used + 1 WHERE id = $1",
+        [disc.id]
+      );
+    }
+
+    const total   = Math.max(0, subtotal - resolvedDiscountAmount + Number(tax_amount));
     const initPay = Math.min(Number(initial_payment) || 0, total);
 
     let finalPaymentStatus, dbPaymentMethod, amountPaidInitial;
@@ -352,15 +414,15 @@ exports.createOrder = async (req, res) => {
 
     const { rows: saleRows } = await client.query(
       `INSERT INTO sales (
-        sale_number, customer_id, subtotal, tax_amount, discount_amount,
+        sale_number, customer_id, subtotal, tax_amount, discount_amount, discount_id,
         total, amount_paid, payment_method, payment_status, sale_type,
         created_by, owner_admin_id,
         shipping_address, shipping_city, shipping_notes,
         credit_due_date, credit_notes
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING id`,
       [
-        saleNumber, customer_id, subtotal, tax_amount, discount_amount,
+        saleNumber, customer_id, subtotal, tax_amount, resolvedDiscountAmount, resolvedDiscountId,
         total, amountPaidInitial, dbPaymentMethod, finalPaymentStatus, sale_type,
         req.user?.id ?? customer_id, ownerAdminId,
         shipping_address ?? null, shipping_city ?? null, shipping_notes ?? null,
@@ -622,7 +684,7 @@ exports.cancelOrder = async (req, res) => {
     await client.query("BEGIN");
 
     const { rows } = await client.query(
-      "SELECT id, customer_id, payment_status, owner_admin_id FROM sales WHERE id = $1", [id]
+      "SELECT id, customer_id, payment_status, owner_admin_id, discount_id FROM sales WHERE id = $1", [id]
     );
     if (!rows.length) {
       await client.query("ROLLBACK");
@@ -667,6 +729,15 @@ exports.cancelOrder = async (req, res) => {
     await client.query(
       "UPDATE sales SET payment_status = 'cancelled', updated_at = NOW() WHERE id = $1", [id]
     );
+
+    // Revertir uso del descuento si la venta tenía uno vinculado
+    if (order.discount_id) {
+      await client.query(
+        "UPDATE discounts SET times_used = GREATEST(0, times_used - 1) WHERE id = $1",
+        [order.discount_id]
+      );
+    }
+
     await client.query("COMMIT");
 
     res.json({ success: true, message: "Pedido cancelado. Stock restaurado." });
