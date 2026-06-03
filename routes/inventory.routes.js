@@ -222,6 +222,70 @@ router.post('/initial-stock', requireAdmin, async (req, res) => {
 
 // ─── RESERVAS (admin) ─────────────────────────────────────────────────────────
 
+// GET /api/inventory/reservations/active?productId=
+router.get('/reservations/active', requireAdmin, async (req, res) => {
+  try {
+    const productId = req.query.productId ? Number(req.query.productId) : null;
+    const params    = [req.adminId];
+    const filter    = productId ? `AND sr.product_id = $2` : '';
+    if (productId) params.push(productId);
+
+    const { rows } = await db.query(
+      `SELECT
+         sr.id, sr.session_id, sr.user_id, sr.product_id, sr.variant_id,
+         sr.quantity, sr.status, sr.expires_at, sr.created_at,
+         p.name     AS product_name,
+         pv.sku     AS variant_sku,
+         u.name     AS user_name,
+         u.email    AS user_email,
+         (sr.expires_at < NOW()) AS is_expired
+       FROM stock_reservations sr
+       JOIN products p           ON p.id  = sr.product_id
+       LEFT JOIN product_variants pv ON pv.id = sr.variant_id
+       LEFT JOIN users u         ON u.id  = sr.user_id
+       WHERE sr.status = 'active' AND sr.owner_admin_id = $1 ${filter}
+       ORDER BY sr.expires_at ASC`,
+      params,
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) { send(res, err); }
+});
+
+// POST /api/inventory/reservations/release-expired — liberar manualmente todas las expiradas del tenant
+router.post('/reservations/release-expired', requireAdmin, async (req, res) => {
+  try {
+    const { rows: expired } = await db.query(
+      `SELECT id, owner_admin_id FROM stock_reservations
+       WHERE status = 'active' AND expires_at < NOW() AND owner_admin_id = $1`,
+      [req.adminId],
+    );
+
+    let released = 0;
+    const errors = [];
+    for (const r of expired) {
+      try {
+        await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: req.user.id }, 'expired');
+        released++;
+      } catch (err) {
+        errors.push({ id: r.id, error: err.message });
+      }
+    }
+    res.json({ success: true, data: { released, total: expired.length, errors } });
+  } catch (err) { send(res, err); }
+});
+
+// DELETE /api/inventory/reservations/:id — liberar una reserva específica (admin)
+router.delete('/reservations/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await inv.releaseReservation(
+      Number(req.params.id),
+      { ownerAdminId: req.adminId, userId: req.user.id },
+      'cancelled',
+    );
+    res.json({ success: true, data: result });
+  } catch (err) { send(res, err); }
+});
+
 // POST /api/inventory/sales/:id/confirm-from-reservations
 // body: { reservationIds: number[] }
 router.post('/sales/:id/confirm-from-reservations', async (req, res) => {
