@@ -353,7 +353,7 @@ async function processWompiWebhook(rawBody) {
     // Update our transaction record
     await client.query(
       `UPDATE sale_payment_transactions
-       SET status = 'approved', provider_transaction_id = $1, updated_at = now()
+       SET status = 'approved', provider_transaction_id = $1, updated_at = now()  
        WHERE id = $2 AND status != 'approved'`,
       [String(tx.id ?? ""), tx_id]
     );
