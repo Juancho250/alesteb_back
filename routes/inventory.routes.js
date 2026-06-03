@@ -37,7 +37,7 @@ router.get('/products', requireAdmin, async (req, res) => {
            SELECT string_agg(
              COALESCE(av.display_value, av.value),
              ' / '
-             ORDER BY at.sort_order NULLS LAST, at.id
+             ORDER BY av.sort_order NULLS LAST, at.id
            )
            FROM variant_attribute_values vav
            JOIN attribute_values av ON av.id = vav.attribute_value_id
