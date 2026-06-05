@@ -616,11 +616,20 @@ exports.update = async (req, res) => {
 
 // ─────────────────────────────────────────────
 // DELETE /products/:id
+//   Estrategia:
+//   1. Verifica ownership.
+//   2. Detecta "blockers duros" (ventas, compras, facturas, bundles, reservas activas).
+//      Si los hay → SOFT DELETE (is_active = false) y avisa al usuario.
+//   3. Si no hay blockers → limpia referencias blandas (ledger, expenses iniciales,
+//      historial de precios, alertas, reservas viejas) y hace HARD DELETE.
+//   Soporta query param ?force=soft para forzar soft delete explícitamente.
 // ─────────────────────────────────────────────
 exports.remove = async (req, res) => {
   const client = await db.connect();
   try {
     const { id } = req.params;
+    const forceSoft = req.query.force === "soft";
+
     if (!id || isNaN(id))
       return res.status(400).json({ success: false, message: "ID inválido" });
 
@@ -628,6 +637,7 @@ exports.remove = async (req, res) => {
 
     const { isSuperAdmin, adminId } = req;
 
+    // 1) Ownership + existencia
     if (!isSuperAdmin) {
       const owned = await assertOwnership(client, "products", id, adminId, "owner_admin_id");
       if (!owned) {
@@ -637,24 +647,126 @@ exports.remove = async (req, res) => {
           ? res.status(403).json({ success: false, message: "No autorizado para eliminar este producto" })
           : res.status(404).json({ success: false, message: "Producto no encontrado" });
       }
+    } else {
+      const exists = (await client.query("SELECT id FROM products WHERE id = $1", [id])).rowCount;
+      if (!exists) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ success: false, message: "Producto no encontrado" });
+      }
     }
 
-    const imgs = await client.query("SELECT url FROM product_images WHERE product_id = $1", [id]);
+    // 2) Detectar blockers duros
+    const blockersRes = await client.query(`
+      SELECT
+        (SELECT COUNT(*) FROM sale_items           WHERE product_id = $1)::int AS sales,
+        (SELECT COUNT(*) FROM purchase_order_items WHERE product_id = $1)::int AS purchases,
+        (SELECT COUNT(*) FROM invoice_items        WHERE product_id = $1)::int AS invoices,
+        (SELECT COUNT(*) FROM bundle_items         WHERE product_id = $1)::int AS bundles,
+        (SELECT COUNT(*) FROM stock_reservations   WHERE product_id = $1 AND status = 'active')::int AS active_reservations
+    `, [id]);
+
+    const b = blockersRes.rows[0];
+    const hasBlockers =
+      b.sales > 0 || b.purchases > 0 || b.invoices > 0 ||
+      b.bundles > 0 || b.active_reservations > 0;
+
+    // 3) Si hay blockers o se pidió soft → soft delete
+    if (hasBlockers || forceSoft) {
+      await client.query(
+        "UPDATE products SET is_active = false, updated_at = NOW() WHERE id = $1",
+        [id]
+      );
+      await client.query("COMMIT");
+
+      emitDataUpdate("products", "deleted", { id: parseInt(id) }, req.adminId);
+
+      return res.json({
+        success: true,
+        message: hasBlockers
+          ? "Producto desactivado (tiene movimientos asociados y no puede eliminarse permanentemente)"
+          : "Producto desactivado correctamente",
+        soft_deleted: true,
+        blockers: hasBlockers ? b : null,
+      });
+    }
+
+    // 4) Sin blockers → hard delete: limpiar referencias blandas
+    // (estas tablas no tienen ON DELETE CASCADE configurado en el FK del product_id)
+    await client.query("DELETE FROM stock_ledger          WHERE product_id = $1", [id]);
+    await client.query("DELETE FROM stock_reservations    WHERE product_id = $1", [id]);
+    await client.query("DELETE FROM stock_alerts          WHERE product_id = $1", [id]);
+    await client.query("DELETE FROM product_price_history WHERE product_id = $1", [id]);
+    await client.query(
+      "DELETE FROM expenses WHERE product_id = $1 AND expense_type = 'inventory_initial'",
+      [id]
+    );
+    // Otros expenses (compras reales, etc.) NO se borran: rompería contabilidad.
+    // Si existen, los marcamos como huérfanos (product_id = NULL).
+    await client.query(
+      "UPDATE expenses SET product_id = NULL WHERE product_id = $1",
+      [id]
+    );
+
+    // 5) Borrar imágenes en Cloudinary (las filas en product_images y product_variants
+    //    caen solas por ON DELETE CASCADE)
+    const imgs = await client.query(
+      "SELECT url FROM product_images WHERE product_id = $1", [id]
+    );
     for (const img of imgs.rows) {
       const publicId = getPublicIdFromUrl(img.url);
-      if (publicId) { try { await cloudinary.uploader.destroy(publicId); } catch {} }
+      if (publicId) {
+        try { await cloudinary.uploader.destroy(publicId); } catch (e) {
+          console.warn("[Cloudinary destroy fail]", publicId, e.message);
+        }
+      }
     }
 
+    // También imágenes de variantes
+    const variantImgs = await client.query(`
+      SELECT vi.url FROM variant_images vi
+      JOIN product_variants pv ON pv.id = vi.variant_id
+      WHERE pv.product_id = $1
+    `, [id]);
+    for (const img of variantImgs.rows) {
+      const publicId = getPublicIdFromUrl(img.url);
+      if (publicId) {
+        try { await cloudinary.uploader.destroy(publicId); } catch (e) {
+          console.warn("[Cloudinary destroy fail]", publicId, e.message);
+        }
+      }
+    }
+
+    // 6) Borrar producto
     await client.query("DELETE FROM products WHERE id = $1", [id]);
+
     await client.query("COMMIT");
 
     emitDataUpdate("products", "deleted", { id: parseInt(id) }, req.adminId);
-    res.json({ success: true, message: "Producto eliminado correctamente" });
+    res.json({
+      success: true,
+      message: "Producto eliminado permanentemente",
+      soft_deleted: false,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("[DELETE PRODUCT ERROR]", error.message, error.stack);
-    if (error.code === "23503")
-      return res.status(400).json({ success: false, message: "No se puede eliminar: tiene ventas asociadas" });
+    console.error("[DELETE PRODUCT ERROR]",
+      error.message,
+      "| code:", error.code,
+      "| constraint:", error.constraint,
+      "| table:", error.table,
+      "| detail:", error.detail
+    );
+
+    if (error.code === "23503") {
+      return res.status(400).json({
+        success: false,
+        message: `No se puede eliminar: el producto está referenciado en "${error.table || 'otra tabla'}". Intenta desactivarlo en su lugar.`,
+        detail: error.detail || null,
+        constraint: error.constraint || null,
+        suggestion: "soft_delete",
+      });
+    }
+
     res.status(500).json({ success: false, message: "Error al eliminar producto" });
   } finally { client.release(); }
 };
