@@ -556,6 +556,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       shipping_notes,
       payment_method = "transfer",
       coupon_code,
+      discount_id:    reqDiscountId,
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -636,16 +637,17 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
 
     let discountAmount = 0;
     let discountId     = null;
+    const now          = new Date();
 
     if (coupon_code) {
-      const now = new Date();
       const couponRes = await client.query(
         `SELECT id, type, value, min_purchase_amount, max_discount_amount
          FROM discounts
          WHERE code = $1 AND owner_admin_id = $2 AND active = true
            AND starts_at <= $3 AND ends_at >= $3
            AND (scope = 'web' OR scope = 'all')
-           AND (usage_limit IS NULL OR times_used < usage_limit)`,
+           AND (usage_limit IS NULL OR times_used < usage_limit)
+         FOR UPDATE`,
         [coupon_code.toUpperCase().trim(), adminId, now]
       );
 
@@ -656,7 +658,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
 
       const coupon = couponRes.rows[0];
 
-      if (subtotal < parseFloat(coupon.min_purchase_amount)) {
+      if (coupon.min_purchase_amount && subtotal < parseFloat(coupon.min_purchase_amount)) {
         await client.query("ROLLBACK");
         return res.status(400).json({ success: false, message: `Compra mínima requerida: $${coupon.min_purchase_amount}`, code: "MIN_PURCHASE_NOT_MET" });
       }
@@ -667,9 +669,45 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       } else {
         discountAmount = parseFloat(coupon.value);
       }
+      discountAmount = Math.min(Math.round(discountAmount), subtotal);
 
       discountId = coupon.id;
       await client.query("UPDATE discounts SET times_used = times_used + 1 WHERE id = $1", [coupon.id]);
+
+    } else if (reqDiscountId) {
+      const discountRes = await client.query(
+        `SELECT id, type, value, min_purchase_amount, max_discount_amount
+         FROM discounts
+         WHERE id = $1 AND owner_admin_id = $2 AND active = true
+           AND starts_at <= $3 AND ends_at >= $3
+           AND (scope = 'web' OR scope = 'all')
+           AND (usage_limit IS NULL OR times_used < usage_limit)
+         FOR UPDATE`,
+        [reqDiscountId, adminId, now]
+      );
+
+      if (discountRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ success: false, message: "Descuento inválido, expirado o no disponible para canal web", code: "INVALID_DISCOUNT" });
+      }
+
+      const discount = discountRes.rows[0];
+
+      if (discount.min_purchase_amount && subtotal < parseFloat(discount.min_purchase_amount)) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ success: false, message: `Compra mínima requerida: $${discount.min_purchase_amount}`, code: "MIN_PURCHASE_NOT_MET" });
+      }
+
+      if (discount.type === "percentage") {
+        discountAmount = (subtotal * discount.value) / 100;
+        if (discount.max_discount_amount) discountAmount = Math.min(discountAmount, parseFloat(discount.max_discount_amount));
+      } else {
+        discountAmount = parseFloat(discount.value);
+      }
+      discountAmount = Math.min(Math.round(discountAmount), subtotal);
+
+      discountId = discount.id;
+      await client.query("UPDATE discounts SET times_used = times_used + 1 WHERE id = $1", [discount.id]);
     }
 
     const total      = Math.max(0, subtotal - discountAmount);
@@ -705,13 +743,13 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
 
     const saleRes = await client.query(
       `INSERT INTO sales (
-         sale_number, subtotal, discount_amount, total,
+         sale_number, subtotal, discount_amount, discount_id, total,
          payment_method, payment_status, sale_type,
          shipping_address, shipping_city, shipping_notes,
          customer_phone, owner_admin_id, created_by, customer_id
-       ) VALUES ($1,$2,$3,$4,$5,'pending','web',$6,$7,$8,$9,$10,$10,$11)
+       ) VALUES ($1,$2,$3,$4,$5,$6,'pending','web',$7,$8,$9,$10,$11,$11,$12)
        RETURNING id, sale_number, subtotal, discount_amount, total`,
-      [saleNumber, subtotal, discountAmount, total, payment_method,
+      [saleNumber, subtotal, discountAmount, discountId, total, payment_method,
        shipping_address || null, shipping_city || null,
        shipping_notes || null, customer_phone || null, adminId,
        req.user.id]

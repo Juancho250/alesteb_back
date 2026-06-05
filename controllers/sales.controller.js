@@ -332,11 +332,14 @@ exports.createOrder = async (req, res) => {
     let resolvedDiscountId     = null;
 
     if (discount_id) {
+      const discOwnerClause = (!req.isSuperAdmin && req.adminId) ? " AND owner_admin_id = $2" : "";
+      const discParams      = (!req.isSuperAdmin && req.adminId) ? [discount_id, req.adminId] : [discount_id];
+
       const { rows: [disc] } = await client.query(
         `SELECT id, name, type, value, scope, active, starts_at, ends_at,
                 usage_limit, times_used, min_purchase_amount, max_discount_amount
-         FROM discounts WHERE id = $1 FOR UPDATE`,
-        [discount_id]
+         FROM discounts WHERE id = $1${discOwnerClause} FOR UPDATE`,
+        discParams
       );
 
       if (!disc)
