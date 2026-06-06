@@ -207,10 +207,6 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
                   <tr><td style="padding:20px 24px;">
                     <div style="font-size:11px;font-weight:800;color:#92400e;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Método de pago</div>
                     <div style="font-size:15px;font-weight:700;color:#78350f;">${paymentLabel}</div>
-                    <div style="font-size:13px;color:#92400e;margin-top:10px;line-height:1.6;">
-                      Tu pedido se confirmará una vez verifiquemos tu pago. Contáctanos por WhatsApp con el código
-                      <strong style="font-family:'Courier New',monospace;">${orderCode}</strong> para agilizar el proceso.
-                    </div>
                   </td></tr>
                 </table>
                 ${shippingAddress ? `
@@ -222,12 +218,6 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
                     ${shippingNotes ? `<div style="color:#15803d;font-size:13px;margin-top:8px;font-style:italic;">📝 ${shippingNotes}</div>` : ''}
                   </td></tr>
                 </table>` : ''}
-                <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-                  <a href="https://wa.me/573145055073?text=Hola!%20Quiero%20confirmar%20mi%20pedido%20${orderCode}"
-                     style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:17px 40px;border-radius:50px;letter-spacing:0.5px;">
-                    💬 &nbsp;Confirmar pago por WhatsApp
-                  </a>
-                </td></tr></table>
               </td>
             </tr>
             <tr>
@@ -344,12 +334,6 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
                     ${shippingNotes ? `<div style="color:#3b82f6;font-size:13px;margin-top:8px;font-style:italic;">📝 ${shippingNotes}</div>` : ''}
                   </td></tr>
                 </table>` : ''}
-                <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-                  <a href="https://wa.me/573145055073?text=Hola!%20Tengo%20una%20pregunta%20sobre%20mi%20pedido%20${orderCode}"
-                     style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-size:14px;font-weight:800;padding:17px 40px;border-radius:50px;letter-spacing:0.5px;">
-                    💬 &nbsp;Contactar por WhatsApp
-                  </a>
-                </td></tr></table>
               </td>
             </tr>
             <tr>
