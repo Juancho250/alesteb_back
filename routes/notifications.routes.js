@@ -1,8 +1,7 @@
-// ══════════════════════════════════════════════════════════════
-// ARCHIVO 1: src/routes/notifications.routes.js  (REEMPLAZAR)
-// ══════════════════════════════════════════════════════════════
+// routes/notifications.routes.js
 const express = require("express");
 const { auth, requireManager } = require("../middleware/auth.middleware");
+const { adminScope }           = require("../middleware/adminScope");
 const ctrl     = require("../controllers/notifications.controller");
 const pushCtrl = require("../controllers/pushSubscription.controller");
 const { broadcast, notifyUser, Payloads } = require("../services/push.service");
@@ -10,7 +9,17 @@ const { broadcast, notifyUser, Payloads } = require("../services/push.service");
 const router = express.Router();
 
 /** GET  /api/notifications          — Panel de alertas */
-router.get("/",           auth, requireManager, ctrl.getAll);
+router.get("/",           auth, adminScope, requireManager, ctrl.getAll);
+
+// ── WhatsApp settings ────────────────────────────────────────
+/** GET  /api/notifications/settings — Configuración de notificaciones del tenant */
+router.get ("/settings",       auth, adminScope, requireManager, ctrl.getSettings);
+/** PUT  /api/notifications/settings — Actualizar configuración */
+router.put ("/settings",       auth, adminScope, requireManager, ctrl.updateSettings);
+/** POST /api/notifications/test-whatsapp — Enviar mensaje de prueba */
+router.post("/test-whatsapp",  auth, adminScope, requireManager, ctrl.testWhatsapp);
+/** POST /api/notifications/webhook/whatsapp — Callbacks de Meta / Twilio */
+router.post("/webhook/whatsapp", ctrl.webhookWhatsapp);
 
 /** GET  /api/notifications/push-key — Clave pública VAPID (pública) */
 router.get("/push-key",   pushCtrl.getPublicKey);

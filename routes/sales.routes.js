@@ -20,7 +20,8 @@ router.post("/checkout",                    ctrl.createOrder);
 // ── Rutas con :id ─────────────────────────────────────────────
 router.get ("/:id/payments",                                     ctrl.getSalePayments);
 router.post("/:id/payments",          requireManager,            ctrl.registerPayment);
-router.post("/:id/cancel",                                       ctrl.cancelOrder);
+router.post("/:id/cancel",          ctrl.cancelOrder);
+router.post("/:id/mark-delivered",  requireManager, ctrl.markSaleAsDelivered);
 
 // ── Comprobantes de pago ──────────────────────────────────────
 // Cualquier parte autorizada (admin, gerente o el cliente dueño de la venta) puede subir/borrar

@@ -1,5 +1,7 @@
-// src/controllers/notifications.controller.js
+// controllers/notifications.controller.js
 const db = require("../config/db");
+const { getOrCreateSettings, enqueueNotification } = require("../services/notification.service");
+const whatsapp = require("../services/providers/whatsapp.provider");
 
 exports.getAll = async (req, res) => {
   try {
@@ -235,5 +237,174 @@ exports.getAll = async (req, res) => {
   } catch (error) {
     console.error("[NOTIFICATIONS ERROR]", error);
     res.status(500).json({ success: false, message: "Error al obtener notificaciones" });
+  }
+};
+
+// ============================================
+// ⚙️  CONFIGURACIÓN DE NOTIFICACIONES WHATSAPP
+// ============================================
+
+/**
+ * GET /api/notifications/settings
+ * Returns the current tenant's notification settings (creates defaults if missing).
+ */
+exports.getSettings = async (req, res) => {
+  try {
+    const settings = await getOrCreateSettings(req.adminId);
+    res.json({ success: true, data: settings });
+  } catch (err) {
+    console.error("[NOTIFICATION SETTINGS GET]", err);
+    res.status(500).json({ success: false, message: "Error al obtener configuración" });
+  }
+};
+
+/**
+ * PUT /api/notifications/settings
+ * Updates WhatsApp and notification preferences for the current tenant.
+ */
+exports.updateSettings = async (req, res) => {
+  const {
+    whatsapp_enabled, whatsapp_phone, whatsapp_country_code,
+    email_enabled, push_enabled,
+    events_enabled, quiet_hours_start, quiet_hours_end, timezone,
+  } = req.body;
+
+  // Build SET clause only for provided fields
+  const allowed = [
+    'whatsapp_enabled', 'whatsapp_phone', 'whatsapp_country_code',
+    'email_enabled', 'push_enabled',
+    'events_enabled', 'quiet_hours_start', 'quiet_hours_end', 'timezone',
+  ];
+  const updates = [];
+  const params  = [];
+  let idx = 1;
+
+  const fieldMap = {
+    whatsapp_enabled, whatsapp_phone, whatsapp_country_code,
+    email_enabled, push_enabled,
+    events_enabled, quiet_hours_start, quiet_hours_end, timezone,
+  };
+
+  for (const field of allowed) {
+    if (fieldMap[field] !== undefined) {
+      const val = field === 'events_enabled'
+        ? JSON.stringify(Array.isArray(fieldMap[field]) ? fieldMap[field] : [])
+        : fieldMap[field];
+      updates.push(`${field} = $${idx++}`);
+      params.push(val);
+    }
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({ success: false, message: "Sin campos para actualizar" });
+  }
+
+  // Phone format validation
+  if (whatsapp_phone != null) {
+    const digits = String(whatsapp_phone).replace(/\D/g, '');
+    if (digits.length < 7 || digits.length > 15) {
+      return res.status(400).json({
+        success: false,
+        message: "Número de teléfono inválido (entre 7 y 15 dígitos)",
+      });
+    }
+  }
+
+  try {
+    updates.push(`updated_at = NOW()`);
+    params.push(req.adminId);
+
+    const { rows: [updated] } = await db.query(
+      `INSERT INTO notification_settings (admin_id, created_at, updated_at)
+       VALUES ($${idx}, NOW(), NOW())
+       ON CONFLICT (admin_id) DO UPDATE
+       SET ${updates.join(', ')}
+       RETURNING *`,
+      params
+    );
+
+    res.json({ success: true, message: "Configuración guardada", data: updated });
+  } catch (err) {
+    console.error("[NOTIFICATION SETTINGS PUT]", err);
+    res.status(500).json({ success: false, message: "Error al guardar configuración" });
+  }
+};
+
+/**
+ * POST /api/notifications/test-whatsapp
+ * Sends a test WhatsApp message to the phone configured in settings.
+ */
+exports.testWhatsapp = async (req, res) => {
+  try {
+    const settings = await getOrCreateSettings(req.adminId);
+
+    if (!settings.whatsapp_phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Configura un número de WhatsApp antes de enviar la prueba",
+      });
+    }
+
+    const code  = String(settings.whatsapp_country_code || '+57').replace(/\D/g, '');
+    const local = String(settings.whatsapp_phone).replace(/\D/g, '');
+    const phone = local.startsWith(code) ? local : code + local;
+
+    const result = await whatsapp.send(phone, '✅ Notificaciones de WhatsApp funcionando correctamente en Alesteb.');
+
+    if (!result.success) {
+      return res.status(502).json({
+        success: false,
+        message: `Error al enviar: ${result.error}`,
+      });
+    }
+
+    res.json({ success: true, message: "Mensaje de prueba enviado", providerMessageId: result.providerMessageId });
+  } catch (err) {
+    console.error("[TEST WHATSAPP]", err);
+    res.status(500).json({ success: false, message: "Error al enviar prueba" });
+  }
+};
+
+/**
+ * POST /api/notifications/webhook/whatsapp
+ * Receives delivery status callbacks from Meta or Twilio.
+ * Updates notification_queue.status by provider_message_id.
+ */
+exports.webhookWhatsapp = async (req, res) => {
+  try {
+    const provider = process.env.WHATSAPP_PROVIDER || 'meta_cloud';
+
+    if (provider === 'meta_cloud') {
+      // Meta webhook verification (GET) is handled in routes; here we handle POST
+      const entry  = req.body?.entry?.[0];
+      const change = entry?.changes?.[0]?.value;
+      const statuses = change?.statuses ?? [];
+
+      for (const s of statuses) {
+        if (!s.id) continue;
+        const dbStatus = s.status === 'delivered' || s.status === 'read' ? 'sent' : null;
+        if (!dbStatus) continue;
+        await db.query(
+          `UPDATE notification_queue SET status = $1, updated_at = NOW()
+           WHERE provider_message_id = $2 AND status != 'failed'`,
+          [dbStatus, s.id]
+        );
+      }
+    } else if (provider === 'twilio') {
+      const msgSid  = req.body?.MessageSid;
+      const status  = req.body?.MessageStatus;
+      if (msgSid && ['delivered', 'read', 'sent'].includes(status)) {
+        await db.query(
+          `UPDATE notification_queue SET status = 'sent', updated_at = NOW()
+           WHERE provider_message_id = $1 AND status != 'failed'`,
+          [msgSid]
+        );
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("[WEBHOOK WHATSAPP]", err);
+    res.sendStatus(200); // always 200 so provider doesn't retry indefinitely
   }
 };

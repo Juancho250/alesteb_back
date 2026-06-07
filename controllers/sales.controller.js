@@ -5,6 +5,8 @@ const cloudinary = require("../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
 const { emitDataUpdate } = require("../config/socket");
 const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
+const procurement         = require("../services/procurement.service");
+const { enqueueNotification } = require("../services/notification.service");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 
@@ -266,6 +268,13 @@ exports.createOrder = async (req, res) => {
     if (!custRows.length) throw new Error("Cliente no encontrado");
     const customer = custRows[0];
 
+    // Read procurement automation flag for this tenant
+    const { rows: [_adminProf] } = await client.query(
+      `SELECT auto_create_procurement_orders FROM admin_profiles WHERE admin_id = $1 LIMIT 1`,
+      [ownerAdminId]
+    );
+    const autoCreateProcurement = _adminProf?.auto_create_procurement_orders ?? false;
+
     let subtotal = 0;
     const validatedItems = [];
 
@@ -275,7 +284,9 @@ exports.createOrder = async (req, res) => {
 
       const { rows: prodRows } = await client.query(
         `SELECT id, name, sku, sale_price, stock, stock_reserved, stock_safety,
-                purchase_price, has_variants
+                purchase_price, has_variants,
+                fulfillment_mode, default_supplier_id,
+                supplier_lead_time_days, supplier_cost_estimate
          FROM products p WHERE p.id = $1 AND p.is_active = true ${ownerCheck}`,
         prodParams
       );
@@ -311,8 +322,35 @@ exports.createOrder = async (req, res) => {
         throw new Error(`"${product.name}" tiene variantes — selecciona una`);
       }
 
-      if (availStock < item.quantity)
+      // Determine fulfillment snapshot using real-time disponible_inmediato from view
+      const _svQ = variantId
+        ? `SELECT COALESCE(disponible_inmediato, disponible) AS disp
+           FROM v_stock_disponible WHERE product_id = $1 AND variant_id = $2 LIMIT 1`
+        : `SELECT COALESCE(disponible_inmediato, disponible) AS disp
+           FROM v_stock_disponible WHERE product_id = $1 AND variant_id IS NULL LIMIT 1`;
+      const { rows: [_sv] } = await client.query(
+        _svQ, variantId ? [item.product_id, variantId] : [item.product_id]
+      );
+      const disponibleInmediato = Number(_sv?.disp ?? availStock);
+
+      const fulfillmentMode = product.fulfillment_mode || 'stock';
+      let fulfillmentSnapshot;
+      if (fulfillmentMode === 'on_demand') {
+        fulfillmentSnapshot = 'on_demand';
+      } else if (fulfillmentMode === 'hybrid') {
+        fulfillmentSnapshot = disponibleInmediato >= item.quantity ? 'stock' : 'on_demand';
+      } else {
+        fulfillmentSnapshot = 'stock';
+      }
+
+      if (fulfillmentSnapshot === 'stock' && availStock < item.quantity)
         throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${availStock}`);
+
+      const leadDays = fulfillmentSnapshot === 'stock'
+        ? 0
+        : Number(product.supplier_lead_time_days ?? 0);
+      const itemEstimatedDelivery = new Date();
+      itemEstimatedDelivery.setDate(itemEstimatedDelivery.getDate() + leadDays);
 
       const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
@@ -324,8 +362,19 @@ exports.createOrder = async (req, res) => {
         subtotal: itemSubtotal,
         profit_per_unit: unitPrice - unitCost,
         total_profit:    (unitPrice - unitCost) * item.quantity,
+        fulfillment_mode_snapshot: fulfillmentSnapshot,
+        supplier_cost_at_sale:    Number(product.supplier_cost_estimate ?? 0),
+        estimated_delivery_date:  itemEstimatedDelivery,
       });
     }
+
+    // Sale-level fulfillment aggregates
+    const hasOnDemandItems = validatedItems.some(i => i.fulfillment_mode_snapshot !== 'stock');
+    const saleEstimatedDelivery = validatedItems.reduce((max, i) => {
+      const d = new Date(i.estimated_delivery_date);
+      return d > max ? d : max;
+    }, new Date());
+    const initialProcurementStatus = hasOnDemandItems ? 'pending' : 'not_required';
 
     // ── Validar y resolver descuento ──────────────────────────────────────────
     let resolvedDiscountAmount = Number(rawDiscountAmount) || 0;
@@ -421,8 +470,9 @@ exports.createOrder = async (req, res) => {
         total, amount_paid, payment_method, payment_status, sale_type,
         created_by, owner_admin_id,
         shipping_address, shipping_city, shipping_notes,
-        credit_due_date, credit_notes
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        credit_due_date, credit_notes,
+        has_on_demand_items, procurement_status, estimated_delivery_date, delivery_status
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'pending')
       RETURNING id`,
       [
         saleNumber, customer_id, subtotal, tax_amount, resolvedDiscountAmount, resolvedDiscountId,
@@ -431,6 +481,7 @@ exports.createOrder = async (req, res) => {
         shipping_address ?? null, shipping_city ?? null, shipping_notes ?? null,
         isFiado ? credit_due_date : null,
         isFiado ? credit_notes    : null,
+        hasOnDemandItems, initialProcurementStatus, saleEstimatedDelivery,
       ]
     );
     const saleId = saleRows[0].id;
@@ -439,20 +490,34 @@ exports.createOrder = async (req, res) => {
       await client.query(
         `INSERT INTO sale_items (
           sale_id, product_id, variant_id, quantity, unit_price, unit_cost,
-          subtotal, profit_per_unit, total_profit
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [saleId, item.product_id, item.variant_id ?? null,
-         item.quantity, item.unit_price, item.unit_cost,
-         item.subtotal, item.profit_per_unit, item.total_profit]
+          subtotal, profit_per_unit, total_profit,
+          fulfillment_mode_snapshot, supplier_cost_at_sale,
+          estimated_delivery_date, item_delivery_status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
+        [
+          saleId, item.product_id, item.variant_id ?? null,
+          item.quantity, item.unit_price, item.unit_cost,
+          item.subtotal, item.profit_per_unit, item.total_profit,
+          item.fulfillment_mode_snapshot, item.supplier_cost_at_sale,
+          item.estimated_delivery_date,
+        ]
       );
 
-      await inv.applyStockMovement(
-        client,
-        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
-        -1, 'sale_confirmed',
-        { ownerAdminId, userId: req.user?.id ?? 0,
-          referenceType: 'sale', referenceId: saleId },
-      );
+      // Stock movement only for items fulfilled from stock
+      if (item.fulfillment_mode_snapshot === 'stock') {
+        await inv.applyStockMovement(
+          client,
+          { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
+          -1, 'sale_confirmed',
+          { ownerAdminId, userId: req.user?.id ?? 0,
+            referenceType: 'sale', referenceId: saleId },
+        );
+      }
+    }
+
+    // Auto-create procurement orders if configured and sale has on_demand items
+    if (hasOnDemandItems && autoCreateProcurement) {
+      await procurement.createProcurementOrdersForSale(saleId, client);
     }
 
     if (amountPaidInitial > 0) {
@@ -498,6 +563,27 @@ exports.createOrder = async (req, res) => {
 
     // Push al cliente confirmando su pedido
     notifyUser(customer_id, Payloads.orderConfirmed(orderCode, total)).catch(() => {});
+
+    // WhatsApp al admin del tenant
+    if (ownerAdminId) {
+      const waEvent = hasOnDemandItems ? 'new_on_demand_sale' : 'new_sale';
+      enqueueNotification({
+        ownerAdminId,
+        recipientUserId: ownerAdminId,
+        event:           waEvent,
+        channel:         'whatsapp',
+        payload: {
+          sale_number:   saleNumber,
+          customer_name: customer.name,
+          total:         `$${fmt(total)}`,
+          items_list:    validatedItems.map(i => `• ${i.name} × ${i.quantity}`).join('\n'),
+          pending_count: String(validatedItems.filter(i => i.fulfillment_mode_snapshot !== 'stock').length),
+        },
+        templateKey:    waEvent,
+        referenceType:  'sale',
+        referenceId:    saleId,
+      }).catch(() => {});
+    }
 
     res.status(201).json({
       success: true,
@@ -859,6 +945,31 @@ exports.deletePaymentProof = async (req, res) => {
   } catch (err) {
     console.error("[DELETE PROOF]", err);
     res.status(500).json({ success: false, message: "Error al eliminar el comprobante" });
+  }
+};
+
+// ============================================
+// 📦 MARCAR COMO ENTREGADA
+// POST /api/sales/:id/mark-delivered
+// ============================================
+exports.markSaleAsDelivered = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await procurement.markSaleAsDelivered(
+      Number(id), req.user?.id ?? null, req.adminId
+    );
+    res.json({
+      success: true,
+      message: 'Venta marcada como entregada. Ingreso reconocido.',
+      data:    result,
+    });
+  } catch (err) {
+    console.error('MARK DELIVERED ERROR:', err);
+    const status = err.code === 'NOT_FOUND' ? 404
+      : err.code === 'FORBIDDEN' ? 403
+      : ['ALREADY_DONE', 'INVALID_STATE', 'PROCUREMENT_INCOMPLETE'].includes(err.code) ? 400
+      : 500;
+    res.status(status).json({ success: false, message: err.message || 'Error al marcar como entregada' });
   }
 };
 

@@ -120,6 +120,7 @@ const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes", 
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
+const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -141,6 +142,10 @@ startSubscriptionCron();
 // Motor de inventario: reservas expiradas + alertas de stock bajo
 const { startInventoryJobs } = require("./services/inventory.jobs");
 startInventoryJobs();
+
+// Worker de notificaciones salientes (WhatsApp, email) — cada 30 segundos
+const { startNotificationWorker } = require("./services/notification.worker");
+startNotificationWorker();
 
 // ============================================
 // 🔌 REGISTRO DE RUTAS
@@ -176,6 +181,7 @@ if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRo
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryRoutes)     app.use("/api/inventory",     inventoryRoutes);
+if (procurementRoutes)   app.use("/api/procurement",   procurementRoutes);
 
 // — API pública —
 if (publicApiRoutes)     app.use("/public-api/v1",     publicApiRoutes);

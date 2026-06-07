@@ -1,8 +1,9 @@
 // controllers/providers.controller.js
 "use strict";
 
-const db     = require("../config/db");
-const invSvc = require("../services/inventory.service");
+const db          = require("../config/db");
+const invSvc      = require("../services/inventory.service");
+const procSvc     = require("../services/procurement.service");
 const { emitDataUpdate } = require("../config/socket");
 
 // ─────────────────────────────────────────────
@@ -513,179 +514,71 @@ exports.getStats = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// PATCH /providers/purchase-orders/:orderId/receive
-// Recibe una PO: actualiza stock de cada ítem, marca la orden como
-// 'received' y suma el total al balance del proveedor.
+// PATCH /providers/:id/purchase-orders/:orderId/receive
+// Recibe una PO — bifurca entre ítems on_demand (solo costo) e ítems de stock.
 // ─────────────────────────────────────────────
 exports.receivePurchaseOrder = async (req, res) => {
   const { orderId } = req.params;
   // received_quantities: { [purchase_order_item_id]: qty_received }
-  // Si no se envía, se asume "recibir todo" (quantity completa de cada ítem).
-  const { received_quantities, notes } = req.body;
+  // actual_unit_costs:   { [purchase_order_item_id]: unit_cost }
+  // Si no se envía received_quantities, se asume "recibir todo".
+  const { received_quantities, actual_unit_costs } = req.body;
 
-  const client = await db.connect();
   try {
-    await client.query("BEGIN");
-
-    // 1. Verificar que la orden existe y pertenece al tenant
+    // Fetch PO items to build the items array for the service
     const ownerClause = req.isSuperAdmin ? "" : "AND po.owner_admin_id = $2";
     const checkParams = req.isSuperAdmin ? [orderId] : [orderId, req.adminId];
 
-    const orderRes = await client.query(
-      `SELECT po.*, p.id AS p_id
-       FROM purchase_orders po
-       JOIN providers p ON p.id = po.provider_id
-       WHERE po.id = $1 ${ownerClause}
-       FOR UPDATE`,
+    const { rows: poItems, rowCount: poExists } = await db.query(
+      `SELECT poi.id, poi.quantity, poi.received_quantity, poi.unit_cost,
+              po.provider_id, po.order_number, po.status
+       FROM purchase_order_items poi
+       JOIN purchase_orders po ON po.id = poi.purchase_order_id
+       WHERE poi.purchase_order_id = $1 ${ownerClause}`,
       checkParams
     );
 
-    if (!orderRes.rowCount) {
-      const exists = await client.query("SELECT id FROM purchase_orders WHERE id = $1", [orderId]);
-      throw {
-        status:  exists.rowCount ? 403 : 404,
+    if (!poExists) {
+      const exists = await db.query("SELECT id FROM purchase_orders WHERE id = $1", [orderId]);
+      return res.status(exists.rowCount ? 403 : 404).json({
         message: exists.rowCount ? "No autorizado" : "Orden no encontrada",
-      };
+      });
     }
 
-    const order = orderRes.rows[0];
+    const po = poItems[0]; // status and order info from first row
+    if (po?.status === "received")
+      return res.status(400).json({ message: "Esta orden ya fue recibida anteriormente" });
+    if (po?.status === "cancelled")
+      return res.status(400).json({ message: "No se puede recibir una orden cancelada" });
 
-    if (order.status === "received") {
-      throw { status: 400, message: "Esta orden ya fue recibida anteriormente" };
-    }
-    if (order.status === "cancelled") {
-      throw { status: 400, message: "No se puede recibir una orden cancelada" };
-    }
-
-    // 2. Obtener ítems de la orden
-    const itemsRes = await client.query(
-      `SELECT poi.id, poi.product_id, poi.quantity, poi.received_quantity,
-              poi.unit_cost, poi.subtotal
-       FROM purchase_order_items poi
-       WHERE poi.purchase_order_id = $1`,
-      [orderId]
-    );
-
-    if (!itemsRes.rowCount) {
-      throw { status: 400, message: "La orden no tiene ítems" };
-    }
-
-    let totalReceived = 0;
-    const affectedProductIds = [];
-
-    // 3. Por cada ítem, determinar cantidad a recibir y actualizar stock
-    for (const item of itemsRes.rows) {
+    // Build items array expected by procurementService.receivePurchaseOrder
+    const items = poItems.map(item => {
       const maxPending = Math.max(0, item.quantity - (item.received_quantity || 0));
-      const qtyToReceive = received_quantities
+      const receivedQty = received_quantities
         ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
-        : maxPending; // "recibir todo"
+        : maxPending;
+      const actualUnitCost = actual_unit_costs?.[item.id] ?? item.unit_cost;
+      return { poItemId: item.id, actualUnitCost, receivedQty };
+    }).filter(i => i.receivedQty > 0);
 
-      if (qtyToReceive <= 0) continue;
-
-      // Actualizar received_quantity en el ítem
-      await client.query(
-        `UPDATE purchase_order_items
-         SET received_quantity = COALESCE(received_quantity, 0) + $1
-         WHERE id = $2`,
-        [qtyToReceive, item.id]
-      );
-
-      // Stock movement via inventory service (FOR UPDATE + ledger in one call)
-      await invSvc.applyStockMovement(
-        client,
-        { productId: item.product_id, variantId: null, quantity: qtyToReceive },
-        +1, 'purchase_received',
-        { ownerAdminId: order.owner_admin_id, userId: req.user.id,
-          referenceType: 'purchase_order', referenceId: parseInt(orderId),
-          notes: notes || `Recepción OC #${order.order_number}` }
-      );
-
-      // Sync purchase_price if unit_cost changed
-      if (item.unit_cost != null) {
-        await client.query(
-          `UPDATE products SET purchase_price = $1, updated_at = NOW()
-           WHERE id = $2 AND purchase_price IS DISTINCT FROM $1::numeric`,
-          [item.unit_cost, item.product_id],
-        );
-      }
-
-      affectedProductIds.push(item.product_id);
-      totalReceived += qtyToReceive;
+    if (!items.length) {
+      return res.status(400).json({ message: "No hay cantidades válidas para recibir" });
     }
 
-    if (totalReceived === 0) {
-      throw { status: 400, message: "No hay cantidades válidas para recibir" };
-    }
-
-    // 4. Marcar la orden como recibida
-    await client.query(
-      `UPDATE purchase_orders
-       SET status        = 'received',
-           received_date = CURRENT_DATE,
-           updated_at    = NOW()
-       WHERE id = $1`,
-      [orderId]
+    const result = await procSvc.receivePurchaseOrder(
+      parseInt(orderId), items, req.user.id, req.isSuperAdmin ? null : req.adminId
     );
-
-    // 5. Sumar el total al balance del proveedor (deuda con el proveedor)
-    //    Solo si el pago_status no es 'paid' (si ya estaba pagada no sumamos)
-    if (order.payment_status !== "paid") {
-      await client.query(
-        "UPDATE providers SET balance = balance + $1, updated_at = NOW() WHERE id = $2",
-        [order.total_cost, order.provider_id]
-      );
-    }
-
-    // 6. Registrar gasto contable (idempotente por purchase_order_id)
-    const dupCheck = await client.query(
-      `SELECT id FROM expenses WHERE purchase_order_id = $1 LIMIT 1`, [parseInt(orderId)]
-    );
-    if (!dupCheck.rowCount) {
-      await client.query(
-        `INSERT INTO expenses
-           (expense_type, description, amount, payment_method,
-            provider_id, purchase_order_id, notes, expense_date, created_by, owner_admin_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)`,
-        ['purchase', `Recepción OC #${order.order_number}`, order.total_cost, 'credit',
-         order.provider_id, parseInt(orderId),
-         notes || `OC #${order.order_number} recibida`,
-         req.user.id, order.owner_admin_id],
-      );
-    }
-
-    // 7. Resolver alertas de stock bajo para los productos afectados
-    const uniqueProductIds = [...new Set(affectedProductIds)];
-    if (uniqueProductIds.length) {
-      await client.query(
-        `UPDATE stock_alerts sa
-         SET resolved = true, resolved_at = NOW()
-         FROM v_stock_disponible v
-         WHERE sa.product_id     = v.product_id
-           AND sa.variant_id     IS NOT DISTINCT FROM v.variant_id
-           AND sa.owner_admin_id = $1
-           AND sa.resolved       = false
-           AND sa.alert_type     IN ('low_stock', 'out_of_stock')
-           AND sa.product_id     = ANY($2)
-           AND v.disponible      > COALESCE(v.min_stock, 0)`,
-        [order.owner_admin_id, uniqueProductIds],
-      );
-    }
-
-    await client.query("COMMIT");
 
     emitDataUpdate("purchase_orders", "updated", { id: parseInt(orderId), status: "received" }, req.adminId);
-    emitDataUpdate("providers", "updated", { id: order.provider_id }, req.adminId);
 
     res.json({
-      message:        `Orden ${order.order_number} recibida exitosamente`,
-      items_received: totalReceived,
+      success: true,
+      message: `Orden recibida exitosamente`,
+      data:    result,
     });
   } catch (error) {
-    await client.query("ROLLBACK");
     console.error("RECEIVE PO ERROR:", error);
     res.status(error.status || 500).json({ message: error.message || "Error al recibir la orden" });
-  } finally {
-    client.release();
   }
 };
 
