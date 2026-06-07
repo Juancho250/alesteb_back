@@ -134,6 +134,12 @@ async function enqueueNotification({
  * Respects quiet_hours and exponential backoff on failure.
  */
 async function processQueueBatch(limit = 20) {
+  // Recover jobs stuck in 'sending' after a process crash (reset after 5 min)
+  await db.query(
+    `UPDATE notification_queue SET status = 'pending', updated_at = NOW()
+     WHERE status = 'sending' AND updated_at < NOW() - INTERVAL '5 minutes'`
+  );
+
   const client = await db.connect();
   let jobs;
   try {

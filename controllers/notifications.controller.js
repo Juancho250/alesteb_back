@@ -1,7 +1,26 @@
 // controllers/notifications.controller.js
+const crypto   = require('crypto');
 const db = require("../config/db");
 const { getOrCreateSettings, enqueueNotification } = require("../services/notification.service");
 const whatsapp = require("../services/providers/whatsapp.provider");
+
+// Verifies X-Hub-Signature-256 sent by Meta on every webhook POST.
+// Returns true if META_WA_APP_SECRET is not set (dev/unconfig mode).
+function _verifyMetaSignature(req) {
+  const appSecret = process.env.META_WA_APP_SECRET;
+  if (!appSecret) return true;
+  const sig = req.headers['x-hub-signature-256'];
+  if (!sig || !req.rawBody) return false;
+  const expected = 'sha256=' + crypto
+    .createHmac('sha256', appSecret)
+    .update(req.rawBody)
+    .digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 exports.getAll = async (req, res) => {
   try {
@@ -366,16 +385,38 @@ exports.testWhatsapp = async (req, res) => {
 };
 
 /**
+ * GET /api/notifications/webhook/whatsapp
+ * Meta webhook hub verification challenge — required once during webhook setup.
+ * Meta sends: ?hub.mode=subscribe&hub.verify_token=<token>&hub.challenge=<challenge>
+ */
+exports.verifyWebhookWhatsapp = (req, res) => {
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.META_WA_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  res.sendStatus(403);
+};
+
+/**
  * POST /api/notifications/webhook/whatsapp
  * Receives delivery status callbacks from Meta or Twilio.
  * Updates notification_queue.status by provider_message_id.
  */
 exports.webhookWhatsapp = async (req, res) => {
+  const provider = process.env.WHATSAPP_PROVIDER || 'meta_cloud';
+
+  // Verify HMAC signature for Meta (skip if APP_SECRET not configured)
+  if (provider === 'meta_cloud' && !_verifyMetaSignature(req)) {
+    console.warn('[WEBHOOK WHATSAPP] Firma HMAC inválida — request rechazado');
+    return res.sendStatus(403);
+  }
+
   try {
-    const provider = process.env.WHATSAPP_PROVIDER || 'meta_cloud';
 
     if (provider === 'meta_cloud') {
-      // Meta webhook verification (GET) is handled in routes; here we handle POST
       const entry  = req.body?.entry?.[0];
       const change = entry?.changes?.[0]?.value;
       const statuses = change?.statuses ?? [];

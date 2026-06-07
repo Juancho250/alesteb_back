@@ -18,6 +18,8 @@ router.get ("/settings",       auth, adminScope, requireManager, ctrl.getSetting
 router.put ("/settings",       auth, adminScope, requireManager, ctrl.updateSettings);
 /** POST /api/notifications/test-whatsapp — Enviar mensaje de prueba */
 router.post("/test-whatsapp",  auth, adminScope, requireManager, ctrl.testWhatsapp);
+/** GET  /api/notifications/webhook/whatsapp — Verificación del hub de Meta (configuración única) */
+router.get ("/webhook/whatsapp", ctrl.verifyWebhookWhatsapp);
 /** POST /api/notifications/webhook/whatsapp — Callbacks de Meta / Twilio */
 router.post("/webhook/whatsapp", ctrl.webhookWhatsapp);
 

@@ -59,7 +59,15 @@ app.post("/api/wompi/webhook",
   (req, res) => require("./controllers/wompi.controller").handleWebhook(req, res)
 );
 
-app.use(express.json({ limit: process.env.REQUEST_LIMIT || "10mb" }));
+app.use(express.json({
+  limit: process.env.REQUEST_LIMIT || "10mb",
+  verify: (req, _res, buf) => {
+    // Preserve raw body for webhook HMAC verification
+    if (req.originalUrl.startsWith('/api/notifications/webhook')) {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: false, limit: process.env.REQUEST_LIMIT || "10mb" }));
 app.use(morgan(isProd ? "combined" : "dev"));
 
@@ -228,6 +236,7 @@ app.get("/api/health", (req, res) => {
       agent_cron:             true,
       notification_scheduler: true,
       subscription_cron:      true,
+      notification_worker:    true,
     },
   });
 });
