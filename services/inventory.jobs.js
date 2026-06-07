@@ -38,7 +38,7 @@ function startReservationCleanupJob() {
 
         for (const r of expired) {
           try {
-            await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: 0 }, 'expired');
+            await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: null }, 'expired');
             released++;
           } catch (err) {
             console.log(JSON.stringify({

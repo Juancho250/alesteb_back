@@ -298,10 +298,16 @@ exports.updateSettings = async (req, res) => {
   const params  = [];
   let idx = 1;
 
+  // Normalize empty strings to null for types that PostgreSQL rejects as ""
   const fieldMap = {
-    whatsapp_enabled, whatsapp_phone, whatsapp_country_code,
+    whatsapp_enabled,
+    whatsapp_phone:        whatsapp_phone        || null,
+    whatsapp_country_code,
     email_enabled, push_enabled,
-    events_enabled, quiet_hours_start, quiet_hours_end, timezone,
+    events_enabled,
+    quiet_hours_start: quiet_hours_start || null,
+    quiet_hours_end:   quiet_hours_end   || null,
+    timezone,
   };
 
   for (const field of allowed) {
@@ -318,9 +324,9 @@ exports.updateSettings = async (req, res) => {
     return res.status(400).json({ success: false, message: "Sin campos para actualizar" });
   }
 
-  // Phone format validation
-  if (whatsapp_phone != null) {
-    const digits = String(whatsapp_phone).replace(/\D/g, '');
+  // Phone format validation (only when a non-null phone is being set)
+  if (fieldMap.whatsapp_phone != null) {
+    const digits = String(fieldMap.whatsapp_phone).replace(/\D/g, '');
     if (digits.length < 7 || digits.length > 15) {
       return res.status(400).json({
         success: false,
@@ -357,10 +363,17 @@ exports.testWhatsapp = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.adminId);
 
+    if (!settings.whatsapp_enabled) {
+      return res.status(400).json({
+        success: false,
+        message: "Activa las notificaciones de WhatsApp antes de enviar la prueba",
+      });
+    }
+
     if (!settings.whatsapp_phone) {
       return res.status(400).json({
         success: false,
-        message: "Configura un número de WhatsApp antes de enviar la prueba",
+        message: "Configura tu número de WhatsApp antes de enviar la prueba",
       });
     }
 
