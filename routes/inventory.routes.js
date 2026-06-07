@@ -297,7 +297,7 @@ router.post('/reservations/release-expired', requireAdmin, async (req, res) => {
     const errors = [];
     for (const r of expired) {
       try {
-        await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: req.user.id }, 'expired');
+        await inv.releaseReservation(r.id, { ownerAdminId: r.owner_admin_id, userId: null }, 'expired');
         released++;
       } catch (err) {
         errors.push({ id: r.id, error: err.message });
