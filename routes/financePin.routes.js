@@ -2,10 +2,10 @@
 const express = require("express");
 const router = express.Router();
 const financePinController = require("../controllers/financePin.controller");
-const { authenticateToken } = require("../middleware/auth.middleware");
+const { auth } = require("../middleware/auth.middleware");
 
-router.get("/status",  authenticateToken, financePinController.getStatus);
-router.post("/set",    authenticateToken, financePinController.setPin);
-router.post("/verify", authenticateToken, financePinController.verifyPin);
+router.get("/status",  auth, financePinController.getStatus);
+router.post("/set",    auth, financePinController.setPin);
+router.post("/verify", auth, financePinController.verifyPin);
 
 module.exports = router;
