@@ -121,6 +121,7 @@ const analyticsRoutes          = safeRequire("./routes/analytics.routes",       
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
+const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -182,6 +183,7 @@ if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryRoutes)     app.use("/api/inventory",     inventoryRoutes);
 if (procurementRoutes)   app.use("/api/procurement",   procurementRoutes);
+if (financePinRoutes) app.use("/api/finance-pin", financePinRoutes);
 
 // — API pública —
 if (publicApiRoutes)     app.use("/public-api/v1",     publicApiRoutes);
@@ -215,6 +217,7 @@ app.get("/api/health", (req, res) => {
       reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
+      financePin:    !!financePinRoutes,
       wompi:          !!wompiRoutes,
       paymentAccounts: !!paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,
