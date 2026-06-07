@@ -268,8 +268,15 @@ exports.createOrder = async (req, res) => {
     if (!custRows.length) throw new Error("Cliente no encontrado");
     const customer = custRows[0];
 
-    // Auto-create procurement orders for on_demand items (always enabled)
-    const autoCreateProcurement = true;
+    // Read per-tenant setting (column: user_id, not admin_id)
+    let autoCreateProcurement = true;
+    if (ownerAdminId) {
+      const { rows: [prof] } = await client.query(
+        `SELECT auto_create_procurement_orders FROM admin_profiles WHERE user_id = $1 LIMIT 1`,
+        [ownerAdminId]
+      );
+      if (prof) autoCreateProcurement = prof.auto_create_procurement_orders;
+    }
 
     let subtotal = 0;
     const validatedItems = [];
