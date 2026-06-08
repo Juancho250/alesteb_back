@@ -25,7 +25,8 @@
     "additionalDirectories": [
       "c:\\Users\\juaz2\\Documents\\GitHub\\alesteb_back\\services",
       "c:\\Users\\juaz2\\Documents\\GitHub\\alesteb_front\\src\\hooks",
-      "c:\\Users\\juaz2\\Documents\\GitHub\\alesteb_front\\src\\components"
+      "c:\\Users\\juaz2\\Documents\\GitHub\\alesteb_front\\src\\components",
+      "c:\\Users\\juaz2\\Documents\\GitHub\\alesteb_front\\src\\context"
     ]
   }
 }

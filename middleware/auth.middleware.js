@@ -287,6 +287,61 @@ const requireAdmin      = requireRole(["admin"]);
 const requireManager    = requireRole(["admin", "gerente"]);
 const requireSuperAdmin = requireRole(["superadmin"]);
 
+// ============================================
+// 🔐 FINANCE SESSION (sliding window, in-memory)
+// ============================================
+const FINANCE_TTL_MS      = 15 * 60 * 1000;
+const _financeUnlockStore = {};
+
+const setFinanceUnlocked = (adminId) => {
+  _financeUnlockStore[String(adminId)] = Date.now() + FINANCE_TTL_MS;
+};
+
+const clearFinanceUnlocked = (adminId) => {
+  delete _financeUnlockStore[String(adminId)];
+};
+
+const getFinanceExpiresAt = (adminId) =>
+  _financeUnlockStore[String(adminId)] ?? null;
+
+// Cleanup cada 15 min — mismo patrón que _rateLimitStore
+const _financeCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const k of Object.keys(_financeUnlockStore)) {
+    if (now > _financeUnlockStore[k]) delete _financeUnlockStore[k];
+  }
+}, FINANCE_TTL_MS);
+if (_financeCleanup.unref) _financeCleanup.unref();
+
+// Middleware: bloquea rutas de finanzas si la sesión financiera no está activa
+const requireFinancePin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false, message: "No autenticado", code: "NOT_AUTHENTICATED",
+    });
+  }
+  // Superadmin omite el PIN de finanzas
+  if (req.user.roles.includes("superadmin")) return next();
+
+  const adminId   = req.user.owner_admin_id ?? req.user.id;
+  const key       = String(adminId);
+  const now       = Date.now();
+  const expiresAt = _financeUnlockStore[key];
+
+  if (!expiresAt || now > expiresAt) {
+    delete _financeUnlockStore[key];
+    return res.status(401).json({
+      success: false,
+      message: "PIN de finanzas requerido",
+      code:    "FINANCE_PIN_REQUIRED",
+    });
+  }
+
+  // Sliding window: renueva TTL en cada request autorizado
+  _financeUnlockStore[key] = now + FINANCE_TTL_MS;
+  next();
+};
+
 module.exports = {
   auth,
   apiKeyAuth,
@@ -296,4 +351,8 @@ module.exports = {
   requireSuperAdmin,
   requireApiPermission,
   checkRateLimit,
+  requireFinancePin,
+  setFinanceUnlocked,
+  clearFinanceUnlocked,
+  getFinanceExpiresAt,
 };

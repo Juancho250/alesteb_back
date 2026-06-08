@@ -2,13 +2,14 @@
 const express = require("express");
 const router  = express.Router();
 const fc      = require("../controllers/finance.controller");
-const { auth, requireManager } = require("../middleware/auth.middleware");
-const { adminScope }           = require("../middleware/adminScope");
+const { auth, requireManager, requireFinancePin } = require("../middleware/auth.middleware");
+const { adminScope }                              = require("../middleware/adminScope");
 
 // ── Middleware global ─────────────────────────────────────────
 router.use(auth);
 router.use(adminScope);
 router.use(requireManager);
+router.use(requireFinancePin);
 
 // ── Resumen y reportes ────────────────────────────────────────
 router.get("/summary",           fc.getSummary);

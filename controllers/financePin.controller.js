@@ -1,47 +1,61 @@
 // controllers/financePin.controller.js
 const bcrypt = require("bcryptjs");
-const pool   = require("../config/db"); // ajusta si tu conexión se llama diferente
+const pool   = require("../config/db");
+const {
+  setFinanceUnlocked,
+  clearFinanceUnlocked,
+  getFinanceExpiresAt,
+} = require("../middleware/auth.middleware");
 
-// ─── GET /api/finance-pin/status ─────────────────────────────────────────────
-// Devuelve si el admin tiene PIN configurado (true/false)
+const SALT_ROUNDS    = 12;                // mismo que auth.controller.js
+const FINANCE_TTL_MS = 15 * 60 * 1000;
+
+// Resuelve siempre al admin-raíz del tenant, no al sub-usuario
+const _adminId = (req) => req.user.owner_admin_id ?? req.user.id;
+
+// ─── GET /api/finance-pin/status ──────────────────────────────────────────────
 const getStatus = async (req, res) => {
   try {
-    const adminId = req.user.id;
+    const adminId = _adminId(req);
 
     const { rows } = await pool.query(
       "SELECT finance_pin_hash IS NOT NULL AS has_pin FROM admin_profiles WHERE user_id = $1",
       [adminId]
     );
 
-    return res.json({ hasPin: rows[0]?.has_pin ?? false });
+    const hasPin     = rows[0]?.has_pin ?? false;
+    const expiresAt  = getFinanceExpiresAt(adminId);
+    const isUnlocked = !!expiresAt && Date.now() < expiresAt;
+
+    return res.json({
+      hasPin,
+      isUnlocked,
+      financeUnlockedUntil: isUnlocked ? expiresAt : null,
+    });
   } catch (err) {
     console.error("[financePin.getStatus]", err);
     return res.status(500).json({ error: "Error interno del servidor." });
   }
 };
 
-// ─── POST /api/finance-pin/set ────────────────────────────────────────────────
-// Crea o cambia el PIN. Si ya existe uno, exige el PIN actual.
+// ─── POST /api/finance-pin/setup ──────────────────────────────────────────────
 // Body: { newPin: "1234", currentPin?: "0000" }
 const setPin = async (req, res) => {
   try {
-    const adminId = req.user.id;
+    const adminId = _adminId(req);
     const { newPin, currentPin } = req.body;
 
-    // Validar formato
     if (!newPin || !/^\d{4,6}$/.test(String(newPin))) {
       return res.status(400).json({ error: "El PIN debe tener entre 4 y 6 dígitos numéricos." });
     }
 
-    // Obtener hash actual
     const { rows } = await pool.query(
       "SELECT finance_pin_hash FROM admin_profiles WHERE user_id = $1",
       [adminId]
     );
-
     const profile = rows[0];
 
-    // Si ya tiene PIN, verificar el actual antes de cambiar
+    // Si ya tiene PIN, exige el actual para cambiarlo
     if (profile?.finance_pin_hash) {
       if (!currentPin) {
         return res.status(400).json({ error: "Debes ingresar el PIN actual para cambiarlo." });
@@ -52,9 +66,9 @@ const setPin = async (req, res) => {
       }
     }
 
-    // Hashear y guardar (UPSERT: crea la fila si no existe)
-    const hash = await bcrypt.hash(String(newPin), 10);
+    const hash = await bcrypt.hash(String(newPin), SALT_ROUNDS);
 
+    // UPSERT: crea la fila si no existe, actualiza si ya existe
     await pool.query(
       `INSERT INTO admin_profiles (user_id, finance_pin_hash, updated_at)
        VALUES ($2, $1, NOW())
@@ -64,19 +78,26 @@ const setPin = async (req, res) => {
       [hash, adminId]
     );
 
-    return res.json({ success: true, message: "PIN configurado correctamente." });
+    // Unlock inmediato tras el setup
+    setFinanceUnlocked(adminId);
+    const financeUnlockedUntil = Date.now() + FINANCE_TTL_MS;
+
+    return res.json({
+      success: true,
+      message: "PIN configurado correctamente.",
+      financeUnlockedUntil,
+    });
   } catch (err) {
     console.error("[financePin.setPin]", err);
     return res.status(500).json({ error: "Error interno del servidor." });
   }
 };
 
-// ─── POST /api/finance-pin/verify ────────────────────────────────────────────
-// Verifica el PIN ingresado por el admin.
+// ─── POST /api/finance-pin/verify ─────────────────────────────────────────────
 // Body: { pin: "1234" }
 const verifyPin = async (req, res) => {
   try {
-    const adminId = req.user.id;
+    const adminId = _adminId(req);
     const { pin } = req.body;
 
     if (!pin) {
@@ -87,20 +108,38 @@ const verifyPin = async (req, res) => {
       "SELECT finance_pin_hash FROM admin_profiles WHERE user_id = $1",
       [adminId]
     );
-
     const profile = rows[0];
 
     if (!profile?.finance_pin_hash) {
-      return res.json({ valid: true, noPinConfigured: true });
+      // Sin PIN configurado → acceso libre
+      setFinanceUnlocked(adminId);
+      return res.json({ valid: true, noPinConfigured: true, financeUnlockedUntil: Date.now() + FINANCE_TTL_MS });
     }
 
     const valid = await bcrypt.compare(String(pin), profile.finance_pin_hash);
+    if (!valid) {
+      return res.json({ valid: false });
+    }
 
-    return res.json({ valid });
+    setFinanceUnlocked(adminId);
+    return res.json({ valid: true, financeUnlockedUntil: Date.now() + FINANCE_TTL_MS });
   } catch (err) {
     console.error("[financePin.verifyPin]", err);
     return res.status(500).json({ error: "Error interno del servidor." });
   }
 };
 
-module.exports = { getStatus, setPin, verifyPin };
+// ─── POST /api/finance-pin/lock ───────────────────────────────────────────────
+// Invalida la sesión financiera explícitamente (botón "Bloquear ahora")
+const lockPin = (req, res) => {
+  try {
+    const adminId = _adminId(req);
+    clearFinanceUnlocked(adminId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[financePin.lockPin]", err);
+    return res.status(500).json({ error: "Error interno del servidor." });
+  }
+};
+
+module.exports = { getStatus, setPin, verifyPin, lockPin };
