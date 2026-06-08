@@ -86,18 +86,13 @@ const verifyPin = async (req, res) => {
 
     const profile = rows[0];
 
-    // Sin PIN configurado → acceso libre
     if (!profile?.finance_pin_hash) {
-      return res.json({ success: true, noPinConfigured: true });
+      return res.json({ valid: true, noPinConfigured: true });
     }
 
     const valid = await bcrypt.compare(String(pin), profile.finance_pin_hash);
 
-    if (!valid) {
-      return res.status(401).json({ error: "PIN incorrecto." });
-    }
-
-    return res.json({ success: true });
+    return res.json({ valid });
   } catch (err) {
     console.error("[financePin.verifyPin]", err);
     return res.status(500).json({ error: "Error interno del servidor." });
