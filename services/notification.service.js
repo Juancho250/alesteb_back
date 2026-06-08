@@ -102,10 +102,32 @@ async function enqueueNotification({
     [templateKey, channel]
   );
 
-  const renderedSubject = tpl ? _render(tpl.subject_template, payload) : null;
-  const renderedMessage = tpl
-    ? _render(tpl.body_template, payload)
-    : JSON.stringify(payload);
+  if (!tpl) {
+    console.error(
+      `[Notification] Template faltante: key=${templateKey} channel=${channel} ownerAdmin=${ownerAdminId} — notificación cancelada`
+    );
+    await db.query(
+      `INSERT INTO notification_queue
+         (owner_admin_id, recipient_user_id, recipient_phone, recipient_email,
+          channel, event, template_key, rendered_subject, rendered_message,
+          payload, status, attempts, max_attempts, last_error, scheduled_for,
+          reference_type, reference_id, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',0,3,$11,NOW(),$12,$13,NOW(),NOW())`,
+      [
+        ownerAdminId, recipientUserId ?? null,
+        recipientPhone, recipientEmail,
+        channel, event, templateKey,
+        null, 'NO_TEMPLATE',
+        JSON.stringify(payload),
+        'Template no encontrado — revisar notification_templates',
+        referenceType ?? null, referenceId ?? null,
+      ]
+    );
+    return null;
+  }
+
+  const renderedSubject = _render(tpl.subject_template, payload);
+  const renderedMessage = _render(tpl.body_template, payload);
 
   const { rows: [queued] } = await db.query(
     `INSERT INTO notification_queue

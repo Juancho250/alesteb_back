@@ -358,6 +358,7 @@ exports.createOrder = async (req, res) => {
         fulfillment_mode_snapshot: fulfillmentSnapshot,
         supplier_cost_at_sale:    Number(product.supplier_cost_estimate ?? 0),
         estimated_delivery_date:  itemEstimatedDelivery,
+        lead_time_days:           leadDays,
       });
     }
 
@@ -568,17 +569,23 @@ exports.createOrder = async (req, res) => {
     // WhatsApp al admin del tenant
     if (ownerAdminId) {
       const waEvent = hasOnDemandItems ? 'new_on_demand_sale' : 'new_sale';
+      const items_formatted = validatedItems.map(i => {
+        if (i.fulfillment_mode_snapshot === 'stock') return `• ${i.name} × ${i.quantity} (stock inmediato)`;
+        const dias = i.lead_time_days > 0 ? ` · ~${i.lead_time_days} días` : '';
+        return `• ${i.name} × ${i.quantity} (por pedido${dias})`;
+      }).join('\n');
+      const on_demand_count = String(validatedItems.filter(i => i.fulfillment_mode_snapshot !== 'stock').length);
       enqueueNotification({
         ownerAdminId,
         recipientUserId: ownerAdminId,
         event:           waEvent,
         channel:         'whatsapp',
         payload: {
-          sale_number:   saleNumber,
-          customer_name: customer.name,
-          total:         `$${fmt(total)}`,
-          items_list:    validatedItems.map(i => `• ${i.name} × ${i.quantity}`).join('\n'),
-          pending_count: String(validatedItems.filter(i => i.fulfillment_mode_snapshot !== 'stock').length),
+          sale_number:    saleNumber,
+          customer_name:  customer.name,
+          total:          `$${fmt(total)}`,
+          items_formatted,
+          on_demand_count,
         },
         templateKey:    waEvent,
         referenceType:  'sale',
