@@ -52,11 +52,15 @@ const setPin = async (req, res) => {
       }
     }
 
-    // Hashear y guardar
+    // Hashear y guardar (UPSERT: crea la fila si no existe)
     const hash = await bcrypt.hash(String(newPin), 10);
 
     await pool.query(
-      "UPDATE admin_profiles SET finance_pin_hash = $1, updated_at = NOW() WHERE user_id = $2",
+      `INSERT INTO admin_profiles (user_id, finance_pin_hash, updated_at)
+       VALUES ($2, $1, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET finance_pin_hash = EXCLUDED.finance_pin_hash,
+             updated_at       = NOW()`,
       [hash, adminId]
     );
 
