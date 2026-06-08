@@ -236,6 +236,7 @@ exports.createOrder = async (req, res) => {
     sale_type = "online", payment_method = "cash",
     credit_due_date = null, credit_notes = null, initial_payment = 0,
     shipping_address, shipping_city, shipping_notes,
+    reservation_ids = [],
   } = req.body;
 
   if (!customer_id || !items?.length)
@@ -534,6 +535,14 @@ exports.createOrder = async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    // Release any checkout reservations so stock_reserved is freed immediately
+    if (Array.isArray(reservation_ids) && reservation_ids.length) {
+      const relCtx = { ownerAdminId, userId: req.user?.id ?? 0 };
+      reservation_ids.forEach(id => {
+        inv.releaseReservation(id, relCtx, 'sale_confirmed').catch(() => {});
+      });
+    }
 
     const orderCode = `AL-${saleNumber.slice(4)}`;
 

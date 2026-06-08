@@ -2,6 +2,7 @@
 const db = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 const { emitDataUpdate } = require("../config/socket");
+const inv = require("../services/inventory.service");
 
 // ─── Helper: obtener variantes completas de un producto ──────────────────────
 const getVariantsForProduct = async (productId) => {
@@ -59,15 +60,14 @@ exports.create = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Crear variante
+    // Always insert with stock=0; initial stock goes through inventory service below
     const vRes = await client.query(
       `INSERT INTO product_variants (product_id, sku, sale_price, stock)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [productId, sku || null, sale_price || null, stock]
+       VALUES ($1, $2, $3, 0) RETURNING id`,
+      [productId, sku || null, sale_price || null]
     );
     const variantId = vRes.rows[0].id;
 
-    // Asignar atributos
     for (const avId of attribute_value_ids) {
       await client.query(
         `INSERT INTO variant_attribute_values (variant_id, attribute_value_id) VALUES ($1, $2)`,
@@ -75,19 +75,36 @@ exports.create = async (req, res) => {
       );
     }
 
-    // Marcar el producto como "tiene variantes"
     await client.query(
       `UPDATE products SET has_variants = true WHERE id = $1`,
       [productId]
     );
 
     await client.query("COMMIT");
+
+    // Route initial stock through inventory service so ledger is written
+    if (Number(stock) > 0) {
+      const { rows: [prod] } = await db.query(
+        `SELECT owner_admin_id FROM products WHERE id = $1`, [productId]
+      );
+      await inv.registerInitialStock(
+        {
+          productId: parseInt(productId),
+          variantId,
+          quantity: Number(stock),
+          purchasePrice: null,
+          reason: 'Stock inicial de variante',
+        },
+        { ownerAdminId: prod?.owner_admin_id ?? req.adminId, userId: req.user?.id ?? 0 },
+      );
+    }
+
     const [variant] = await getVariantsForProduct(productId)
       .then(arr => arr.filter(v => v.id === variantId));
     emitDataUpdate("products", "updated", { id: parseInt(productId), variant_created: variantId }, req.adminId);
     res.status(201).json({ success: true, data: variant });
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     console.error("[VARIANT CREATE]", e);
     if (e.code === '23505') return res.status(400).json({ success: false, message: "SKU duplicado" });
     res.status(500).json({ success: false, message: "Error al crear variante" });
@@ -102,10 +119,21 @@ exports.update = async (req, res) => {
 
   try {
     await client.query("BEGIN");
+
+    // Read current stock before updating (needed for delta calculation)
+    let currentStock = null;
+    if (stock !== undefined) {
+      const { rows: [cur] } = await client.query(
+        `SELECT stock FROM product_variants WHERE id = $1`, [variantId]
+      );
+      currentStock = cur ? Number(cur.stock) : 0;
+    }
+
+    // Update metadata only — stock mutations go through inventory service
     await client.query(
-      `UPDATE product_variants SET sku=$1, sale_price=$2, stock=$3, is_active=$4, updated_at=NOW()
-       WHERE id=$5`,
-      [sku || null, sale_price || null, stock, is_active ?? true, variantId]
+      `UPDATE product_variants SET sku=$1, sale_price=$2, is_active=$3, updated_at=NOW()
+       WHERE id=$4`,
+      [sku || null, sale_price || null, is_active ?? true, variantId]
     );
 
     if (Array.isArray(attribute_value_ids)) {
@@ -119,10 +147,31 @@ exports.update = async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    // Route stock change through inventory service so ledger is written and locks are respected
+    if (stock !== undefined && currentStock !== null && Number(stock) !== currentStock) {
+      const delta = Number(stock) - currentStock;
+      const { rows: [vp] } = await db.query(
+        `SELECT p.owner_admin_id, pv.product_id
+         FROM product_variants pv JOIN products p ON p.id = pv.product_id
+         WHERE pv.id = $1`,
+        [variantId]
+      );
+      await inv.manualAdjustment(
+        {
+          productId: vp.product_id,
+          variantId: parseInt(variantId),
+          delta,
+          reason: 'Ajuste desde edición de variante',
+        },
+        { ownerAdminId: vp.owner_admin_id ?? req.adminId, userId: req.user?.id ?? 0 },
+      );
+    }
+
     emitDataUpdate("products", "updated", { variant_updated: parseInt(variantId) }, req.adminId);
     res.json({ success: true, message: "Variante actualizada" });
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     console.error("[VARIANT UPDATE]", e);
     res.status(500).json({ success: false, message: "Error al actualizar variante" });
   } finally { client.release(); }

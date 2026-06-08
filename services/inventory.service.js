@@ -445,6 +445,12 @@ async function createReservation({ items, sessionId, userId, ownerAdminId, ttlMi
     for (const item of items) {
       const { productId, variantId, quantity } = item;
 
+      // Check fulfillment_mode before locking — on_demand products have no physical stock to reserve
+      const { rows: [modeRow] } = await client.query(
+        `SELECT fulfillment_mode FROM products WHERE id = $1`, [productId]
+      );
+      if (modeRow?.fulfillment_mode === 'on_demand') continue;
+
       // Read + lock to check disponible atomically
       const { rows: [row] } = variantId
         ? await client.query(

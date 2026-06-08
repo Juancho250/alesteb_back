@@ -99,7 +99,10 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
            p.sale_price AS price,
            p.stock,
            p.has_variants,
+           p.fulfillment_mode,
+           p.supplier_lead_time_days,
            CASE
+             WHEN p.fulfillment_mode = 'on_demand' THEN 'normal'
              WHEN p.stock <= 0           THEN 'out'
              WHEN p.stock <= p.min_stock THEN 'low'
              ELSE 'normal'
@@ -162,7 +165,8 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
          ) best_discount ON true
          ${where}
          GROUP BY p.id, p.name, p.sku, p.description, p.sale_price,
-                  p.stock, p.min_stock, p.has_variants, c.name, c.slug,
+                  p.stock, p.min_stock, p.has_variants, p.fulfillment_mode,
+                  p.supplier_lead_time_days, c.name, c.slug,
                   p.created_at, p.owner_admin_id,
                   best_discount.type, best_discount.value, best_discount.final_price
          ORDER BY ${orderBy}
@@ -210,7 +214,10 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
          p.sale_price AS price,
          p.stock,
          p.has_variants,
+         p.fulfillment_mode,
+         p.supplier_lead_time_days,
          CASE
+           WHEN p.fulfillment_mode = 'on_demand' THEN 'normal'
            WHEN p.stock <= 0           THEN 'out'
            WHEN p.stock <= p.min_stock THEN 'low'
            ELSE 'normal'
@@ -575,7 +582,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       }
 
       const productRes = await client.query(
-        `SELECT id, name, sale_price, stock, stock_reserved, stock_safety, purchase_price, has_variants
+        `SELECT id, name, sale_price, stock, stock_reserved, stock_safety, purchase_price, has_variants, fulfillment_mode
          FROM products
          WHERE id = $1 AND is_active = true AND owner_admin_id = $2`,
         [item.product_id, adminId]
@@ -587,6 +594,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       }
 
       const product = productRes.rows[0];
+      const fulfillmentMode = product.fulfillment_mode ?? 'stock';
       let variantId = null;
       let unitPrice = Number(product.sale_price);
       const unitCost = Number(product.purchase_price ?? 0);
@@ -608,12 +616,14 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
         const variant = varRes.rows[0];
         variantId = variant.id;
         if (variant.sale_price != null) unitPrice = Number(variant.sale_price);
-        const disponible = Math.max(0, variant.stock - variant.stock_reserved - (variant.stock_safety ?? 0));
-        if (disponible < item.quantity) {
-          await client.query("ROLLBACK");
-          return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
+        if (fulfillmentMode !== 'on_demand') {
+          const disponible = Math.max(0, variant.stock - variant.stock_reserved - (variant.stock_safety ?? 0));
+          if (disponible < item.quantity) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
+          }
         }
-      } else {
+      } else if (fulfillmentMode !== 'on_demand') {
         const disponible = Math.max(0, product.stock - product.stock_reserved - (product.stock_safety ?? 0));
         if (disponible < item.quantity) {
           await client.query("ROLLBACK");
@@ -624,14 +634,15 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
       saleItems.push({
-        product_id:   product.id,
-        variant_id:   variantId,
-        quantity:     item.quantity,
-        unit_price:   unitPrice,
-        unit_cost:    unitCost,
-        subtotal:     itemSubtotal,
-        profit_unit:  unitPrice - unitCost,
-        total_profit: (unitPrice - unitCost) * item.quantity,
+        product_id:       product.id,
+        variant_id:       variantId,
+        quantity:         item.quantity,
+        unit_price:       unitPrice,
+        unit_cost:        unitCost,
+        subtotal:         itemSubtotal,
+        profit_unit:      unitPrice - unitCost,
+        total_profit:     (unitPrice - unitCost) * item.quantity,
+        fulfillment_mode: fulfillmentMode,
       });
     }
 
@@ -759,17 +770,20 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
 
     for (const item of saleItems) {
       await client.query(
-        `INSERT INTO sale_items (sale_id, product_id, variant_id, quantity, unit_price, unit_cost, subtotal, profit_per_unit, total_profit, discount_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [saleId, item.product_id, item.variant_id ?? null, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId]
+        `INSERT INTO sale_items (sale_id, product_id, variant_id, quantity, unit_price, unit_cost, subtotal, profit_per_unit, total_profit, discount_id, fulfillment_mode_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [saleId, item.product_id, item.variant_id ?? null, item.quantity, item.unit_price, item.unit_cost, item.subtotal, item.profit_unit, item.total_profit, discountId, item.fulfillment_mode]
       );
-      await inv.applyStockMovement(
-        client,
-        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
-        -1, 'sale_confirmed',
-        { ownerAdminId: adminId, userId: req.user?.id ?? 0,
-          referenceType: 'sale', referenceId: saleId }
-      );
+      // Only deduct physical stock for items that are fulfilled from inventory
+      if (item.fulfillment_mode !== 'on_demand') {
+        await inv.applyStockMovement(
+          client,
+          { productId: item.product_id, variantId: item.variant_id ?? null, quantity: item.quantity },
+          -1, 'sale_confirmed',
+          { ownerAdminId: adminId, userId: req.user?.id ?? 0,
+            referenceType: 'sale', referenceId: saleId }
+        );
+      }
     }
 
     await client.query("COMMIT");
@@ -791,6 +805,33 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
     res.status(500).json({ success: false, message: "Error al registrar la venta" });
   } finally {
     client.release();
+  }
+});
+
+// GET /public-api/v1/inventory/availability?productId=&variantId=
+// Returns real-time disponible for the storefront without requiring admin JWT.
+router.get("/inventory/availability", requireApiPermission("products:read"), async (req, res) => {
+  try {
+    const adminId   = req.apiKey.adminId;
+    const productId = Number(req.query.productId);
+    const variantId = req.query.variantId ? Number(req.query.variantId) : null;
+    if (!productId) return res.status(400).json({ success: false, message: "productId requerido" });
+
+    const conditions = variantId
+      ? ["product_id = $1", "variant_id = $2", "owner_admin_id = $3"]
+      : ["product_id = $1", "variant_id IS NULL", "owner_admin_id = $2"];
+    const params = variantId ? [productId, variantId, adminId] : [productId, adminId];
+
+    const { rows } = await db.query(
+      `SELECT disponible, min_stock, stock_safety, fulfillment_mode
+       FROM v_stock_disponible WHERE ${conditions.join(" AND ")} LIMIT 1`,
+      params
+    );
+    const row = rows[0] ?? null;
+    res.json({ success: true, data: row });
+  } catch (err) {
+    console.error("[PUBLIC API] GET /inventory/availability", err);
+    res.status(500).json({ success: false, message: "Error al verificar disponibilidad" });
   }
 });
 

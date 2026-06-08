@@ -14,6 +14,7 @@ router.use(requireFeature("has_purchase_orders"));
 
 // ── Static routes first ───────────────────────────────────────────────────────
 router.get ('/pending',              requireManager, ctrl.getPending);
+router.get ('/purchase-orders',      requireManager, ctrl.getPurchaseOrders);
 router.get ('/sales-awaiting',       requireManager, ctrl.getSalesAwaiting);
 router.post('/group-purchase-order', requireManager, ctrl.groupPurchaseOrder);
 

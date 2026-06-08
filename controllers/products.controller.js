@@ -441,12 +441,22 @@ exports.create = async (req, res) => {
 
     await client.query("BEGIN");
 
+    if (Number(stock) > 0) {
+      await client.query("ROLLBACK");
+      client.release();
+      return res.status(400).json({
+        success: false,
+        message: "Crea el producto con stock=0 y luego usa POST /inventory/initial-stock para registrar el stock inicial con su entrada en el ledger.",
+        code: "USE_INITIAL_STOCK_ENDPOINT",
+      });
+    }
+
     const productResult = await client.query(
       `INSERT INTO products
          (name, sale_price, stock, category_id, description, owner_admin_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, 0, $3, $4, $5, $6)
        RETURNING id`,
-      [name.trim(), Number(sale_price), Number(stock), category_id,
+      [name.trim(), Number(sale_price), category_id,
        description?.trim() || null, ownerAdminId, req.user.id]
     );
     const productId = productResult.rows[0].id;

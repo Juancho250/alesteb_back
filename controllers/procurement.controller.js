@@ -102,6 +102,55 @@ exports.getSalesAwaiting = async (req, res) => {
 };
 
 /**
+ * GET /api/procurement/purchase-orders
+ * Returns active purchase orders (sent to supplier, not yet received/cancelled).
+ */
+exports.getPurchaseOrders = async (req, res) => {
+  try {
+    const ownerClause = req.isSuperAdmin ? '' : 'AND po.owner_admin_id = $1';
+    const params      = req.isSuperAdmin ? [] : [req.adminId];
+
+    const { rows } = await db.query(
+      `SELECT
+         po.id,
+         po.order_number,
+         po.status,
+         po.total_cost,
+         po.notes,
+         po.created_at,
+         prov.id   AS supplier_id,
+         prov.name AS supplier_name,
+         json_agg(
+           json_build_object(
+             'id',            poi.id,
+             'product_id',    poi.product_id,
+             'variant_id',    poi.variant_id,
+             'quantity',      poi.quantity,
+             'unit_cost',     poi.unit_cost,
+             'received_quantity', poi.received_quantity,
+             'product_name',  p.name,
+             'product_sku',   p.sku
+           ) ORDER BY poi.id
+         ) AS items
+       FROM purchase_orders po
+       LEFT JOIN providers prov ON prov.id = po.provider_id
+       LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
+       LEFT JOIN products p ON p.id = poi.product_id
+       WHERE po.status NOT IN ('received', 'cancelled')
+         ${ownerClause}
+       GROUP BY po.id, prov.id, prov.name
+       ORDER BY po.created_at DESC`,
+      params
+    );
+
+    res.json({ success: true, data: rows, total: rows.length });
+  } catch (err) {
+    console.error('[procurement.getPurchaseOrders]', err);
+    res.status(500).json({ success: false, message: 'Error al obtener órdenes de compra' });
+  }
+};
+
+/**
  * POST /api/procurement/group-purchase-order
  * Body: { procurementOrderIds: number[], supplierId: number, notes?: string }
  */
