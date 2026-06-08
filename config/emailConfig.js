@@ -17,27 +17,20 @@ function getBrevoClient() {
 
   const brevo = require('@getbrevo/brevo');
 
-  console.log('🔍 Brevo exports keys:', Object.keys(brevo));
-
-  // ✅ Método correcto para @getbrevo/brevo v3+
   _SendSmtpEmail = brevo.SendSmtpEmail;
 
   if (!brevo.TransactionalEmailsApi || !_SendSmtpEmail) {
-    throw new Error(`Brevo exports inválidos. Keys: ${Object.keys(brevo).join(', ')}`);
+    throw new Error('Brevo: exports inválidos (TransactionalEmailsApi o SendSmtpEmail no encontrados)');
   }
 
   _apiInstance = new brevo.TransactionalEmailsApi();
 
-  // ✅ AQUÍ estaba el bug: la autenticación cambió en v3
   _apiInstance.setApiKey(
     brevo.TransactionalEmailsApiApiKeys.apiKey,
     process.env.BREVO_API_KEY
   );
 
-  console.log('🔑 API Key configurada:', process.env.BREVO_API_KEY
-    ? `${process.env.BREVO_API_KEY.substring(0, 8)}...`
-    : '❌ VACÍA'
-  );
+  console.log('[Brevo] API key cargada:', !!process.env.BREVO_API_KEY ? '✓' : '✗ VACÍA');
 
   return { apiInstance: _apiInstance, SendSmtpEmail: _SendSmtpEmail };
 }
@@ -118,11 +111,11 @@ const sendVerificationEmail = async (email, code, userName) => {
   `;
 
   try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('✅ Email verificación enviado:', data.messageId);
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[Email] Verificación enviada — messageId:', body?.messageId ?? '(sin id)');
     return true;
   } catch (error) {
-    console.error('❌ Error al enviar email de verificación:', error);
+    console.error('[Email] Error enviando verificación:', error?.message ?? error);
     throw new Error('No se pudo enviar el código de verificación');
   }
 };
@@ -233,11 +226,11 @@ const sendOrderConfirmationEmail = async (email, userName, orderData) => {
   `;
 
   try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('✅ Email confirmación pedido enviado:', data.messageId);
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[Email] Confirmación de pedido enviada — messageId:', body?.messageId ?? '(sin id)');
     return true;
   } catch (error) {
-    console.error('❌ Error al enviar email de confirmación:', error);
+    console.error('[Email] Error enviando confirmación de pedido:', error?.message ?? error);
     return false;
   }
 };
@@ -349,11 +342,11 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
   `;
 
   try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('✅ Email pago confirmado enviado:', data.messageId);
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[Email] Pago confirmado enviado — messageId:', body?.messageId ?? '(sin id)');
     return true;
   } catch (error) {
-    console.error('❌ Error al enviar email pago confirmado:', error);
+    console.error('[Email] Error enviando pago confirmado:', error?.message ?? error);
     return false;
   }
 };
@@ -363,10 +356,10 @@ const sendPaymentConfirmedEmail = async (email, userName, orderData) => {
 // ============================================
 const verifyEmailConfig = () => {
   if (!process.env.BREVO_API_KEY) {
-    console.warn('⚠️  BREVO_API_KEY no configurada — emails desactivados');
+    console.warn('[Brevo] BREVO_API_KEY no configurada — emails desactivados');
     return false;
   }
-  console.log('✅ Brevo lista — key:', `${process.env.BREVO_API_KEY.substring(0, 8)}...`);
+  console.log('[Brevo] Configuración lista ✓');
   return true;
 };
 
@@ -474,11 +467,11 @@ const sendAgentReportEmail = async (email, title, markdownContent) => {
   `;
 
   try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("✅ Reporte IA enviado:", data.messageId);
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[Email] Reporte IA enviado — messageId:', body?.messageId ?? '(sin id)');
     return true;
   } catch (err) {
-    console.error("❌ Error enviando reporte IA:", err.message);
+    console.error('[Email] Error enviando reporte IA:', err?.message ?? err);
     return false;
   }
 };
