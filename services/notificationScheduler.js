@@ -35,44 +35,46 @@ async function notifyTenantManagers(adminId, payload, managerMap) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// TAREA 1: Stock crítico — cada 30 minutos
+// TAREA 1: Stock crítico — cada 30 minutos, deduplicado via stock_alerts
 // ─────────────────────────────────────────────────────────────
 cron.schedule("*/30 * * * *", async () => {
   try {
     const managerMap = await getAllTenantManagers();
     if (!managerMap.size) return;
 
-    const { rows: outOfStock } = await db.query(`
-      SELECT id, name, sku, owner_admin_id
-      FROM products
-      WHERE is_active = true
-        AND stock = 0
-        AND owner_admin_id IS NOT NULL
-        AND updated_at > NOW() - INTERVAL '35 minutes'
+    // Leer alertas no notificadas y no resueltas (máx 50 por ciclo)
+    const { rows: pendingAlerts } = await db.query(`
+      SELECT sa.id, sa.owner_admin_id, sa.product_id, sa.variant_id,
+             sa.alert_type, sa.current_value, sa.threshold,
+             p.name, p.sku
+      FROM stock_alerts sa
+      JOIN products p ON p.id = sa.product_id
+      WHERE sa.notified = false
+        AND sa.resolved = false
+        AND sa.alert_type IN ('low_stock', 'out_of_stock')
+      ORDER BY sa.created_at ASC
+      LIMIT 50
     `);
 
-    for (const p of outOfStock) {
-      const payload = Payloads.outOfStock(p.name + (p.sku ? ` (${p.sku})` : ""));
-      await notifyTenantManagers(p.owner_admin_id, payload, managerMap).catch(console.error);
+    let notified = 0;
+    for (const alert of pendingAlerts) {
+      const label = alert.name + (alert.sku ? ` (${alert.sku})` : '');
+      const payload = alert.alert_type === 'out_of_stock'
+        ? Payloads.outOfStock(label)
+        : Payloads.lowStock(label, alert.current_value, alert.threshold);
+
+      await notifyTenantManagers(alert.owner_admin_id, payload, managerMap).catch(console.error);
+
+      await db.query(
+        `UPDATE stock_alerts SET notified = true WHERE id = $1`,
+        [alert.id]
+      ).catch(console.error);
+
+      notified++;
     }
 
-    const { rows: lowStock } = await db.query(`
-      SELECT id, name, stock, min_stock, sku, owner_admin_id
-      FROM products
-      WHERE is_active = true
-        AND stock > 0
-        AND stock <= min_stock
-        AND owner_admin_id IS NOT NULL
-        AND updated_at > NOW() - INTERVAL '35 minutes'
-    `);
-
-    for (const p of lowStock) {
-      const payload = Payloads.lowStock(p.name, p.stock, p.min_stock);
-      await notifyTenantManagers(p.owner_admin_id, payload, managerMap).catch(console.error);
-    }
-
-    if (outOfStock.length || lowStock.length) {
-      console.log(`[Scheduler/Stock] Sin stock: ${outOfStock.length} | Stock bajo: ${lowStock.length}`);
+    if (notified) {
+      console.log(`[Scheduler/Stock] ${notified} alertas de stock notificadas`);
     }
   } catch (err) {
     console.error("[Scheduler/Stock] Error:", err.message);

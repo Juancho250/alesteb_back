@@ -7,6 +7,7 @@ const { auth, requireAdmin } = require('../middleware/auth.middleware');
 const { requireFeature } = require("../middleware/subscription.middleware");
 const { adminScope }         = require('../middleware/adminScope');
 const inv      = require('../services/inventory.service');
+const procCtrl = require('../controllers/procurement.controller');
 
 router.use(auth, adminScope);
 router.use(requireFeature("has_inventory"));
@@ -148,34 +149,7 @@ router.patch('/alerts/:id/resolve', requireAdmin, async (req, res) => {
 // ─── ENTRADAS ─────────────────────────────────────────────────────────────────
 
 // POST /api/inventory/purchase-order/:id/receive
-router.post('/purchase-order/:id/receive', requireAdmin, async (req, res) => {
-  try {
-    const procSvc = require('../services/procurement.service');
-    const { received_quantities, actual_unit_costs } = req.body;
-
-    const { rows: poItems } = await require('../config/db').query(
-      `SELECT id, quantity, received_quantity, unit_cost
-       FROM purchase_order_items WHERE purchase_order_id = $1`,
-      [Number(req.params.id)]
-    );
-
-    const items = poItems.map(item => {
-      const maxPending = Math.max(0, item.quantity - (item.received_quantity || 0));
-      const receivedQty = received_quantities
-        ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
-        : maxPending;
-      const actualUnitCost = actual_unit_costs
-        ? Number(actual_unit_costs[item.id] ?? item.unit_cost ?? 0)
-        : Number(item.unit_cost ?? 0);
-      return { poItemId: item.id, actualUnitCost, receivedQty };
-    }).filter(i => i.receivedQty > 0);
-
-    const result = await procSvc.receivePurchaseOrder(
-      Number(req.params.id), items, req.user.id, req.adminId
-    );
-    res.json({ success: true, data: result });
-  } catch (err) { send(res, err); }
-});
+router.post('/purchase-order/:id/receive', requireAdmin, procCtrl.receivePurchaseOrder);
 
 // POST /api/inventory/adjustment
 // body: { productId, variantId?, delta, reason }

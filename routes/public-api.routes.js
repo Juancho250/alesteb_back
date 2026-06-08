@@ -12,8 +12,11 @@ const storefrontAuth  = require("../controllers/storefront.auth.controller");
 const reviewsCtrl     = require("../controllers/reviews.controller");
 const wompiCtrl       = require("../controllers/wompi.controller");
 const analyticsCtrl   = require("../controllers/analytics.controller");
-const inv             = require("../services/inventory.service");
-const { createUpload } = require("../middleware/upload.middleware");
+const inv                   = require("../services/inventory.service");
+const procurement           = require("../services/procurement.service");
+const { notifyTenant, Payloads } = require("../services/push.service");
+const { enqueueNotification }    = require("../services/notification.service");
+const { createUpload }      = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
 
@@ -552,6 +555,7 @@ router.get("/sales", requireApiPermission("sales:read"), async (req, res) => {
 // POST /public-api/v1/sales
 router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res) => {
   const client = await db.connect();
+  let clientReleased = false;
   try {
     const adminId = req.apiKey.adminId;
     const {
@@ -787,6 +791,70 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
     }
 
     await client.query("COMMIT");
+    client.release();
+    clientReleased = true;
+
+    const hasOnDemandItems = saleItems.some(i => i.fulfillment_mode === 'on_demand');
+
+    // ── Auto-crear procurement orders (nueva tx, no bloquea la respuesta) ──────
+    if (hasOnDemandItems) {
+      const { rows: [prof] } = await db.query(
+        `SELECT auto_create_procurement_orders FROM admin_profiles WHERE user_id = $1`,
+        [adminId]
+      );
+      const autoCreate = prof?.auto_create_procurement_orders ?? true;
+
+      if (autoCreate) {
+        const procClient = await db.connect();
+        try {
+          await procClient.query('BEGIN');
+          await procurement.createProcurementOrdersForSale(saleId, procClient);
+          await procClient.query('COMMIT');
+        } catch (procErr) {
+          await procClient.query('ROLLBACK');
+          console.error('[PUBLIC API] procurement auto-create error:', procErr.message);
+          // Marcar la venta con procurement_status pending aunque falle la creación
+          await db.query(
+            `UPDATE sales SET procurement_status = 'pending', has_on_demand_items = true WHERE id = $1`,
+            [saleId]
+          ).catch(() => {});
+        } finally {
+          procClient.release();
+        }
+      }
+    }
+
+    // ── Push notification al admin (fire-and-forget) ───────────────────────────
+    const pushPayload = hasOnDemandItems
+      ? {
+          title:    '🔔 Nueva venta — pedir al proveedor',
+          body:     `${saleRes.rows[0].sale_number} · $${Number(saleRes.rows[0].total).toLocaleString('es-CO')}`,
+          icon:     '/icon-192.png',
+          badge:    '/badge-72.png',
+          url:      '/procurement',
+          tag:      'new-on-demand-sale',
+          severity: 'warning',
+        }
+      : Payloads.newOnlineOrder(saleRes.rows[0].sale_number, saleRes.rows[0].total);
+    notifyTenant(adminId, pushPayload).catch(() => {});
+
+    // ── WhatsApp enqueue (fire-and-forget) ────────────────────────────────────
+    const waEvent = hasOnDemandItems ? 'new_on_demand_sale' : 'new_sale';
+    enqueueNotification({
+      ownerAdminId:    adminId,
+      recipientUserId: adminId,
+      event:           waEvent,
+      channel:         'whatsapp',
+      payload: {
+        sale_number:   saleRes.rows[0].sale_number,
+        total:         `$${Number(saleRes.rows[0].total).toLocaleString('es-CO')}`,
+        items_list:    saleItems.map(i => `• Producto #${i.product_id} × ${i.quantity}`).join('\n'),
+        pending_count: String(saleItems.filter(i => i.fulfillment_mode === 'on_demand').length),
+      },
+      templateKey:   waEvent,
+      referenceType: 'sale',
+      referenceId:   saleId,
+    }).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -797,14 +865,16 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
         subtotal:        saleRes.rows[0].subtotal,
         discount_amount: saleRes.rows[0].discount_amount,
         total:           saleRes.rows[0].total,
+        has_on_demand_items: hasOnDemandItems,
       },
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (!clientReleased) {
+      try { await client.query("ROLLBACK"); } catch {}
+      client.release();
+    }
     console.error("[PUBLIC API] POST /sales", error);
     res.status(500).json({ success: false, message: "Error al registrar la venta" });
-  } finally {
-    client.release();
   }
 });
 

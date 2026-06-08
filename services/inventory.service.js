@@ -172,7 +172,7 @@ async function _createExpense(client, {
 // ── Alert resolver ─────────────────────────────────────────────────────────────
 // Marks low_stock/out_of_stock alerts resolved for products whose disponible
 // is now above min_stock. Called AFTER stock has been updated (same tx).
-async function _resolveAlerts(client, productIds, ownerAdminId) {
+async function resolveAlerts(client, productIds, ownerAdminId) {
   if (!productIds.length) return;
   await client.query(
     `UPDATE stock_alerts sa
@@ -276,94 +276,6 @@ async function registerInitialStock({ productId, variantId, quantity, purchasePr
 
     await client.query('COMMIT');
     return { ok: true, quantity, totalValue: quantity * effectivePrice };
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Receive a purchase order fully.
- * - Applies stock per item (purchase_received ledger)
- * - Updates purchase_price from PO unit_cost (if changed)
- * - Creates expense linked to PO (idempotent)
- * - Resolves open stock alerts for affected products
- * - Marks PO → received
- */
-async function receivePurchaseOrder(purchaseOrderId, ctx) {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: [po] } = await client.query(
-      `SELECT id, order_number, status, total_cost, provider_id, owner_admin_id
-       FROM purchase_orders WHERE id = $1 FOR UPDATE`,
-      [purchaseOrderId],
-    );
-    if (!po)                    throw _err('PO no encontrada', 'NOT_FOUND');
-    if (po.owner_admin_id !== ctx.ownerAdminId) throw _err('PO de otro tenant', 'FORBIDDEN');
-    if (po.status === 'received')  throw _err('PO ya recibida', 'ALREADY_DONE');
-    if (po.status === 'cancelled') throw _err('PO cancelada', 'INVALID_STATE');
-
-    const { rows: items } = await client.query(
-      `SELECT product_id, variant_id, quantity, received_quantity, unit_cost
-       FROM purchase_order_items WHERE purchase_order_id = $1`,
-      [purchaseOrderId],
-    );
-
-    const affectedProductIds = [];
-
-    for (const item of items) {
-      const qty = item.received_quantity ?? item.quantity;
-      if (qty <= 0) continue;
-
-      await _applyStockDelta(
-        client,
-        { productId: item.product_id, variantId: item.variant_id ?? null, quantity: qty },
-        +1, 'purchase_received',
-        { ...ctx, referenceType: 'purchase_order', referenceId: purchaseOrderId,
-          notes: `OC #${po.order_number}` },
-      );
-
-      affectedProductIds.push(item.product_id);
-
-      // Update purchase_price only if unit_cost is set and different
-      if (item.unit_cost != null) {
-        await client.query(
-          `UPDATE products SET purchase_price = $1, updated_at = NOW()
-           WHERE id = $2 AND purchase_price IS DISTINCT FROM $1::numeric`,
-          [item.unit_cost, item.product_id],
-        );
-      }
-    }
-
-    // Create linked expense (idempotent — skips if PO already has one)
-    await _createExpense(client, {
-      expenseType:    'purchase',
-      description:    `Recepción OC #${po.order_number}`,
-      amount:         po.total_cost,
-      paymentMethod:  'credit',
-      providerId:     po.provider_id,
-      purchaseOrderId,
-      notes:          `OC #${po.order_number} recibida`,
-      createdBy:      ctx.userId,
-      ownerAdminId:   ctx.ownerAdminId,
-    });
-
-    // Resolve low_stock / out_of_stock alerts where stock is now sufficient
-    await _resolveAlerts(client, [...new Set(affectedProductIds)], ctx.ownerAdminId);
-
-    await client.query(
-      `UPDATE purchase_orders
-       SET status = 'received', received_date = NOW(), updated_at = NOW()
-       WHERE id = $1`,
-      [purchaseOrderId],
-    );
-
-    await client.query('COMMIT');
-    return { ok: true, itemsProcessed: items.length };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -711,9 +623,9 @@ const cancelSale = cancelConfirmedSale;
 module.exports = {
   // Low-level (embed in caller's tx)
   applyStockMovement,
+  resolveAlerts,
   // High-level (own transaction)
   registerInitialStock,
-  receivePurchaseOrder,
   processReturn,
   manualAdjustment,
   createReservation,

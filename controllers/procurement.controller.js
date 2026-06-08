@@ -205,6 +205,66 @@ exports.cancel = async (req, res) => {
 };
 
 /**
+ * POST /api/procurement/purchase-orders/:id/receive
+ * Body: {
+ *   received_quantities?: { [poItemId]: number }  — omit to receive all pending
+ *   actual_unit_costs?:   { [poItemId]: number }  — omit to use PO unit_cost
+ * }
+ */
+exports.receivePurchaseOrder = async (req, res) => {
+  try {
+    const purchaseOrderId       = Number(req.params.id);
+    const { received_quantities, actual_unit_costs } = req.body;
+
+    const { rows: poItems } = await db.query(
+      `SELECT id, quantity, received_quantity, unit_cost
+       FROM purchase_order_items WHERE purchase_order_id = $1`,
+      [purchaseOrderId]
+    );
+
+    if (!poItems.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Orden de compra no encontrada o sin ítems',
+      });
+    }
+
+    const items = poItems
+      .map(item => {
+        const maxPending  = Math.max(0, item.quantity - (item.received_quantity || 0));
+        const receivedQty = received_quantities
+          ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
+          : maxPending;
+        const actualUnitCost = actual_unit_costs
+          ? Number(actual_unit_costs[item.id] ?? item.unit_cost ?? 0)
+          : Number(item.unit_cost ?? 0);
+        return { poItemId: item.id, actualUnitCost, receivedQty };
+      })
+      .filter(i => i.receivedQty > 0);
+
+    if (!items.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay ítems pendientes de recibir en esta orden',
+      });
+    }
+
+    const result = await procurement.receivePurchaseOrder(
+      purchaseOrderId, items, req.user.id, req.adminId
+    );
+
+    res.json({
+      success: true,
+      message: 'Orden de compra recibida correctamente',
+      data:    result,
+    });
+  } catch (err) {
+    console.error('[procurement.receivePurchaseOrder]', err);
+    _send(res, err);
+  }
+};
+
+/**
  * POST /api/sales/:id/mark-delivered
  * Marks a sale as delivered and recognizes revenue.
  */

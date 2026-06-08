@@ -2,6 +2,7 @@
 'use strict';
 
 const db = require('../config/db');
+const { applyStockMovement, resolveAlerts } = require('./inventory.service');
 
 function _err(message, code) {
   const e = new Error(message);
@@ -234,8 +235,8 @@ async function receivePurchaseOrder(purchaseOrderId, items, userId, ownerAdminId
     if (po.status === 'received')  throw _err('OC ya recibida', 'ALREADY_DONE');
     if (po.status === 'cancelled') throw _err('OC cancelada', 'INVALID_STATE');
 
-    const { applyStockMovement } = require('./inventory.service');
-    const affectedSaleIds = new Set();
+    const affectedSaleIds      = new Set();
+    const affectedStockProducts = new Set();
     let totalActual = 0;
 
     for (const { poItemId, actualUnitCost, receivedQty } of items) {
@@ -334,7 +335,14 @@ async function receivePurchaseOrder(purchaseOrderId, items, userId, ownerAdminId
             [unitCost, poItem.product_id]
           );
         }
+
+        affectedStockProducts.add(poItem.product_id);
       }
+    }
+
+    // Resolve stock alerts for products replenished via the stock path
+    if (affectedStockProducts.size > 0) {
+      await resolveAlerts(client, [...affectedStockProducts], ownerAdminId);
     }
 
     // Mark PO received

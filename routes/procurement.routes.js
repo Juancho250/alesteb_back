@@ -19,6 +19,7 @@ router.get ('/sales-awaiting',       requireManager, ctrl.getSalesAwaiting);
 router.post('/group-purchase-order', requireManager, ctrl.groupPurchaseOrder);
 
 // ── Routes with :id ───────────────────────────────────────────────────────────
-router.post('/:id/cancel', requireManager, ctrl.cancel);
+router.post('/purchase-orders/:id/receive', requireManager, ctrl.receivePurchaseOrder);
+router.post('/:id/cancel',                 requireManager, ctrl.cancel);
 
 module.exports = router;
