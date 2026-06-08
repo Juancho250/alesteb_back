@@ -598,10 +598,10 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       }
 
       const product = productRes.rows[0];
-      const fulfillmentMode = product.fulfillment_mode ?? 'stock';
       let variantId = null;
       let unitPrice = Number(product.sale_price);
       const unitCost = Number(product.purchase_price ?? 0);
+      let disponible = Math.max(0, product.stock - product.stock_reserved - (product.stock_safety ?? 0));
 
       if (product.has_variants) {
         if (!item.variant_id) {
@@ -620,20 +620,11 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
         const variant = varRes.rows[0];
         variantId = variant.id;
         if (variant.sale_price != null) unitPrice = Number(variant.sale_price);
-        if (fulfillmentMode !== 'on_demand') {
-          const disponible = Math.max(0, variant.stock - variant.stock_reserved - (variant.stock_safety ?? 0));
-          if (disponible < item.quantity) {
-            await client.query("ROLLBACK");
-            return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
-          }
-        }
-      } else if (fulfillmentMode !== 'on_demand') {
-        const disponible = Math.max(0, product.stock - product.stock_reserved - (product.stock_safety ?? 0));
-        if (disponible < item.quantity) {
-          await client.query("ROLLBACK");
-          return res.status(409).json({ success: false, message: `Stock insuficiente para "${product.name}". Disponible: ${disponible}`, code: "INSUFFICIENT_STOCK" });
-        }
+        disponible = Math.max(0, variant.stock - variant.stock_reserved - (variant.stock_safety ?? 0));
       }
+
+      // Hybrid: if physical stock covers the order → stock path, otherwise → procurement
+      const fulfillmentSnapshot = disponible >= item.quantity ? 'stock' : 'on_demand';
 
       const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
@@ -646,7 +637,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
         subtotal:         itemSubtotal,
         profit_unit:      unitPrice - unitCost,
         total_profit:     (unitPrice - unitCost) * item.quantity,
-        fulfillment_mode: fulfillmentMode,
+        fulfillment_mode: fulfillmentSnapshot,
       });
     }
 

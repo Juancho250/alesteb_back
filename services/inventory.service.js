@@ -357,12 +357,6 @@ async function createReservation({ items, sessionId, userId, ownerAdminId, ttlMi
     for (const item of items) {
       const { productId, variantId, quantity } = item;
 
-      // Check fulfillment_mode before locking — on_demand products have no physical stock to reserve
-      const { rows: [modeRow] } = await client.query(
-        `SELECT fulfillment_mode FROM products WHERE id = $1`, [productId]
-      );
-      if (modeRow?.fulfillment_mode === 'on_demand') continue;
-
       // Read + lock to check disponible atomically
       const { rows: [row] } = variantId
         ? await client.query(
@@ -378,8 +372,7 @@ async function createReservation({ items, sessionId, userId, ownerAdminId, ttlMi
       if (!variantId && row.owner_admin_id !== ownerAdminId) throw _err('Producto de otro tenant', 'FORBIDDEN');
 
       const disponible = Math.max(0, row.stock - row.stock_reserved - (row.stock_safety ?? 0));
-      if (disponible < quantity)
-        throw _err(`Disponible insuficiente (${disponible}) para reservar ${quantity}`, 'INSUFFICIENT_STOCK');
+      if (disponible < quantity) continue; // hybrid: sin stock físico → procurement lo cubre
 
       await _adjustReserved(client, { productId, variantId, quantity }, +1, ownerAdminId);
 

@@ -117,35 +117,6 @@ router.get('/valuation', requireAdmin, async (req, res) => {
   } catch (err) { send(res, err); }
 });
 
-// GET /api/inventory/alerts  — alertas no resueltas del tenant
-router.get('/alerts', requireAdmin, async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT sa.*, p.name AS product_name, pv.sku AS variant_sku
-       FROM stock_alerts sa
-       JOIN products p ON p.id = sa.product_id
-       LEFT JOIN product_variants pv ON pv.id = sa.variant_id
-       WHERE sa.owner_admin_id = $1 AND sa.resolved = false
-       ORDER BY sa.created_at DESC`,
-      [req.adminId],
-    );
-    res.json({ success: true, data: rows });
-  } catch (err) { send(res, err); }
-});
-
-// PATCH /api/inventory/alerts/:id/resolve
-router.patch('/alerts/:id/resolve', requireAdmin, async (req, res) => {
-  try {
-    const { rowCount } = await db.query(
-      `UPDATE stock_alerts SET resolved = true, resolved_at = NOW()
-       WHERE id = $1 AND owner_admin_id = $2`,
-      [req.params.id, req.adminId],
-    );
-    if (!rowCount) return res.status(404).json({ success: false, message: 'Alerta no encontrada' });
-    res.json({ success: true, message: 'Alerta resuelta' });
-  } catch (err) { send(res, err); }
-});
-
 // ─── ENTRADAS ─────────────────────────────────────────────────────────────────
 
 // POST /api/inventory/purchase-order/:id/receive

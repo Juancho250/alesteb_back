@@ -337,18 +337,7 @@ exports.createOrder = async (req, res) => {
       );
       const disponibleInmediato = Number(_sv?.disp ?? availStock);
 
-      const fulfillmentMode = product.fulfillment_mode || 'stock';
-      let fulfillmentSnapshot;
-      if (fulfillmentMode === 'on_demand') {
-        fulfillmentSnapshot = 'on_demand';
-      } else if (fulfillmentMode === 'hybrid') {
-        fulfillmentSnapshot = disponibleInmediato >= item.quantity ? 'stock' : 'on_demand';
-      } else {
-        fulfillmentSnapshot = 'stock';
-      }
-
-      if (fulfillmentSnapshot === 'stock' && availStock < item.quantity)
-        throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${availStock}`);
+      const fulfillmentSnapshot = disponibleInmediato >= item.quantity ? 'stock' : 'on_demand';
 
       const leadDays = fulfillmentSnapshot === 'stock'
         ? 0

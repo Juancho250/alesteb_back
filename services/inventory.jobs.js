@@ -120,8 +120,8 @@ function startLowStockAlertJob() {
 
 function startInventoryJobs() {
   startReservationCleanupJob();
-  startLowStockAlertJob();
-  console.log('[inventory-jobs] reservation-cleanup (1min) + low-stock-alerts (15min) iniciados');
+  // startLowStockAlertJob(); — disabled: all products are hybrid, no static alerts needed
+  console.log('[inventory-jobs] reservation-cleanup (1min) iniciado');
 }
 
 module.exports = { startInventoryJobs };

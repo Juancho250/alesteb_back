@@ -34,52 +34,7 @@ async function notifyTenantManagers(adminId, payload, managerMap) {
   await Promise.allSettled(ids.map((id) => notifyUser(id, payload)));
 }
 
-// ─────────────────────────────────────────────────────────────
-// TAREA 1: Stock crítico — cada 30 minutos, deduplicado via stock_alerts
-// ─────────────────────────────────────────────────────────────
-cron.schedule("*/30 * * * *", async () => {
-  try {
-    const managerMap = await getAllTenantManagers();
-    if (!managerMap.size) return;
-
-    // Leer alertas no notificadas y no resueltas (máx 50 por ciclo)
-    const { rows: pendingAlerts } = await db.query(`
-      SELECT sa.id, sa.owner_admin_id, sa.product_id, sa.variant_id,
-             sa.alert_type, sa.current_value, sa.threshold,
-             p.name, p.sku
-      FROM stock_alerts sa
-      JOIN products p ON p.id = sa.product_id
-      WHERE sa.notified = false
-        AND sa.resolved = false
-        AND sa.alert_type IN ('low_stock', 'out_of_stock')
-      ORDER BY sa.created_at ASC
-      LIMIT 50
-    `);
-
-    let notified = 0;
-    for (const alert of pendingAlerts) {
-      const label = alert.name + (alert.sku ? ` (${alert.sku})` : '');
-      const payload = alert.alert_type === 'out_of_stock'
-        ? Payloads.outOfStock(label)
-        : Payloads.lowStock(label, alert.current_value, alert.threshold);
-
-      await notifyTenantManagers(alert.owner_admin_id, payload, managerMap).catch(console.error);
-
-      await db.query(
-        `UPDATE stock_alerts SET notified = true WHERE id = $1`,
-        [alert.id]
-      ).catch(console.error);
-
-      notified++;
-    }
-
-    if (notified) {
-      console.log(`[Scheduler/Stock] ${notified} alertas de stock notificadas`);
-    }
-  } catch (err) {
-    console.error("[Scheduler/Stock] Error:", err.message);
-  }
-});
+// TAREA 1 (deshabilitada): alertas de stock — modo hybrid hace innecesario este cron
 
 // ─────────────────────────────────────────────────────────────
 // TAREA 2: Facturas vencidas — diario a las 9:00
