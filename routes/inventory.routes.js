@@ -85,9 +85,11 @@ router.get('/ledger', requireAdmin, async (req, res) => {
     const productId = req.query.productId ? Number(req.query.productId) : null;
     const limit     = Math.min(Number(req.query.limit) || 50, 500);
 
-    const params  = productId ? [ownerId, productId, limit] : [ownerId, limit];
-    const filter  = productId ? 'AND product_id = $2' : '';
+    const offset  = Number(req.query.offset) || 0;
+    const params  = productId ? [ownerId, productId, limit, offset] : [ownerId, limit, offset];
+    const filter  = productId ? 'AND sl.product_id = $2' : '';
     const limitPh = productId ? '$3' : '$2';
+    const offsetPh = productId ? '$4' : '$3';
 
     const { rows } = await db.query(
       `SELECT sl.*, p.name AS product_name, pv.sku AS variant_sku
@@ -96,7 +98,7 @@ router.get('/ledger', requireAdmin, async (req, res) => {
        LEFT JOIN product_variants pv ON pv.id = sl.variant_id
        WHERE sl.owner_admin_id = $1 ${filter}
        ORDER BY sl.created_at DESC
-       LIMIT ${limitPh}`,
+       LIMIT ${limitPh} OFFSET ${offsetPh}`,
       params,
     );
     res.json({ success: true, data: rows });

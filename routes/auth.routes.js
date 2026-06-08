@@ -20,7 +20,7 @@ const { auth, checkRateLimit } = require("../middleware/auth.middleware");
 // Login — panel admin y app cliente
 router.post(
   "/login",
-  checkRateLimit("email", 5, 15 * 60 * 1000),
+  checkRateLimit("email", 20, 15 * 60 * 1000),
   authController.login
 );
 
