@@ -327,9 +327,9 @@ exports.createOrder = async (req, res) => {
 
       // Determine fulfillment snapshot using real-time disponible_inmediato from view
       const _svQ = variantId
-        ? `SELECT COALESCE(disponible_inmediato, disponible) AS disp
+        ? `SELECT disponible_inmediato AS disp
            FROM v_stock_disponible WHERE product_id = $1 AND variant_id = $2 LIMIT 1`
-        : `SELECT COALESCE(disponible_inmediato, disponible) AS disp
+        : `SELECT disponible_inmediato AS disp
            FROM v_stock_disponible WHERE product_id = $1 AND variant_id IS NULL LIMIT 1`;
       const { rows: [_sv] } = await client.query(
         _svQ, variantId ? [item.product_id, variantId] : [item.product_id]
