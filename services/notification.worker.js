@@ -1,10 +1,11 @@
 // services/notification.worker.js
 'use strict';
 
-const cron                  = require('node-cron');
-const notificationService   = require('./notification.service');
-const db                    = require('../config/db');
+const cron                        = require('node-cron');
+const notificationService         = require('./notification.service');
+const db                          = require('../config/db');
 const { sendCreditReminderEmail } = require('../config/emailConfig');
+const { getAdminBranding }        = require('./branding.service');
 
 // ── Recordatorios de cuotas de crédito ───────────────────────────────────────
 
@@ -27,9 +28,9 @@ async function checkCreditInstallments() {
      JOIN users u   ON u.id = s.customer_id
      WHERE cps.status = 'pending'
        AND (
-         (cps.due_date <= $1 AND cps.overdue_notified_at IS NULL)      -- overdue
-         OR (cps.due_date = $2 AND cps.due_notified_at IS NULL)         -- due today
-         OR (cps.due_date BETWEEN $2 AND $3 AND cps.upcoming_notified_at IS NULL) -- upcoming 2 days
+         (cps.due_date <= $1 AND cps.overdue_notified_at IS NULL)
+         OR (cps.due_date = $2 AND cps.due_notified_at IS NULL)
+         OR (cps.due_date BETWEEN $2 AND $3 AND cps.upcoming_notified_at IS NULL)
        )`,
     [today, today, upcoming]
   );
@@ -39,19 +40,22 @@ async function checkCreditInstallments() {
   console.log(`[CreditReminderWorker] Procesando ${rows.length} cuota(s)...`);
 
   for (const inst of rows) {
-    const isOverdue  = inst.due_date < today;
-    const isDue      = inst.due_date === today;
+    const dueDateStr = String(inst.due_date).slice(0, 10);
+    const isOverdue  = dueDateStr < today;
+    const isDue      = dueDateStr === today;
     const isUpcoming = !isOverdue && !isDue;
 
-    const type = isOverdue ? 'overdue' : isDue ? 'due' : 'upcoming';
+    const type        = isOverdue ? 'overdue' : isDue ? 'due' : 'upcoming';
     const templateKey = `credit_${type}`;
 
     const daysOverdue = isOverdue
-      ? Math.round((new Date(today) - new Date(inst.due_date)) / 86400000)
+      ? Math.round((new Date(today) - new Date(dueDateStr)) / 86400000)
       : 0;
 
     const fmtAmt  = Number(inst.expected_amount).toLocaleString('es-CO', { maximumFractionDigits: 0 });
-    const fmtDate = new Date(inst.due_date + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+    const fmtDate = new Date(inst.due_date).toLocaleDateString('es-CO', {
+      day: '2-digit', month: 'short', year: 'numeric', timeZone: 'America/Bogota',
+    });
 
     const payload = {
       customer_name:      inst.customer_name,
@@ -63,7 +67,10 @@ async function checkCreditInstallments() {
       days_overdue:       daysOverdue,
     };
 
-    // 1. Email al cliente (si tiene email) — llamada directa a Brevo
+    // 1. Email al cliente (si tiene email) — llamada directa a Brevo con branding del admin
+    let branding = null;
+    try { branding = await getAdminBranding(inst.owner_admin_id); } catch {}
+
     if (inst.customer_email) {
       try {
         await sendCreditReminderEmail(
@@ -77,7 +84,8 @@ async function checkCreditInstallments() {
             dueDate:           inst.due_date,
             daysOverdue,
           },
-          type
+          type,
+          branding
         );
       } catch (err) {
         console.error(`[CreditReminderWorker] Email falló para cuota ${inst.id}:`, err.message);
@@ -87,14 +95,14 @@ async function checkCreditInstallments() {
     // 2. WhatsApp al admin — a través de notification_queue
     try {
       await notificationService.enqueueNotification({
-        ownerAdminId:  inst.owner_admin_id,
+        ownerAdminId:    inst.owner_admin_id,
         recipientUserId: null,
-        event:         'credit_reminder',
-        channel:       'whatsapp',
+        event:           'credit_reminder',
+        channel:         'whatsapp',
         payload,
         templateKey,
-        referenceType: 'credit_payment_schedule',
-        referenceId:   inst.id,
+        referenceType:   'credit_payment_schedule',
+        referenceId:     inst.id,
       });
     } catch (err) {
       console.error(`[CreditReminderWorker] WhatsApp falló para cuota ${inst.id}:`, err.message);

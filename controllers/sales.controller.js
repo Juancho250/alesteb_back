@@ -3,6 +3,7 @@ const db         = require("../config/db");
 const inv        = require("../services/inventory.service");
 const cloudinary = require("../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
+const { getAdminBranding } = require("../services/branding.service");
 const { emitDataUpdate } = require("../config/socket");
 const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
 const procurement         = require("../services/procurement.service");
@@ -563,19 +564,25 @@ exports.createOrder = async (req, res) => {
     const orderCode = `AL-${saleNumber.slice(4)}`;
 
     if (customer.email) {
-      if (finalPaymentStatus === "paid" && !isFiado) {
-        sendPaymentConfirmedEmail?.(customer.email, customer.name, {
-          orderCode, total, items: validatedItems,
-        }).catch(() => {});
-      } else {
-        sendOrderConfirmationEmail(customer.email, customer.name, {
-          orderCode, total, items: validatedItems,
-          shippingAddress: shipping_address, shippingCity: shipping_city,
-          shippingNotes: shipping_notes,
-          paymentMethod: isFiado ? "fiado" : "wompi",
-          creditDueDate: credit_due_date, initialPayment: initPay,
-        }).catch(() => {});
-      }
+      (async () => {
+        let branding = null;
+        try { branding = await getAdminBranding(ownerAdminId); } catch {}
+        try {
+          if (finalPaymentStatus === "paid" && !isFiado) {
+            await sendPaymentConfirmedEmail?.(customer.email, customer.name, {
+              orderCode, total, items: validatedItems,
+            }, branding);
+          } else {
+            await sendOrderConfirmationEmail(customer.email, customer.name, {
+              orderCode, total, items: validatedItems,
+              shippingAddress: shipping_address, shippingCity: shipping_city,
+              shippingNotes: shipping_notes,
+              paymentMethod: isFiado ? "fiado" : "wompi",
+              creditDueDate: credit_due_date, initialPayment: initPay,
+            }, branding);
+          }
+        } catch {}
+      })();
     }
 
     emitDataUpdate("sales", "created", {

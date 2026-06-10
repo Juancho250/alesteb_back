@@ -5,6 +5,7 @@ const db = require("../config/db");
 const { buildCheckoutSession, processWompiWebhook } = require("../services/payment.service");
 const { emitDataUpdate } = require("../config/socket");
 const { sendPaymentConfirmedEmail }             = require("../config/emailConfig");
+const { getAdminBranding }                     = require("../services/branding.service");
 const { notifyUser, notifyTenant, Payloads }    = require("../services/push.service");
 
 // ── GET /api/wompi/session/:sale_id ──────────────────────────────────────────
@@ -94,7 +95,11 @@ const handleWebhook = async (req, res) => {
         const orderCode = `AL-${sale_number?.slice(4)}`;
 
         if (email) {
-          sendPaymentConfirmedEmail?.(email, name, { orderCode, total, items: [] }).catch(() => {});
+          (async () => {
+            let branding = null;
+            try { branding = await getAdminBranding(owner_admin_id); } catch {}
+            sendPaymentConfirmedEmail?.(email, name, { orderCode, total, items: [] }, branding).catch(() => {});
+          })();
         }
         notifyUser(customer_id, Payloads.paymentConfirmed(orderCode)).catch(() => {});
         if (owner_admin_id) {
