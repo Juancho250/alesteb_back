@@ -86,11 +86,12 @@ async function createProcurementOrdersForSale(saleId, client) {
     await client.query(
       `INSERT INTO stock_alerts
          (owner_admin_id, product_id, variant_id, sale_id,
-          procurement_order_id, alert_type, created_at)
-       VALUES ($1,$2,$3,$4,$5,'procurement_needed',NOW())`,
+          procurement_order_id, alert_type, threshold, current_value, created_at)
+       VALUES ($1,$2,$3,$4,$5,'procurement_needed',$6,$7,NOW())`,
       [
         sale.owner_admin_id, item.product_id,
         item.variant_id ?? null, saleId, po.id,
+        item.quantity, 0,
       ]
     );
 
