@@ -476,10 +476,126 @@ const sendAgentReportEmail = async (email, title, markdownContent) => {
   }
 };
 
+// ============================================
+// 📅 RECORDATORIO DE CUOTA DE CRÉDITO (al cliente)
+// ============================================
+// type: 'upcoming' | 'due' | 'overdue'
+// data: { saleNumber, installmentNum, totalInstallments, amount, dueDate, daysOverdue? }
+const sendCreditReminderEmail = async (email, customerName, data, type) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const { saleNumber, installmentNum, totalInstallments, amount, dueDate, daysOverdue = 0 } = data;
+
+  const fmtAmt  = Number(amount).toLocaleString('es-CO', { maximumFractionDigits: 0 });
+  const fmtDate = new Date(dueDate + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const configs = {
+    upcoming: {
+      subject: `📅 Recordatorio de cuota · ${saleNumber} - Alesteb`,
+      headerBg: 'linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)',
+      badgeColor: '#3b82f6', badgeBg: 'rgba(59,130,246,0.15)', badgeBorder: 'rgba(59,130,246,0.35)',
+      badgeText: '📅  RECORDATORIO DE CUOTA',
+      headline: `¡Hola, ${customerName}! 👋`,
+      body: `Tu cuota <strong>#${installmentNum}</strong> de <strong>$${fmtAmt}</strong> vence el <strong>${fmtDate}</strong>.`,
+      accentColor: '#3b82f6', accentBg: '#eff6ff', accentBorder: '#bfdbfe',
+    },
+    due: {
+      subject: `⚠️ Hoy vence tu cuota · ${saleNumber} - Alesteb`,
+      headerBg: 'linear-gradient(135deg,#78350f 0%,#92400e 100%)',
+      badgeColor: '#fde68a', badgeBg: 'rgba(252,211,77,0.15)', badgeBorder: 'rgba(252,211,77,0.4)',
+      badgeText: '⚠️  VENCE HOY',
+      headline: `${customerName}, hoy vence tu cuota`,
+      body: `La cuota <strong>#${installmentNum}</strong> de <strong>$${fmtAmt}</strong> vence <strong>hoy</strong>. Realiza tu pago para evitar recargos.`,
+      accentColor: '#d97706', accentBg: '#fffbeb', accentBorder: '#fde68a',
+    },
+    overdue: {
+      subject: `🔴 Cuota vencida · ${saleNumber} - Alesteb`,
+      headerBg: 'linear-gradient(135deg,#7f1d1d 0%,#991b1b 100%)',
+      badgeColor: '#fca5a5', badgeBg: 'rgba(239,68,68,0.15)', badgeBorder: 'rgba(239,68,68,0.4)',
+      badgeText: '🔴  CUOTA VENCIDA',
+      headline: `${customerName}, tienes una cuota vencida`,
+      body: `La cuota <strong>#${installmentNum}</strong> de <strong>$${fmtAmt}</strong> venció hace <strong>${daysOverdue} día${daysOverdue !== 1 ? 's' : ''}</strong>. Comunícate con nosotros lo antes posible.`,
+      accentColor: '#dc2626', accentBg: '#fef2f2', accentBorder: '#fecaca',
+    },
+  };
+
+  const c = configs[type] ?? configs.upcoming;
+
+  const sendSmtpEmail    = new SendSmtpEmail();
+  sendSmtpEmail.subject  = c.subject;
+  sendSmtpEmail.to       = [{ email, name: customerName }];
+  sendSmtpEmail.sender   = SENDER;
+  sendSmtpEmail.htmlContent = `
+    <!DOCTYPE html><html lang="es">
+    <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+    <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+        <tr><td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+            <tr>
+              <td style="background:${c.headerBg};padding:48px 40px;border-radius:20px 20px 0 0;text-align:center;">
+                <div style="color:white;font-size:40px;font-weight:900;letter-spacing:-2px;text-transform:uppercase;margin:0;">ALESTEB</div>
+                <div style="width:40px;height:3px;background:${c.badgeColor};margin:16px auto 24px;border-radius:2px;"></div>
+                <div style="background:${c.badgeBg};border:1px solid ${c.badgeBorder};border-radius:50px;display:inline-block;padding:10px 28px;">
+                  <span style="color:${c.badgeColor};font-size:13px;font-weight:800;">${c.badgeText}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:white;padding:48px 40px;">
+                <p style="font-size:22px;color:#0f172a;font-weight:800;margin:0 0 16px;">${c.headline}</p>
+                <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 28px;">${c.body}</p>
+
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:${c.accentBg};border:1px solid ${c.accentBorder};border-radius:14px;margin-bottom:28px;">
+                  <tr><td style="padding:20px 24px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                      <div>
+                        <div style="font-size:11px;font-weight:700;color:${c.accentColor};letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">Venta</div>
+                        <div style="font-size:15px;font-weight:800;color:#0f172a;">${saleNumber}</div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;font-weight:700;color:${c.accentColor};letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">Cuota</div>
+                        <div style="font-size:15px;font-weight:800;color:#0f172a;">${installmentNum} / ${totalInstallments}</div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;font-weight:700;color:${c.accentColor};letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">Monto</div>
+                        <div style="font-size:22px;font-weight:900;color:#0f172a;">$${fmtAmt}</div>
+                      </div>
+                    </div>
+                  </td></tr>
+                </table>
+
+                <p style="font-size:13px;color:#94a3b8;text-align:center;margin:0;">
+                  ¿Necesitas ayuda? Escríbenos a <a href="mailto:web@alesteb.com" style="color:#3b82f6;text-decoration:none;font-weight:700;">web@alesteb.com</a>
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#0f172a;padding:28px 40px;border-radius:0 0 20px 20px;text-align:center;">
+                <div style="color:#475569;font-size:12px;">© 2026 Alesteb Boutique · Todos los derechos reservados</div>
+                <div style="color:#334155;font-size:11px;margin-top:6px;">Este es un correo automático, por favor no respondas directamente.</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+      </table>
+    </body></html>
+  `;
+
+  try {
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`[Email] Recordatorio de cuota (${type}) enviado — messageId:`, body?.messageId ?? '(sin id)');
+    return true;
+  } catch (err) {
+    console.error(`[Email] Error enviando recordatorio (${type}):`, err?.message ?? err);
+    return false;
+  }
+};
+
 module.exports = {
   generateVerificationCode,
   sendVerificationEmail,
   sendOrderConfirmationEmail,
   sendPaymentConfirmedEmail,
   sendAgentReportEmail,
+  sendCreditReminderEmail,
 };

@@ -237,6 +237,7 @@ exports.createOrder = async (req, res) => {
     credit_due_date = null, credit_notes = null, initial_payment = 0,
     shipping_address, shipping_city, shipping_notes,
     reservation_ids = [],
+    payment_schedule = [],
   } = req.body;
 
   if (!customer_id || !items?.length)
@@ -245,7 +246,13 @@ exports.createOrder = async (req, res) => {
   const isFiado  = payment_method === "fiado";
   const isOnline = sale_type === "online" || sale_type === "web";
 
-  if (isFiado && !credit_due_date)
+  // credit_due_date can be derived from the last schedule installment
+  const derivedDueDate = credit_due_date
+    ?? (isFiado && Array.isArray(payment_schedule) && payment_schedule.length > 0
+        ? payment_schedule[payment_schedule.length - 1].date
+        : null);
+
+  if (isFiado && !derivedDueDate)
     return res.status(400).json({ success: false, message: "Se requiere fecha límite de pago para ventas a crédito" });
 
   if (!req.isSuperAdmin && isManager(req)) {
@@ -479,8 +486,8 @@ exports.createOrder = async (req, res) => {
         total, amountPaidInitial, dbPaymentMethod, finalPaymentStatus, sale_type,
         req.user?.id ?? customer_id, ownerAdminId,
         shipping_address ?? null, shipping_city ?? null, shipping_notes ?? null,
-        isFiado ? credit_due_date : null,
-        isFiado ? credit_notes    : null,
+        isFiado ? derivedDueDate : null,
+        isFiado ? credit_notes   : null,
         hasOnDemandItems, initialProcurementStatus, saleEstimatedDelivery,
       ]
     );
@@ -528,6 +535,19 @@ exports.createOrder = async (req, res) => {
          isFiado ? "Abono inicial sobre crédito" : "Pago completo en tienda",
          req.user?.id ?? null]
       );
+    }
+
+    // Insert payment schedule if provided (fiado only)
+    if (isFiado && Array.isArray(payment_schedule) && payment_schedule.length > 0) {
+      for (let i = 0; i < payment_schedule.length; i++) {
+        const inst = payment_schedule[i];
+        await client.query(
+          `INSERT INTO credit_payment_schedule
+             (sale_id, owner_admin_id, installment_num, due_date, expected_amount)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [saleId, ownerAdminId, i + 1, inst.date, Number(inst.amount)]
+        );
+      }
     }
 
     await client.query("COMMIT");
