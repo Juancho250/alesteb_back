@@ -124,7 +124,6 @@ exports.getPurchaseOrders = async (req, res) => {
            json_build_object(
              'id',            poi.id,
              'product_id',    poi.product_id,
-             'variant_id',    poi.variant_id,
              'quantity',      poi.quantity,
              'unit_cost',     poi.unit_cost,
              'received_quantity', poi.received_quantity,
