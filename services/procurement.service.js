@@ -88,7 +88,7 @@ async function createProcurementOrdersForSale(saleId, client) {
          (owner_admin_id, product_id, variant_id, sale_id,
           procurement_order_id, alert_type, threshold, current_value, created_at)
        VALUES ($1,$2,$3,$4,$5,'procurement_needed',$6,$7,NOW())
-       ON CONFLICT (owner_admin_id, product_id, COALESCE(variant_id, 0), alert_type)
+       ON CONFLICT (owner_admin_id, product_id, (COALESCE(variant_id, 0)), alert_type)
        DO UPDATE SET
          threshold            = EXCLUDED.threshold,
          current_value        = EXCLUDED.current_value,
