@@ -84,19 +84,18 @@ async function createProcurementOrdersForSale(saleId, client) {
     );
 
     await client.query(
+      `DELETE FROM stock_alerts
+       WHERE owner_admin_id = $1
+         AND product_id = $2
+         AND COALESCE(variant_id, 0) = COALESCE($3::int, 0)
+         AND alert_type = 'procurement_needed'`,
+      [sale.owner_admin_id, item.product_id, item.variant_id ?? null]
+    );
+    await client.query(
       `INSERT INTO stock_alerts
          (owner_admin_id, product_id, variant_id, sale_id,
           procurement_order_id, alert_type, threshold, current_value, created_at)
-       VALUES ($1,$2,$3,$4,$5,'procurement_needed',$6,$7,NOW())
-       ON CONFLICT (owner_admin_id, product_id, (COALESCE(variant_id, 0)), alert_type)
-       DO UPDATE SET
-         threshold            = EXCLUDED.threshold,
-         current_value        = EXCLUDED.current_value,
-         procurement_order_id = EXCLUDED.procurement_order_id,
-         sale_id              = EXCLUDED.sale_id,
-         notified             = false,
-         resolved             = false,
-         resolved_at          = NULL`,
+       VALUES ($1,$2,$3,$4,$5,'procurement_needed',$6,$7,NOW())`,
       [
         sale.owner_admin_id, item.product_id,
         item.variant_id ?? null, saleId, po.id,
