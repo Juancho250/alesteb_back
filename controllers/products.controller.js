@@ -450,7 +450,8 @@ exports.getLedger = async (req, res) => {
 exports.create = async (req, res) => {
   const client = await db.connect();
   try {
-    const { name, sale_price, stock = 0, category_id, description, has_variants = false } = req.body;
+    const { name, sale_price, stock = 0, category_id, description, has_variants = false,
+            default_supplier_id, supplier_lead_time_days, supplier_cost_estimate } = req.body;
     const images = Array.isArray(req.files) ? req.files : [];
 
     const validation = validateProductData(req.body);
@@ -477,11 +478,15 @@ exports.create = async (req, res) => {
 
     const productResult = await client.query(
       `INSERT INTO products
-         (name, sale_price, stock, category_id, description, owner_admin_id, created_by)
-       VALUES ($1, $2, 0, $3, $4, $5, $6)
+         (name, sale_price, stock, category_id, description, owner_admin_id, created_by,
+          default_supplier_id, supplier_lead_time_days, supplier_cost_estimate)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
       [name.trim(), Number(sale_price), category_id,
-       description?.trim() || null, ownerAdminId, req.user.id]
+       description?.trim() || null, ownerAdminId, req.user.id,
+       default_supplier_id || null,
+       supplier_lead_time_days ? Number(supplier_lead_time_days) : null,
+       supplier_cost_estimate  ? Number(supplier_cost_estimate)  : null]
     );
     const productId = productResult.rows[0].id;
 
@@ -524,7 +529,8 @@ exports.update = async (req, res) => {
   const client = await db.connect();
   try {
     const { id } = req.params;
-    const { name, sale_price, stock, category_id, description, deleted_image_ids } = req.body;
+    const { name, sale_price, stock, category_id, description, deleted_image_ids,
+            default_supplier_id, supplier_lead_time_days, supplier_cost_estimate } = req.body;
     const newImages = req.files || [];
 
     if (!id || isNaN(id))
@@ -581,16 +587,22 @@ exports.update = async (req, res) => {
 
     await client.query(
       `UPDATE products
-       SET name        = COALESCE($1, name),
-           sale_price  = COALESCE($2, sale_price),
-           stock       = COALESCE($3, stock),
-           category_id = COALESCE($4, category_id),
-           description = $5,
-           updated_at  = NOW()
+       SET name                    = COALESCE($1, name),
+           sale_price              = COALESCE($2, sale_price),
+           stock                   = COALESCE($3, stock),
+           category_id             = COALESCE($4, category_id),
+           description             = $5,
+           default_supplier_id     = COALESCE($7, default_supplier_id),
+           supplier_lead_time_days = COALESCE($8, supplier_lead_time_days),
+           supplier_cost_estimate  = COALESCE($9, supplier_cost_estimate),
+           updated_at              = NOW()
        WHERE id = $6`,
       [name?.trim() || null, sale_price !== undefined ? Number(sale_price) : null,
        stock !== undefined ? Number(stock) : null, category_id || null,
-       description?.trim() ?? null, id]
+       description?.trim() ?? null, id,
+       default_supplier_id || null,
+       supplier_lead_time_days ? Number(supplier_lead_time_days) : null,
+       supplier_cost_estimate  ? Number(supplier_cost_estimate)  : null]
     );
 
     for (const img of currentImages.filter(
