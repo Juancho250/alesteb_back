@@ -129,7 +129,19 @@ exports.getAll = async (req, res) => {
          WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
         best_discount.type  AS discount_type,
         best_discount.value AS discount_value,
-        COALESCE(best_discount.final_price, p.sale_price) AS final_price
+        COALESCE(best_discount.final_price, p.sale_price) AS final_price,
+        -- POS availability: real available units from ledger view
+        CASE WHEN NOT p.has_variants
+          THEN COALESCE(vsd_simple.disponible_inmediato, 0)
+          ELSE NULL
+        END AS disponible_inmediato,
+        CASE
+          WHEN p.has_variants
+            THEN (p.fulfillment_mode != 'stock' OR COALESCE(vsd_variants.has_available, false))
+          ELSE
+            (p.fulfillment_mode != 'stock' OR COALESCE(vsd_simple.disponible_inmediato, 0) > 0)
+        END AS is_sellable,
+        p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN users      u ON u.id = p.owner_admin_id
@@ -156,6 +168,18 @@ exports.getAll = async (req, res) => {
         ORDER BY final_price ASC
         LIMIT 1
       ) best_discount ON true
+      LEFT JOIN LATERAL (
+        SELECT disponible_inmediato
+        FROM v_stock_disponible
+        WHERE product_id = p.id AND variant_id IS NULL
+        LIMIT 1
+      ) vsd_simple ON true
+      LEFT JOIN LATERAL (
+        SELECT bool_or(vsd.disponible_inmediato > 0) AS has_available
+        FROM v_stock_disponible vsd
+        JOIN product_variants pv ON pv.id = vsd.variant_id AND pv.is_active = true
+        WHERE vsd.product_id = p.id AND vsd.variant_id IS NOT NULL
+      ) vsd_variants ON true
       WHERE p.is_active = true
         ${tenantClause}
         ${filtersClause}

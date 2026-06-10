@@ -337,6 +337,12 @@ exports.createOrder = async (req, res) => {
       );
       const disponibleInmediato = Number(_sv?.disp ?? availStock);
 
+      if (product.fulfillment_mode === 'stock' && disponibleInmediato < item.quantity) {
+        throw new Error(
+          `"${product.name}" sin stock suficiente (disponible: ${disponibleInmediato}, solicitado: ${item.quantity})`
+        );
+      }
+
       const fulfillmentSnapshot = disponibleInmediato >= item.quantity ? 'stock' : 'on_demand';
 
       const leadDays = fulfillmentSnapshot === 'stock'
@@ -572,9 +578,16 @@ exports.createOrder = async (req, res) => {
       const items_formatted = validatedItems.map(i => {
         if (i.fulfillment_mode_snapshot === 'stock') return `• ${i.name} × ${i.quantity} (stock inmediato)`;
         const dias = i.lead_time_days > 0 ? ` · ~${i.lead_time_days} días` : '';
-        return `• ${i.name} × ${i.quantity} (por pedido${dias})`;
+        return `• ${i.name} × ${i.quantity} (bajo pedido${dias})`;
       }).join('\n');
       const on_demand_count = String(validatedItems.filter(i => i.fulfillment_mode_snapshot !== 'stock').length);
+      const allStock    = validatedItems.every(i => i.fulfillment_mode_snapshot === 'stock');
+      const allOnDemand = validatedItems.every(i => i.fulfillment_mode_snapshot !== 'stock');
+      const summary_line = allStock
+        ? '✅ Todos los productos disponibles desde inventario'
+        : allOnDemand
+          ? '📦 Pedido bajo demanda — se ordenará al proveedor'
+          : '⚠️ Pedido mixto: algunos ítems requieren orden a proveedor';
       enqueueNotification({
         ownerAdminId,
         recipientUserId: ownerAdminId,
@@ -586,6 +599,7 @@ exports.createOrder = async (req, res) => {
           total:          `$${fmt(total)}`,
           items_formatted,
           on_demand_count,
+          summary_line,
         },
         templateKey:    waEvent,
         referenceType:  'sale',

@@ -7,9 +7,19 @@ const inv = require("../services/inventory.service");
 // ─── Helper: obtener variantes completas de un producto ──────────────────────
 const getVariantsForProduct = async (productId) => {
   const result = await db.query(`
+    WITH stock_per_variant AS (
+      SELECT variant_id, disponible_inmediato
+      FROM v_stock_disponible
+      WHERE product_id = $1 AND variant_id IS NOT NULL
+    ),
+    product_mode AS (
+      SELECT fulfillment_mode FROM products WHERE id = $1
+    )
     SELECT
       pv.id, pv.product_id, pv.sku, pv.sale_price, pv.stock, pv.is_active,
       pv.created_at, pv.updated_at,
+      COALESCE(spv.disponible_inmediato, 0) AS disponible_inmediato,
+      (pm.fulfillment_mode != 'stock' OR COALESCE(spv.disponible_inmediato, 0) > 0) AS is_sellable,
       COALESCE(
         json_agg(
           json_build_object(
@@ -20,7 +30,7 @@ const getVariantsForProduct = async (productId) => {
             'display_value',   COALESCE(av.display_value, av.value),
             'hex_color',       av.hex_color,
             'attribute_value_id', av.id
-          ) ORDER BY at.id, av.sort_order   -- ✅ fix aquí
+          ) ORDER BY at.id, av.sort_order
         ) FILTER (WHERE av.id IS NOT NULL),
         '[]'
       ) AS attributes,
@@ -30,11 +40,13 @@ const getVariantsForProduct = async (productId) => {
         FROM variant_images vi WHERE vi.variant_id = pv.id
       ) AS images
     FROM product_variants pv
+    CROSS JOIN product_mode pm
+    LEFT JOIN stock_per_variant spv ON spv.variant_id = pv.id
     LEFT JOIN variant_attribute_values vav ON vav.variant_id = pv.id
     LEFT JOIN attribute_values av  ON av.id  = vav.attribute_value_id
     LEFT JOIN attribute_types  at  ON at.id  = av.attribute_type_id
     WHERE pv.product_id = $1
-    GROUP BY pv.id
+    GROUP BY pv.id, spv.disponible_inmediato, pm.fulfillment_mode
     ORDER BY pv.id
   `, [productId]);
   return result.rows;
