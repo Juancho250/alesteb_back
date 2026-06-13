@@ -782,8 +782,8 @@ exports.remove = async (req, res) => {
       }
     }
 
-    
-    // 6) Borrar producto
+      
+    // 6) Borrar producto 
     await client.query("DELETE FROM products WHERE id = $1", [id]);
 
     await client.query("COMMIT");
