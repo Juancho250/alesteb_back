@@ -1,6 +1,7 @@
 const pool       = require('../config/db');
 const cloudinary = require('../config/cloudinary');
 const { Readable } = require('stream');
+const { invalidateBrandingCache } = require('../services/branding.service');
 
 /* ─────────────────────────────────────────────
    Helper: buffer → stream para Cloudinary
@@ -63,7 +64,19 @@ const upsertAdminProfile = async (req, res) => {
       currency,
       timezone,
       social_links,
+      store_navbar_bg,
+      store_navbar_text,
+      store_page_bg,
+      store_font,
     } = req.body;
+
+    const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
+    if (store_navbar_bg  && !HEX_RE.test(store_navbar_bg))
+      return res.status(400).json({ success: false, message: 'store_navbar_bg debe ser un color hexadecimal válido (#RRGGBB)' });
+    if (store_page_bg    && !HEX_RE.test(store_page_bg))
+      return res.status(400).json({ success: false, message: 'store_page_bg debe ser un color hexadecimal válido (#RRGGBB)' });
+    if (store_navbar_text && !['light', 'dark'].includes(store_navbar_text))
+      return res.status(400).json({ success: false, message: 'store_navbar_text debe ser "light" o "dark"' });
 
     const { rows } = await pool.query(
       `INSERT INTO admin_profiles (
@@ -72,9 +85,10 @@ const upsertAdminProfile = async (req, res) => {
          business_email, business_phone, website,
          address, city, department, country,
          currency, timezone, social_links,
+         store_navbar_bg, store_navbar_text, store_page_bg, store_font,
          updated_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, now())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, now())
        ON CONFLICT (user_id)
        DO UPDATE SET
          business_name    = EXCLUDED.business_name,
@@ -93,8 +107,12 @@ const upsertAdminProfile = async (req, res) => {
          country          = EXCLUDED.country,
          currency         = EXCLUDED.currency,
          timezone         = EXCLUDED.timezone,
-         social_links     = EXCLUDED.social_links,
-         updated_at       = now()
+         social_links      = EXCLUDED.social_links,
+         store_navbar_bg   = EXCLUDED.store_navbar_bg,
+         store_navbar_text = EXCLUDED.store_navbar_text,
+         store_page_bg     = EXCLUDED.store_page_bg,
+         store_font        = EXCLUDED.store_font,
+         updated_at        = now()
        RETURNING *`,
       [
         id,
@@ -115,9 +133,14 @@ const upsertAdminProfile = async (req, res) => {
         currency        ?? 'COP',
         timezone        ?? 'America/Bogota',
         social_links ? JSON.stringify(social_links) : '{}',
+        store_navbar_bg   ?? null,
+        store_navbar_text ?? null,
+        store_page_bg     ?? null,
+        store_font        ?? null,
       ]
     );
 
+    invalidateBrandingCache(id);
     res.json({ success: true, data: rows[0], message: 'Perfil actualizado correctamente' });
   } catch (error) {
     console.error('upsertAdminProfile error:', error);

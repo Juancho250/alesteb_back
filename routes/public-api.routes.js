@@ -48,7 +48,8 @@ router.get("/profile", async (req, res) => {
          ap.primary_color, ap.secondary_color, ap.accent_color,
          ap.business_email, ap.business_phone, ap.website,
          ap.address, ap.city, ap.department, ap.country,
-         ap.currency, ap.social_links
+         ap.currency, ap.social_links,
+         ap.store_navbar_bg, ap.store_navbar_text, ap.store_page_bg, ap.store_font
        FROM admin_profiles ap
        WHERE ap.user_id = $1`,
       [adminId]
