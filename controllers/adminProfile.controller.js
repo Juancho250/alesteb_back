@@ -46,98 +46,65 @@ const upsertAdminProfile = async (req, res) => {
   try {
     const { id } = req.user;
 
-    const {
-      business_name,
-      tagline,
-      description,
-      tax_id,
-      primary_color,
-      secondary_color,
-      accent_color,
-      business_email,
-      business_phone,
-      website,
-      address,
-      city,
-      department,
-      country,
-      currency,
-      timezone,
-      social_links,
-      store_navbar_bg,
-      store_navbar_text,
-      store_page_bg,
-      store_font,
-    } = req.body;
-
     const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
-    if (store_navbar_bg  && !HEX_RE.test(store_navbar_bg))
+    if (req.body.store_navbar_bg  && !HEX_RE.test(req.body.store_navbar_bg))
       return res.status(400).json({ success: false, message: 'store_navbar_bg debe ser un color hexadecimal válido (#RRGGBB)' });
-    if (store_page_bg    && !HEX_RE.test(store_page_bg))
+    if (req.body.store_page_bg    && !HEX_RE.test(req.body.store_page_bg))
       return res.status(400).json({ success: false, message: 'store_page_bg debe ser un color hexadecimal válido (#RRGGBB)' });
-    if (store_navbar_text && !['light', 'dark'].includes(store_navbar_text))
+    if (req.body.store_navbar_text && !['light', 'dark'].includes(req.body.store_navbar_text))
       return res.status(400).json({ success: false, message: 'store_navbar_text debe ser "light" o "dark"' });
 
+    // Ensure the row exists; DB column defaults apply on first creation
+    await pool.query(
+      `INSERT INTO admin_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+      [id]
+    );
+
+    // Whitelist of updatable fields — only columns present in req.body are touched
+    const ALLOWED = {
+      business_name:     v => v,
+      tagline:           v => v,
+      description:       v => v,
+      tax_id:            v => v,
+      primary_color:     v => v,
+      secondary_color:   v => v,
+      accent_color:      v => v,
+      business_email:    v => v,
+      business_phone:    v => v,
+      website:           v => v,
+      address:           v => v,
+      city:              v => v,
+      department:        v => v,
+      country:           v => v,
+      currency:          v => v,
+      timezone:          v => v,
+      social_links:      v => v != null ? JSON.stringify(v) : null,
+      store_navbar_bg:   v => v,
+      store_navbar_text: v => v,
+      store_page_bg:     v => v,
+      store_font:        v => v,
+    };
+
+    const setCols = [];
+    const vals    = [id]; // $1 → user_id in WHERE
+
+    for (const [col, transform] of Object.entries(ALLOWED)) {
+      if (col in req.body) {
+        setCols.push(`${col} = $${vals.length + 1}`);
+        vals.push(transform(req.body[col]));
+      }
+    }
+
+    if (setCols.length === 0) {
+      const { rows: cur } = await pool.query('SELECT * FROM admin_profiles WHERE user_id = $1', [id]);
+      return res.json({ success: true, data: cur[0] ?? null, message: 'Sin cambios' });
+    }
+
+    setCols.push('updated_at = now()');
+
     const { rows } = await pool.query(
-      `INSERT INTO admin_profiles (
-         user_id, business_name, tagline, description, tax_id,
-         primary_color, secondary_color, accent_color,
-         business_email, business_phone, website,
-         address, city, department, country,
-         currency, timezone, social_links,
-         store_navbar_bg, store_navbar_text, store_page_bg, store_font,
-         updated_at
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, now())
-       ON CONFLICT (user_id)
-       DO UPDATE SET
-         business_name    = COALESCE(EXCLUDED.business_name, admin_profiles.business_name),
-         tagline          = COALESCE(EXCLUDED.tagline, admin_profiles.tagline),
-         description      = COALESCE(EXCLUDED.description, admin_profiles.description),
-         tax_id           = COALESCE(EXCLUDED.tax_id, admin_profiles.tax_id),
-         primary_color    = COALESCE(EXCLUDED.primary_color, admin_profiles.primary_color),
-         secondary_color  = COALESCE(EXCLUDED.secondary_color, admin_profiles.secondary_color),
-         accent_color     = COALESCE(EXCLUDED.accent_color, admin_profiles.accent_color),
-         business_email   = COALESCE(EXCLUDED.business_email, admin_profiles.business_email),
-         business_phone   = COALESCE(EXCLUDED.business_phone, admin_profiles.business_phone),
-         website          = COALESCE(EXCLUDED.website, admin_profiles.website),
-         address          = COALESCE(EXCLUDED.address, admin_profiles.address),
-         city             = COALESCE(EXCLUDED.city, admin_profiles.city),
-         department       = COALESCE(EXCLUDED.department, admin_profiles.department),
-         country          = COALESCE(EXCLUDED.country, admin_profiles.country),
-         currency         = COALESCE(EXCLUDED.currency, admin_profiles.currency),
-         timezone         = COALESCE(EXCLUDED.timezone, admin_profiles.timezone),
-         social_links      = COALESCE(EXCLUDED.social_links, admin_profiles.social_links),
-         store_navbar_bg   = COALESCE(EXCLUDED.store_navbar_bg, admin_profiles.store_navbar_bg),
-         store_navbar_text = COALESCE(EXCLUDED.store_navbar_text, admin_profiles.store_navbar_text),
-         store_page_bg     = COALESCE(EXCLUDED.store_page_bg, admin_profiles.store_page_bg),
-         store_font        = COALESCE(EXCLUDED.store_font, admin_profiles.store_font),
-         updated_at        = now()
-       RETURNING *`,
-      [
-        id,
-        business_name   ?? null,
-        tagline         ?? null,
-        description     ?? null,
-        tax_id          ?? null,
-        primary_color   ?? null,
-        secondary_color ?? null,
-        accent_color    ?? null,
-        business_email  ?? null,
-        business_phone  ?? null,
-        website         ?? null,
-        address         ?? null,
-        city            ?? null,
-        department      ?? null,
-        country         ?? null,
-        currency        ?? null,
-        timezone        ?? null,
-        social_links != null ? JSON.stringify(social_links) : null,
-        store_navbar_bg   ?? null,
-        store_navbar_text ?? null,
-        store_page_bg     ?? null,
-        store_font        ?? null,
-      ]
+      `UPDATE admin_profiles SET ${setCols.join(', ')} WHERE user_id = $1 RETURNING *`,
+      vals
     );
 
     invalidateBrandingCache(id);
