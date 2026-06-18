@@ -69,7 +69,8 @@ router.get("/profile", async (req, res) => {
 router.get("/products", requireApiPermission("products:read"), async (req, res) => {
   try {
     const adminId = req.apiKey.adminId;
-    const { category, search, page = 1, limit = 20, sort = "name" } = req.query;
+    const { search, page = 1, limit = 20, sort = "name" } = req.query;
+    const category = req.query.category || req.query.categoria;
     const safeLimit = Math.min(parseInt(limit) || 20, 100);
     const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
 
@@ -321,18 +322,29 @@ router.get("/categories", requireApiPermission("categories:read"), async (req, r
 
     const result = await db.query(
       `SELECT
-         c.id, c.name, c.slug, c.description, c.image_url,
+         c.id, c.name, c.slug, c.description, c.image_url, c.parent_id,
          COUNT(p.id) FILTER (WHERE p.is_active = true)::int AS product_count
        FROM categories c
        LEFT JOIN products p ON p.category_id = c.id AND p.owner_admin_id = $1
        WHERE c.is_active = true
          AND c.owner_admin_id = $1
-       GROUP BY c.id
+       GROUP BY c.id, c.name, c.slug, c.description, c.image_url, c.parent_id
        ORDER BY c.name`,
       [adminId]
     );
 
-    return res.json({ success: true, data: result.rows });
+    const rows = result.rows.map(r => ({
+      ...r,
+      id:        Number(r.id),
+      parent_id: r.parent_id != null ? Number(r.parent_id) : null,
+    }));
+
+    const buildTree = (items, parentId = null) =>
+      items
+        .filter(i => i.parent_id === parentId)
+        .map(i => ({ ...i, children: buildTree(items, i.id) }));
+
+    return res.json({ success: true, data: buildTree(rows) });
   } catch (error) {
     console.error("[PUBLIC API] GET /categories", error);
     res.status(500).json({ success: false, message: "Error al obtener categorías" });
