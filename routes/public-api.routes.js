@@ -78,8 +78,22 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
     let where = "WHERE p.is_active = true AND p.owner_admin_id = $1";
 
     if (category) {
-      params.push(category);
-      where += ` AND c.slug = $${params.length}`;
+      const { rows: catRows } = await db.query(
+        `WITH RECURSIVE cat_tree AS (
+           SELECT id FROM categories WHERE slug = $1 AND owner_admin_id = $2 AND is_active = true
+           UNION ALL
+           SELECT c.id FROM categories c
+           JOIN cat_tree ct ON c.parent_id = ct.id
+           WHERE c.is_active = true AND c.owner_admin_id = $2
+         )
+         SELECT id FROM cat_tree`,
+        [category, adminId]
+      );
+      if (catRows.length === 0) {
+        return res.json({ success: true, data: [], meta: { total: 0, page: parseInt(page), limit: safeLimit, pages: 0 } });
+      }
+      params.push(catRows.map(r => Number(r.id)));
+      where += ` AND p.category_id = ANY($${params.length})`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -112,7 +126,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
              WHEN p.stock <= p.min_stock THEN 'low'
              ELSE 'normal'
            END AS stock_status,
-           c.name AS category, c.slug AS category_slug,
+           c.name AS category, c.name AS category_name, c.slug AS category_slug,
            (SELECT url FROM product_images
             WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
            COALESCE(
