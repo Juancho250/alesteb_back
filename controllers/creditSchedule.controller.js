@@ -27,7 +27,7 @@ async function syncPaymentStatus(client, saleId) {
 // Verify sale belongs to tenant + is a fiado sale
 async function checkSaleAccess(saleId, ownerAdminId) {
   const { rows: [sale] } = await db.query(
-    `SELECT id, payment_method, total FROM sales WHERE id = $1 AND owner_admin_id = $2`,
+    `SELECT id, payment_method, total, amount_paid FROM sales WHERE id = $1 AND owner_admin_id = $2`,
     [saleId, ownerAdminId]
   );
   return sale ?? null;
@@ -76,6 +76,16 @@ exports.setSchedule = async (req, res) => {
     if (!sale) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Venta no encontrada' });
+    }
+
+    // Validate sum of new installments matches remaining balance
+    const remaining = Number(sale.total) - Number(sale.amount_paid || 0);
+    const newSum    = installments.reduce((s, i) => s + Number(i.expected_amount), 0);
+    if (Math.abs(newSum - remaining) > 1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `La suma de cuotas ($${newSum.toLocaleString('es-CO')}) no coincide con el saldo pendiente ($${remaining.toLocaleString('es-CO')})`,
+      });
     }
 
     // Delete only pending installments (preserve paid ones)
@@ -196,28 +206,33 @@ exports.rescheduleInstallment = async (req, res) => {
   if (!new_due_date)
     return res.status(400).json({ message: 'new_due_date es requerido' });
 
+  const client = await db.connect();
   try {
-    const { rows: [inst] } = await db.query(
+    await client.query('BEGIN');
+
+    const { rows: [inst] } = await client.query(
       `SELECT * FROM credit_payment_schedule
-       WHERE id = $1 AND sale_id = $2 AND owner_admin_id = $3 AND status = 'pending'`,
+       WHERE id = $1 AND sale_id = $2 AND owner_admin_id = $3 AND status = 'pending'
+       FOR UPDATE`,
       [installmentId, saleId, ownerAdminId]
     );
-    if (!inst)
+    if (!inst) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Cuota pendiente no encontrada' });
+    }
 
-    await db.query(
+    await client.query(
       `UPDATE credit_payment_schedule
-       SET due_date               = $1,
-           upcoming_notified_at   = NULL,
-           due_notified_at        = NULL,
-           overdue_notified_at    = NULL,
-           updated_at             = NOW()
+       SET due_date             = $1,
+           upcoming_notified_at = NULL,
+           due_notified_at      = NULL,
+           overdue_notified_at  = NULL,
+           updated_at           = NOW()
        WHERE id = $2`,
       [new_due_date, installmentId]
     );
 
-    // Update sales.credit_due_date to last pending/paid due date
-    await db.query(
+    await client.query(
       `UPDATE sales
        SET credit_due_date = (
          SELECT MAX(due_date) FROM credit_payment_schedule WHERE sale_id = $1
@@ -226,9 +241,13 @@ exports.rescheduleInstallment = async (req, res) => {
       [saleId]
     );
 
+    await client.query('COMMIT');
     res.json({ message: 'Cuota reagendada ✓' });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('[CreditSchedule] rescheduleInstallment error:', err.message);
     res.status(500).json({ message: 'Error al reagendar cuota' });
+  } finally {
+    client.release();
   }
 };

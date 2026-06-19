@@ -244,7 +244,12 @@ exports.createOrder = async (req, res) => {
   if (!customer_id || !items?.length)
     return res.status(400).json({ success: false, message: "Datos incompletos" });
 
-  const isFiado  = payment_method === "fiado";
+  // "fiado" is the legacy sentinel; new clients send "credit" + payment_schedule or credit_due_date
+  const isFiado  = payment_method === "fiado"
+    || (payment_method === "credit" && (
+      credit_due_date != null
+      || (Array.isArray(payment_schedule) && payment_schedule.length > 0)
+    ));
   const isOnline = sale_type === "online" || sale_type === "web";
 
   // credit_due_date can be derived from the last schedule installment
@@ -540,6 +545,14 @@ exports.createOrder = async (req, res) => {
 
     // Insert payment schedule if provided (fiado only)
     if (isFiado && Array.isArray(payment_schedule) && payment_schedule.length > 0) {
+      const pendingAmt  = total - amountPaidInitial;
+      const scheduleSum = payment_schedule.reduce((s, i) => s + Number(i.amount || 0), 0);
+      if (Math.abs(scheduleSum - pendingAmt) > 1)
+        throw Object.assign(
+          new Error(`La suma de cuotas ($${scheduleSum.toLocaleString('es-CO')}) no coincide con el saldo pendiente ($${pendingAmt.toLocaleString('es-CO')})`),
+          { status: 400 }
+        );
+
       for (let i = 0; i < payment_schedule.length; i++) {
         const inst = payment_schedule[i];
         await client.query(

@@ -54,57 +54,80 @@ const upsertAdminProfile = async (req, res) => {
     if (req.body.store_navbar_text && !['light', 'dark'].includes(req.body.store_navbar_text))
       return res.status(400).json({ success: false, message: 'store_navbar_text debe ser "light" o "dark"' });
 
-    // Ensure the row exists; DB column defaults apply on first creation
-    await pool.query(
-      `INSERT INTO admin_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-      [id]
-    );
-
-    // Whitelist of updatable fields — only columns present in req.body are touched
+    // Whitelist of updatable fields
+    // For each field: transform(value) for fields present in req.body,
+    //                 null for absent fields (COALESCE preserves existing value).
+    // social_links is NOT NULL — absent → null in VALUES, but COALESCE(x, '{}') in INSERT.
     const ALLOWED = {
-      business_name:     v => v,
-      tagline:           v => v,
-      description:       v => v,
-      tax_id:            v => v,
-      primary_color:     v => v,
-      secondary_color:   v => v,
-      accent_color:      v => v,
-      business_email:    v => v,
-      business_phone:    v => v,
-      website:           v => v,
-      address:           v => v,
-      city:              v => v,
-      department:        v => v,
-      country:           v => v,
-      currency:          v => v,
-      timezone:          v => v,
-      social_links:      v => v != null ? JSON.stringify(v) : null,
-      store_navbar_bg:   v => v,
-      store_navbar_text: v => v,
-      store_page_bg:     v => v,
-      store_font:        v => v,
+      business_name:                  v => v,
+      tagline:                        v => v,
+      description:                    v => v,
+      tax_id:                         v => v,
+      favicon_url:                    v => v,
+      primary_color:                  v => v,
+      secondary_color:                v => v,
+      accent_color:                   v => v,
+      business_email:                 v => v,
+      business_phone:                 v => v,
+      website:                        v => v,
+      address:                        v => v,
+      city:                           v => v,
+      department:                     v => v,
+      country:                        v => v,
+      currency:                       v => v,
+      timezone:                       v => v,
+      social_links:                   v => JSON.stringify(v ?? {}),
+      default_fulfillment_mode:       v => v,
+      partial_shipment_allowed:       v => Boolean(v),
+      auto_create_procurement_orders: v => Boolean(v),
+      store_navbar_bg:                v => v,
+      store_navbar_text:              v => v,
+      store_page_bg:                  v => v,
+      store_font:                     v => v,
     };
 
-    const setCols = [];
-    const vals    = [id]; // $1 → user_id in WHERE
+    const fieldNames = Object.keys(ALLOWED);
 
-    for (const [col, transform] of Object.entries(ALLOWED)) {
-      if (col in req.body) {
-        setCols.push(`${col} = $${vals.length + 1}`);
-        vals.push(transform(req.body[col]));
-      }
-    }
-
-    if (setCols.length === 0) {
+    const hasChanges = fieldNames.some(k => k in req.body);
+    if (!hasChanges) {
       const { rows: cur } = await pool.query('SELECT * FROM admin_profiles WHERE user_id = $1', [id]);
       return res.json({ success: true, data: cur[0] ?? null, message: 'Sin cambios' });
     }
 
-    setCols.push('updated_at = now()');
+    // Build values: use transform for sent fields, null for absent ones.
+    // social_links gets '{}' in the INSERT expression via COALESCE so NOT NULL is satisfied.
+    const insertVals = [id]; // $1 = user_id
+    for (const [col, transform] of Object.entries(ALLOWED)) {
+      insertVals.push(col in req.body ? transform(req.body[col]) : null);
+    }
+
+    // Placeholders: $2..$N for the field columns
+    const colPlaceholders = fieldNames.map((_, i) => {
+      const p = `$${i + 2}`;
+      // social_links is NOT NULL — wrap in COALESCE so new rows satisfy the constraint
+      return fieldNames[i] === 'social_links' ? `COALESCE(${p}, '{}')` : p;
+    });
+
+    // DO UPDATE: COALESCE(EXCLUDED.col, existing) so absent fields don't overwrite.
+    // social_links is special: COALESCE($i, '{}') in VALUES makes EXCLUDED non-null even
+    // when the param is null (absent). Reference original binding $i in DO UPDATE to
+    // distinguish "not sent (null)" from "sent as '{}'" so we don't clobber existing value.
+    const updateClauses = fieldNames.map((col, i) => {
+      const paramIdx = i + 2; // $1 = user_id; fields start at $2
+      if (col === 'social_links') {
+        return `${col} = CASE WHEN $${paramIdx} IS NOT NULL THEN EXCLUDED.${col} ELSE COALESCE(admin_profiles.${col}, '{}') END`;
+      }
+      return `${col} = COALESCE(EXCLUDED.${col}, admin_profiles.${col})`;
+    });
 
     const { rows } = await pool.query(
-      `UPDATE admin_profiles SET ${setCols.join(', ')} WHERE user_id = $1 RETURNING *`,
-      vals
+      `INSERT INTO admin_profiles (user_id, ${fieldNames.join(', ')})
+       VALUES ($1, ${colPlaceholders.join(', ')})
+       ON CONFLICT (user_id) DO UPDATE SET
+         ${updateClauses.join(',\n         ')},
+         updated_at = NOW()
+       RETURNING *`,
+      insertVals
     );
 
     invalidateBrandingCache(id);
