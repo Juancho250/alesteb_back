@@ -149,7 +149,7 @@ async function checkCreditInstallments() {
 
 function startNotificationWorker() {
   // Cola de notificaciones salientes — cada 30 segundos
-  cron.schedule('*/30 * * * * *', async () => {
+  cron.schedule('*/5 * * * *', async () => {
     try {
       const { processed } = await notificationService.processQueueBatch(20);
       if (processed > 0) {

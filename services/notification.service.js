@@ -157,6 +157,15 @@ async function enqueueNotification({
  */
 async function processQueueBatch(limit = 20) {
   // Recover jobs stuck in 'sending' after a process crash (reset after 5 min)
+
+  // ✅ Check rápido antes de abrir conexión costosa
+  const { rows: [{ count }] } = await db.query(
+    `SELECT COUNT(*) FROM notification_queue 
+     WHERE status = 'pending' AND scheduled_for <= NOW()`
+  );
+  if (Number(count) === 0) return { processed: 0 };
+
+  
   await db.query(
     `UPDATE notification_queue SET status = 'pending', updated_at = NOW()
      WHERE status = 'sending' AND updated_at < NOW() - INTERVAL '5 minutes'`
