@@ -1,5 +1,37 @@
-// services/invoice.service.js
 'use strict';
+
+const https = require('https');
+const http  = require('http');
+
+/**
+ * Descarga una imagen remota (logo en Cloudinary, etc.) y la retorna como Buffer.
+ * No usa libs externas — solo https/http nativos de Node.
+ */
+function fetchImageBuffer(url, timeoutMs = 6000) {
+  return new Promise((resolve, reject) => {
+    if (!url) return resolve(null);
+    const client = url.startsWith('http://') ? http : https;
+
+    const req = client.get(url, { timeout: timeoutMs }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        // Sigue una redirección simple (Cloudinary a veces redirige)
+        res.resume();
+        return fetchImageBuffer(res.headers.location, timeoutMs).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`Logo fetch falló: HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+
+    req.on('timeout', () => req.destroy(new Error('Logo fetch: timeout')));
+    req.on('error', reject);
+  });
+}
 
 /**
  * Genera una factura PDF en memoria usando PDFKit.
@@ -38,6 +70,18 @@ async function generateInvoicePdf(params) {
   const bizPhone   = branding?.businessPhone || '';
   const bizAddress = branding?.address       || '';
   const primaryHex = branding?.primaryColor  || '#0f172a';
+  const logoUrl    = branding?.logoUrl       || null;
+
+  // Descarga el logo ANTES de empezar a dibujar (PDFKit dibuja de forma síncrona)
+  let logoBuffer = null;
+  if (logoUrl) {
+    try {
+      logoBuffer = await fetchImageBuffer(logoUrl);
+    } catch (e) {
+      console.error('[Invoice PDF] No se pudo descargar el logo, se omite:', e.message);
+      logoBuffer = null;
+    }
+  }
 
   // Convierte hex → RGB (0-1) para PDFKit
   const hexToRgb = (hex) => {
@@ -76,16 +120,28 @@ async function generateInvoicePdf(params) {
     const CW = W - M * 2;       // content width = 495
 
     // ══════════════════════════════════════════════════════
-    // HEADER — barra de color + nombre del negocio
+    // HEADER — barra de color + logo (si existe) + nombre del negocio
     // ══════════════════════════════════════════════════════
     doc.rect(0, 0, W, 90).fill([pr, pg, pb]);
 
+    let textX = M;
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, M, 18, { fit: [54, 54] });
+        textX = M + 68; // desplaza el texto a la derecha del logo
+      } catch (e) {
+        console.error('[Invoice PDF] Logo en formato no soportado, se omite:', e.message);
+        textX = M;
+      }
+    }
+    const textW = CW - 120 - (textX - M);
+
     doc.fillColor('white')
-       .fontSize(22).font('Helvetica-Bold')
-       .text(bizName.toUpperCase(), M, 20, { width: CW - 120, align: 'left' });
+       .fontSize(20).font('Helvetica-Bold')
+       .text(bizName.toUpperCase(), textX, 22, { width: textW, align: 'left' });
 
     doc.fontSize(9).font('Helvetica')
-       .text('FACTURA / RECIBO DE COMPRA', M, 46, { width: CW - 120 });
+       .text('FACTURA / RECIBO DE COMPRA', textX, 50, { width: textW });
 
     // Badge estado de pago
     const badgeLabel = statusLabels[paymentStatus] || paymentStatus?.toUpperCase() || 'EMITIDA';
@@ -127,9 +183,9 @@ async function generateInvoicePdf(params) {
     doc.fillColor('#94a3b8').fontSize(7).font('Helvetica-Bold')
        .text('CLIENTE', col2X, y + 10);
     doc.fillColor('#0f172a').fontSize(10).font('Helvetica-Bold')
-       .text(customer.name, col2X, y + 22, { width: colW });
+       .text(customer?.name || 'Cliente', col2X, y + 22, { width: colW });
     doc.fontSize(8).font('Helvetica').fillColor('#475569')
-       .text(customer.email || '', col2X, y + 36, { width: colW });
+       .text(customer?.email || '', col2X, y + 36, { width: colW });
     if (shippingCity || shippingAddress) {
       doc.text(`${shippingCity || ''} — ${shippingAddress || ''}`, col2X, y + 48, { width: colW });
     }

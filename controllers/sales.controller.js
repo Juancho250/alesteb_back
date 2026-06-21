@@ -603,7 +603,7 @@ exports.createOrder = async (req, res) => {
         try {
           await sendInvoiceEmail(customer.email, customer.name, invoiceData, emailType, branding);
         } catch (emailErr) {
-          console.error('[Email] Error enviando factura:', emailErr.message);
+          console.error(`[Email] Error enviando factura (venta ${saleNumber}):`, emailErr.message);
           // No bloquea la respuesta — el pedido ya fue creado
         }
       })();
@@ -699,6 +699,7 @@ exports.registerPayment = async (req, res) => {
 
     const { rows: saleRows } = await client.query(
       `SELECT s.id, s.sale_number, s.total, s.amount_paid, s.payment_status, s.customer_id,
+              s.owner_admin_id,
               u.email AS customer_email,
               u.name  AS customer_name
       FROM sales s
@@ -744,8 +745,11 @@ exports.registerPayment = async (req, res) => {
               JOIN products p ON p.id = si.product_id
               WHERE si.sale_id = $1`, [id]
             );
+            // ⚠️ Branding del TENANT DUEÑO de la venta (sale.owner_admin_id),
+            // NUNCA de req.adminId — quien registra el abono puede no ser el
+            // mismo tenant dueño de la venta (ej. superadmin operando por un tenant).
             let branding = null;
-            try { branding = await getAdminBranding(req.adminId); } catch {}
+            try { branding = await getAdminBranding(sale.owner_admin_id); } catch {}
 
             await sendInvoiceEmail(
               sale.customer_email,
@@ -765,7 +769,7 @@ exports.registerPayment = async (req, res) => {
               branding
             );
           } catch (e) {
-            console.error('[Email] Factura abono final:', e.message);
+            console.error(`[Email] Factura abono final (venta ${sale.sale_number}):`, e.message);
           }
         })();
       }

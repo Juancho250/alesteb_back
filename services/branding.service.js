@@ -9,6 +9,8 @@ const DEFAULTS = {
   secondaryColor: '#1E40AF',
   accentColor:    '#F59E0B',
   businessEmail:  null,
+  businessPhone:  null,
+  address:        null,
 };
 
 const _cache = new Map(); // key: ownerAdminId → { data, expiresAt }
@@ -22,7 +24,8 @@ async function getAdminBranding(ownerAdminId) {
 
   const { rows } = await db.query(
     `SELECT business_name, logo_url, tagline,
-            primary_color, secondary_color, accent_color, business_email
+            primary_color, secondary_color, accent_color,
+            business_email, business_phone, address
      FROM admin_profiles WHERE user_id = $1`,
     [ownerAdminId]
   );
@@ -36,6 +39,8 @@ async function getAdminBranding(ownerAdminId) {
     secondaryColor: r.secondary_color ?? DEFAULTS.secondaryColor,
     accentColor:    r.accent_color    ?? DEFAULTS.accentColor,
     businessEmail:  r.business_email  ?? DEFAULTS.businessEmail,
+    businessPhone:  r.business_phone  ?? DEFAULTS.businessPhone,
+    address:        r.address         ?? DEFAULTS.address,
   };
 
   _cache.set(ownerAdminId, { data, expiresAt: Date.now() + TTL });
