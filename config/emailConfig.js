@@ -585,7 +585,192 @@ const sendCreditReminderEmail = async (email, customerName, data, type, branding
   }
 };
 
+// ============================================
+// 📄 FACTURA PDF ADJUNTA AL EMAIL DE CONFIRMACIÓN
+// Pega esta función al final de config/emailConfig.js
+// (antes del module.exports) y agrégala al exports
+// ============================================
+
+/**
+ * Envía el email de confirmación de pedido con la factura PDF adjunta.
+ *
+ * @param {string} email
+ * @param {string} userName
+ * @param {object} orderData
+ *   - orderCode       string   "AL-000001"
+ *   - saleNumber      string   "VEN-000001"
+ *   - total           number
+ *   - subtotal        number
+ *   - discountAmount  number
+ *   - taxAmount       number
+ *   - items           Array<{ name, sku, quantity, unit_price, subtotal }>
+ *   - paymentMethod   string
+ *   - paymentStatus   string
+ *   - shippingAddress string|null
+ *   - shippingCity    string|null
+ *   - shippingNotes   string|null
+ * @param {string} emailType   'confirmation' | 'payment_confirmed'
+ * @param {object|null} branding
+ */
+const sendInvoiceEmail = async (email, userName, orderData, emailType = 'confirmation', branding = null) => {
+  const { generateInvoicePdf } = require('../services/invoice.service');
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const b = branding ?? ALESTEB_BRANDING;
+
+  const {
+    orderCode, saleNumber,
+    total = 0, subtotal = 0, discountAmount = 0, taxAmount = 0,
+    items = [], paymentMethod, paymentStatus,
+    shippingAddress, shippingCity, shippingNotes,
+  } = orderData;
+
+  // ── Generar PDF ──────────────────────────────────────────────────────────
+  let pdfBase64 = null;
+  try {
+    const pdfBuffer = await generateInvoicePdf({
+      orderCode, saleNumber,
+      customer: { name: userName, email },
+      items, subtotal, discountAmount, taxAmount, total,
+      paymentMethod, paymentStatus,
+      shippingAddress, shippingCity,
+      branding: b,
+    });
+    pdfBase64 = pdfBuffer.toString('base64');
+  } catch (pdfErr) {
+    console.error('[Invoice PDF] Error generando PDF:', pdfErr.message);
+    // Continúa sin adjunto si falla el PDF
+  }
+
+  // ── Cuerpo del email ─────────────────────────────────────────────────────
+  const paymentLabels = {
+    transfer: '🏦 Transferencia bancaria', cash: '💵 Efectivo',
+    credit: '💳 Crédito', check: '📄 Cheque', wompi: '💳 Pasarela de pago',
+  };
+  const paymentLabel = paymentLabels[paymentMethod] || paymentMethod || 'Por confirmar';
+
+  const itemsRows = items.map(item => `
+    <tr>
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#0f172a;font-size:14px;">${item.name}</div>
+        ${item.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:3px;">SKU: ${item.sku}</div>` : ''}
+      </td>
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b;font-weight:700;font-size:14px;">x${item.quantity}</td>
+      <td style="padding:14px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:900;color:#0f172a;font-size:14px;">
+        $${Number(item.unit_price * item.quantity).toLocaleString('es-CO')}
+      </td>
+    </tr>
+  `).join('');
+
+  const isConfirmed = emailType === 'payment_confirmed';
+
+  const htmlBody = `
+    <p style="font-size:24px;color:#0f172a;font-weight:800;margin:0 0 12px;">
+      ${isConfirmed ? `¡Pago confirmado, ${userName}! 🎉` : `¡Gracias, ${userName}! 🎉`}
+    </p>
+    <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 24px;">
+      ${isConfirmed
+        ? 'Tu pago fue <strong style="color:#059669;">verificado y aprobado</strong>. Tu pedido está siendo preparado.'
+        : 'Recibimos tu pedido. Adjuntamos tu factura en PDF para que la guardes.'}
+    </p>
+
+    <!-- Código de pedido -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;margin-bottom:28px;">
+      <tr>
+        <td style="padding:22px 28px;">
+          <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de pedido</div>
+          <div style="font-size:28px;font-weight:900;color:#0f172a;letter-spacing:2px;font-family:'Courier New',monospace;">${orderCode}</div>
+        </td>
+        <td style="padding:22px 28px;text-align:right;border-left:1px solid #e2e8f0;">
+          <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Fecha</div>
+          <div style="font-size:14px;font-weight:700;color:#475569;">
+            ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Tabla de ítems -->
+    <div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Resumen del pedido</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:28px;">
+      <thead><tr style="background:#f8fafc;">
+        <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Producto</th>
+        <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Cant.</th>
+        <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Subtotal</th>
+      </tr></thead>
+      <tbody>${itemsRows}</tbody>
+      <tfoot>
+        ${Number(discountAmount) > 0 ? `
+        <tr style="background:#f8fafc;">
+          <td colspan="2" style="padding:10px 18px;color:#64748b;font-size:13px;">Descuento</td>
+          <td style="padding:10px 18px;text-align:right;color:#059669;font-size:14px;font-weight:700;">
+            - $${Number(discountAmount).toLocaleString('es-CO')}
+          </td>
+        </tr>` : ''}
+        <tr style="background:#0f172a;">
+          <td colspan="2" style="padding:16px 18px;color:rgba(255,255,255,0.6);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Total</td>
+          <td style="padding:16px 18px;text-align:right;color:white;font-size:22px;font-weight:900;">
+            $${Number(total).toLocaleString('es-CO')}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- Pago -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;margin-bottom:${shippingAddress ? '24px' : '0'};">
+      <tr><td style="padding:20px 24px;">
+        <div style="font-size:11px;font-weight:800;color:#059669;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Método de pago</div>
+        <div style="font-size:15px;font-weight:700;color:#065f46;">${paymentLabel}</div>
+      </td></tr>
+    </table>
+
+    ${shippingAddress ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;">
+      <tr><td style="padding:20px 24px;">
+        <div style="font-size:11px;font-weight:800;color:#1d4ed8;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Dirección de envío</div>
+        <div style="font-weight:800;color:#1e3a8a;font-size:15px;margin-bottom:4px;">📍 ${shippingCity || ''}</div>
+        <div style="color:#1d4ed8;font-size:14px;line-height:1.6;">${shippingAddress}</div>
+        ${shippingNotes ? `<div style="color:#3b82f6;font-size:13px;margin-top:8px;font-style:italic;">📝 ${shippingNotes}</div>` : ''}
+      </td></tr>
+    </table>` : ''}
+
+    ${pdfBase64 ? `
+    <div style="margin-top:28px;padding:16px 20px;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;font-size:13px;color:#92400e;">
+      📎 <strong>Tu factura en PDF está adjunta</strong> a este correo. Guárdala para tus registros.
+    </div>` : ''}
+  `;
+
+  const badge   = isConfirmed ? '✅  PAGO CONFIRMADO' : '✓  PEDIDO RECIBIDO';
+  const subject = isConfirmed
+    ? `🎉 ¡Pago confirmado! Tu pedido ${orderCode} - ${b.businessName}`
+    : `✅ Tu pedido ${orderCode} fue recibido - ${b.businessName}`;
+
+  const sendSmtpEmail = new SendSmtpEmail();
+  sendSmtpEmail.subject     = subject;
+  sendSmtpEmail.to          = [{ email, name: userName }];
+  sendSmtpEmail.sender      = SENDER;
+  if (b.businessEmail) sendSmtpEmail.replyTo = { email: b.businessEmail, name: b.businessName };
+  sendSmtpEmail.htmlContent = buildBrandedEmail({ branding: b, badge, body: htmlBody });
+
+  // Adjuntar PDF si se generó correctamente
+  if (pdfBase64) {
+    sendSmtpEmail.attachment = [{
+      content: pdfBase64,
+      name:    `Factura-${orderCode}.pdf`,
+    }];
+  }
+
+  try {
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`[Email] Factura enviada (${emailType}) — messageId:`, body?.messageId ?? '(sin id)');
+    return true;
+  } catch (error) {
+    console.error('[Email] Error enviando factura:', error?.message ?? error);
+    return false;
+  }
+};
+
 module.exports = {
+  sendInvoiceEmail,
   generateVerificationCode,
   sendVerificationEmail,
   sendOrderConfirmationEmail,

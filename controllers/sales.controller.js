@@ -2,7 +2,7 @@
 const db         = require("../config/db");
 const inv        = require("../services/inventory.service");
 const cloudinary = require("../config/cloudinary");
-const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail } = require("../config/emailConfig");
+const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail } = require("../config/emailConfig");
 const { getAdminBranding } = require("../services/branding.service");
 const { emitDataUpdate } = require("../config/socket");
 const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
@@ -580,21 +580,32 @@ exports.createOrder = async (req, res) => {
       (async () => {
         let branding = null;
         try { branding = await getAdminBranding(ownerAdminId); } catch {}
+ 
+        const invoiceData = {
+          orderCode,
+          saleNumber,
+          total,
+          subtotal,
+          discountAmount: resolvedDiscountAmount,
+          taxAmount:      Number(tax_amount) || 0,
+          items:          validatedItems,
+          paymentMethod:  isFiado ? 'fiado' : dbPaymentMethod,
+          paymentStatus:  finalPaymentStatus,
+          shippingAddress: shipping_address ?? null,
+          shippingCity:    shipping_city    ?? null,
+          shippingNotes:   shipping_notes   ?? null,
+        };
+ 
+        const emailType = (finalPaymentStatus === 'paid' && !isFiado)
+          ? 'payment_confirmed'
+          : 'confirmation';
+ 
         try {
-          if (finalPaymentStatus === "paid" && !isFiado) {
-            await sendPaymentConfirmedEmail?.(customer.email, customer.name, {
-              orderCode, total, items: validatedItems,
-            }, branding);
-          } else {
-            await sendOrderConfirmationEmail(customer.email, customer.name, {
-              orderCode, total, items: validatedItems,
-              shippingAddress: shipping_address, shippingCity: shipping_city,
-              shippingNotes: shipping_notes,
-              paymentMethod: isFiado ? "fiado" : "wompi",
-              creditDueDate: credit_due_date, initialPayment: initPay,
-            }, branding);
-          }
-        } catch {}
+          await sendInvoiceEmail(customer.email, customer.name, invoiceData, emailType, branding);
+        } catch (emailErr) {
+          console.error('[Email] Error enviando factura:', emailErr.message);
+          // No bloquea la respuesta — el pedido ya fue creado
+        }
       })();
     }
 
@@ -687,7 +698,12 @@ exports.registerPayment = async (req, res) => {
     if (access === "forbidden") { await client.query("ROLLBACK"); return res.status(403).json({ success: false, message: "No autorizado para registrar pagos en esta venta" }); }
 
     const { rows: saleRows } = await client.query(
-      "SELECT id, sale_number, total, amount_paid, payment_status, customer_id FROM sales WHERE id = $1 FOR UPDATE", [id]
+      `SELECT s.id, s.sale_number, s.total, s.amount_paid, s.payment_status, s.customer_id,
+              u.email AS customer_email,
+              u.name  AS customer_name
+      FROM sales s
+      LEFT JOIN users u ON u.id = s.customer_id
+      WHERE s.id = $1 FOR UPDATE`, [id]
     );
     const sale = saleRows[0];
 
@@ -714,8 +730,45 @@ exports.registerPayment = async (req, res) => {
     emitDataUpdate("sales", "updated", { id: parseInt(id), amount_paid: paid, payment_status: status }, req.adminId);
 
     notifyTenant(req.adminId, Payloads.paymentReceived(sale.sale_number, Number(amount))).catch(() => {});
-    if (status === "paid") {
+    if (status === 'paid') {
       notifyUser(sale.customer_id, Payloads.paymentConfirmed(sale.sale_number)).catch(() => {});
+
+      // ── Factura PDF al cliente cuando queda saldado ──
+      if (sale.customer_email) {
+        (async () => {
+          try {
+            const { rows: saleItems } = await db.query(
+              `SELECT si.quantity, si.unit_price, si.subtotal,
+                      p.name, p.sku
+              FROM sale_items si
+              JOIN products p ON p.id = si.product_id
+              WHERE si.sale_id = $1`, [id]
+            );
+            let branding = null;
+            try { branding = await getAdminBranding(req.adminId); } catch {}
+
+            await sendInvoiceEmail(
+              sale.customer_email,
+              sale.customer_name,
+              {
+                orderCode:      `AL-${sale.sale_number.slice(4)}`,
+                saleNumber:     sale.sale_number,
+                total:          Number(sale.total),
+                subtotal:       Number(sale.total),
+                discountAmount: 0,
+                taxAmount:      0,
+                items:          saleItems,
+                paymentMethod:  payment_method,
+                paymentStatus:  'paid',
+              },
+              'payment_confirmed',
+              branding
+            );
+          } catch (e) {
+            console.error('[Email] Factura abono final:', e.message);
+          }
+        })();
+      }
     }
 
     res.json({
