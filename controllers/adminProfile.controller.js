@@ -76,7 +76,7 @@ const upsertAdminProfile = async (req, res) => {
       country:                        v => v,
       currency:                       v => v,
       timezone:                       v => v,
-      social_links:                   v => JSON.stringify(v ?? {}),
+      social_links:                   v => v ?? {},
       default_fulfillment_mode:       v => v,
       partial_shipment_allowed:       v => Boolean(v),
       auto_create_procurement_orders: v => Boolean(v),
@@ -105,7 +105,7 @@ const upsertAdminProfile = async (req, res) => {
     const colPlaceholders = fieldNames.map((_, i) => {
       const p = `$${i + 2}`;
       // social_links is NOT NULL — wrap in COALESCE so new rows satisfy the constraint
-      return fieldNames[i] === 'social_links' ? `COALESCE(${p}, '{}')` : p;
+      return fieldNames[i] === 'social_links' ? `COALESCE(${p}::jsonb, '{}')` : p;
     });
 
     // DO UPDATE: COALESCE(EXCLUDED.col, existing) so absent fields don't overwrite.
