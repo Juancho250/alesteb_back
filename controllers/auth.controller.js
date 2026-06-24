@@ -3,6 +3,7 @@ const db     = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
+const cloudinary = require("../config/cloudinary");
 const { generateVerificationCode, sendVerificationEmail } = require("../config/emailConfig");
 
 // ============================================
@@ -63,6 +64,22 @@ const getUserRoles = async (userId) => {
   }
 };
 
+const buildProfilePayload = (user, roles) => ({
+  id: user.id,
+  email: user.email,
+  name: user.name,
+  phone: user.phone,
+  cedula: user.cedula,
+  city: user.city,
+  address: user.address,
+  profile_image_url: user.profile_image_url || null,
+  avatar_url: user.profile_image_url || null,
+  profile_image_public_id: user.profile_image_public_id || null,
+  created_at: user.created_at,
+  last_login: user.last_login,
+  roles,
+});
+
 // ============================================
 // 🔑 HELPER: GUARDAR REFRESH TOKEN
 // ============================================
@@ -105,6 +122,7 @@ exports.login = async (req, res) => {
 
     const userRes = await client.query(
       `SELECT id, email, password, name, phone, cedula, city, address,
+              profile_image_url, profile_image_public_id,
               failed_login_attempts, locked_until, is_active, is_verified
        FROM users WHERE email = $1`,
       [email.toLowerCase().trim()]
@@ -210,13 +228,16 @@ exports.login = async (req, res) => {
       success: true,
       message: "Login exitoso",
       user: {
-        id:      user.id,
-        email:   user.email,
-        name:    user.name || "Usuario",
-        phone:   user.phone,
-        cedula:  user.cedula,
-        city:    user.city,
-        address: user.address,
+        id:                      user.id,
+        email:                   user.email,
+        name:                    user.name || "Usuario",
+        phone:                   user.phone,
+        cedula:                  user.cedula,
+        city:                    user.city,
+        address:                 user.address,
+        profile_image_url:       user.profile_image_url || null,
+        avatar_url:              user.profile_image_url || null,
+        profile_image_public_id: user.profile_image_public_id || null,
         roles,
       },
       token: accessToken,
@@ -790,7 +811,8 @@ exports.getProfile = async (req, res) => {
     const userId = req.user.id;
 
     const userRes = await db.query(
-      `SELECT id, email, name, phone, cedula, city, address, created_at, last_login
+      `SELECT id, email, name, phone, cedula, city, address,
+              profile_image_url, profile_image_public_id, created_at, last_login
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -806,7 +828,7 @@ exports.getProfile = async (req, res) => {
     const user      = userRes.rows[0];
     const { roles } = await getUserRoles(userId);
 
-    return res.json({ success: true, data: { ...user, roles } });
+    return res.json({ success: true, data: buildProfilePayload(user, roles) });
 
   } catch (error) {
     console.error("[GET PROFILE ERROR]", error);
@@ -843,14 +865,18 @@ exports.updateProfile = async (req, res) => {
     );
 
     const updated = await client.query(
-      `SELECT id, email, name, phone, cedula, city, address FROM users WHERE id = $1`,
+      `SELECT id, email, name, phone, cedula, city, address,
+              profile_image_url, profile_image_public_id
+       FROM users WHERE id = $1`,
       [userId]
     );
+
+    const { roles } = await getUserRoles(userId);
 
     return res.json({
       success: true,
       message: "Perfil actualizado correctamente",
-      data: updated.rows[0],
+      data: buildProfilePayload(updated.rows[0], roles),
     });
 
   } catch (error) {
@@ -865,9 +891,73 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-// controllers/auth.controller.js
-// — Agregado al final del archivo existente —
-// Pega este método dentro del archivo auth.controller.js que ya tienes.
+// ============================================
+// 📷 ACTUALIZAR FOTO DE PERFIL PROPIA
+// ============================================
+exports.uploadProfileAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No se recibió ninguna imagen",
+        code: "NO_FILE",
+      });
+    }
+
+    const userId = req.user.id;
+    const previousRes = await db.query(
+      "SELECT profile_image_public_id FROM users WHERE id = $1",
+      [userId]
+    );
+
+    const previousPublicId = previousRes.rows[0]?.profile_image_public_id;
+    const imageUrl = req.file.path || req.file.secure_url || req.file.url || null;
+    const publicId = req.file.public_id || req.file.filename || null;
+
+    if (!imageUrl || !publicId) {
+      return res.status(502).json({
+        success: false,
+        message: "Cloudinary no devolvió la información de la imagen",
+        code: "CLOUDINARY_RESPONSE_ERROR",
+      });
+    }
+
+    if (previousPublicId && previousPublicId !== publicId) {
+      await cloudinary.uploader.destroy(previousPublicId).catch(() => {});
+    }
+
+    await db.query(
+      `UPDATE users
+       SET profile_image_url = $1,
+           profile_image_public_id = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [imageUrl, publicId, userId]
+    );
+
+    const updatedRes = await db.query(
+      `SELECT id, email, name, phone, cedula, city, address,
+              profile_image_url, profile_image_public_id
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    const { roles } = await getUserRoles(userId);
+
+    return res.json({
+      success: true,
+      message: "Foto de perfil actualizada correctamente",
+      data: buildProfilePayload(updatedRes.rows[0], roles),
+    });
+  } catch (error) {
+    console.error("[UPLOAD PROFILE AVATAR ERROR]", error);
+    return res.status(500).json({
+      success: false,
+      message: "No se pudo actualizar la foto de perfil",
+      code: "UPLOAD_FAILED",
+    });
+  }
+};
 
 // ============================================
 // 🔑 CAMBIAR CONTRASEÑA PROPIA
