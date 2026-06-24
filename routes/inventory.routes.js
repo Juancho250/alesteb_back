@@ -26,14 +26,13 @@ function send(res, err) {
 
 // ─── LECTURA ──────────────────────────────────────────────────────────────────
 
-// GET /api/inventory/products  — vista completa con disponible + label de variante
+// GET /api/inventory/products
 router.get('/products', requireAdmin, async (req, res) => {
   try {
     const ownerId = req.adminId;
     const { rows } = await db.query(
       `SELECT
          v.*,
-         -- Agrega label legible de atributos: "Talla M / Rojo"
          CASE WHEN v.variant_id IS NOT NULL THEN (
            SELECT string_agg(
              COALESCE(av.display_value, av.value),
@@ -85,11 +84,11 @@ router.get('/ledger', requireAdmin, async (req, res) => {
     const ownerId   = req.adminId;
     const productId = req.query.productId ? Number(req.query.productId) : null;
     const limit     = Math.min(Number(req.query.limit) || 50, 500);
+    const offset    = Number(req.query.offset) || 0;
 
-    const offset  = Number(req.query.offset) || 0;
-    const params  = productId ? [ownerId, productId, limit, offset] : [ownerId, limit, offset];
-    const filter  = productId ? 'AND sl.product_id = $2' : '';
-    const limitPh = productId ? '$3' : '$2';
+    const params   = productId ? [ownerId, productId, limit, offset] : [ownerId, limit, offset];
+    const filter   = productId ? 'AND sl.product_id = $2' : '';
+    const limitPh  = productId ? '$3' : '$2';
     const offsetPh = productId ? '$4' : '$3';
 
     const { rows } = await db.query(
@@ -106,7 +105,7 @@ router.get('/ledger', requireAdmin, async (req, res) => {
   } catch (err) { send(res, err); }
 });
 
-// GET /api/inventory/valuation  — valorización total del inventario (v_inventory_valuation)
+// GET /api/inventory/valuation
 router.get('/valuation', requireAdmin, async (req, res) => {
   try {
     const { rows } = await db.query(
@@ -123,10 +122,14 @@ router.get('/valuation', requireAdmin, async (req, res) => {
 router.post('/purchase-order/:id/receive', requireAdmin, procCtrl.receivePurchaseOrder);
 
 // POST /api/inventory/adjustment
-// body: { productId, variantId?, delta, reason }
+// body: { productId | product_id, variantId? | variant_id?, delta, reason }
 router.post('/adjustment', requireAdmin, async (req, res) => {
   try {
-    const { productId, variantId, delta, reason } = req.body;
+    // Acepta tanto camelCase como snake_case para compatibilidad con todos los clientes
+    const productId = req.body.productId ?? req.body.product_id;
+    const variantId = req.body.variantId ?? req.body.variant_id ?? null;
+    const { delta, reason } = req.body;
+
     if (!productId || delta == null) {
       return res.status(400).json({ success: false, message: 'productId y delta son requeridos' });
     }
@@ -135,8 +138,12 @@ router.post('/adjustment', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: 'delta debe ser un número entero válido', code: 'VALIDATION' });
     }
     const result = await inv.manualAdjustment(
-      { productId: Number(productId), variantId: variantId ? Number(variantId) : null,
-        delta: parsedDelta, reason },
+      {
+        productId: Number(productId),
+        variantId: variantId ? Number(variantId) : null,
+        delta:     parsedDelta,
+        reason,
+      },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });
@@ -144,10 +151,14 @@ router.post('/adjustment', requireAdmin, async (req, res) => {
 });
 
 // POST /api/inventory/damage
-// body: { productId, variantId?, quantity, reason }
+// body: { productId | product_id, variantId? | variant_id?, quantity, reason }
 router.post('/damage', requireAdmin, async (req, res) => {
   try {
-    const { productId, variantId, quantity, reason } = req.body;
+    // Acepta tanto camelCase como snake_case para compatibilidad con todos los clientes
+    const productId = req.body.productId ?? req.body.product_id;
+    const variantId = req.body.variantId ?? req.body.variant_id ?? null;
+    const { quantity, reason } = req.body;
+
     if (!productId || !quantity) {
       return res.status(400).json({ success: false, message: 'productId y quantity son requeridos' });
     }
@@ -156,8 +167,12 @@ router.post('/damage', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: 'quantity debe ser un entero positivo válido', code: 'VALIDATION' });
     }
     const result = await inv.recordDamage(
-      { productId: Number(productId), variantId: variantId ? Number(variantId) : null,
-        qty: parsedQty, reason },
+      {
+        productId: Number(productId),
+        variantId: variantId ? Number(variantId) : null,
+        qty:       parsedQty,
+        reason,
+      },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });
@@ -189,11 +204,13 @@ router.post('/initial-stock', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: 'productId y quantity son requeridos' });
     }
     const result = await inv.registerInitialStock(
-      { productId:     Number(productId),
+      {
+        productId:     Number(productId),
         variantId:     variantId ? Number(variantId) : null,
         quantity:      Number(quantity),
         purchasePrice: purchasePrice != null ? Number(purchasePrice) : null,
-        reason },
+        reason,
+      },
       { ownerAdminId: req.adminId, userId: req.user.id },
     );
     res.json({ success: true, data: result });
@@ -231,7 +248,7 @@ router.get('/reservations/active', requireAdmin, async (req, res) => {
   } catch (err) { send(res, err); }
 });
 
-// POST /api/inventory/reservations/release-expired — liberar manualmente todas las expiradas del tenant
+// POST /api/inventory/reservations/release-expired
 router.post('/reservations/release-expired', requireAdmin, async (req, res) => {
   try {
     const { rows: expired } = await db.query(
@@ -254,7 +271,7 @@ router.post('/reservations/release-expired', requireAdmin, async (req, res) => {
   } catch (err) { send(res, err); }
 });
 
-// DELETE /api/inventory/reservations/:id — liberar una reserva específica (admin)
+// DELETE /api/inventory/reservations/:id
 router.delete('/reservations/:id', requireAdmin, async (req, res) => {
   try {
     const result = await inv.releaseReservation(
