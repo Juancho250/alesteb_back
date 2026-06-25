@@ -27,6 +27,7 @@ router.post(
 
 // Verificación de email (para el flujo de auto-registro si lo habilitas)
 router.post("/verify",     authController.verifyEmail);
+router.post("/google",     authController.googleLogin);
 router.post(
   "/resend-code",
   checkRateLimit("email", 3, 60 * 60 * 1000),
