@@ -120,6 +120,7 @@ const salesRoutes         = safeRequire("./routes/sales.routes",            "sal
 const bannersRoutes       = safeRequire("./routes/banners.routes",          "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
+const auraRoutes          = safeRequire("./routes/aura.routes",             "aura.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
 const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
@@ -185,6 +186,7 @@ if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
+if (auraRoutes)          app.use("/api/aura",          auraRoutes);
 if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
 if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
@@ -225,6 +227,7 @@ app.get("/api/health", (req, res) => {
       reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
+      aura:          !!auraRoutes,
       financePin:    !!financePinRoutes,
       wompi:          !!wompiRoutes,
       paymentAccounts: !!paymentAccountsRoutes,
