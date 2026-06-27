@@ -119,8 +119,7 @@ exports.googleAuth = async (req, res) => {
       const bcrypt = require("bcryptjs");
       const hashedPassword = await bcrypt.hash(randomPassword, 10);
 
-      // Cédula: usamos el `sub` de Google (ID único) como placeholder
-      const cedulaPlaceholder = `G-${googleUser.sub}`;
+    const cedulaPlaceholder = `G${googleUser.sub.slice(-19)}`;
 
       const newUserRes = await client.query(
         `INSERT INTO users
