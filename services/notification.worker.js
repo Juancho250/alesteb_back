@@ -6,6 +6,7 @@ const notificationService         = require('./notification.service');
 const db                          = require('../config/db');
 const { sendCreditReminderEmail } = require('../config/emailConfig');
 const { getAdminBranding }        = require('./branding.service');
+const { generateInstallmentPayToken } = require('./creditPayToken.service');
 
 // ── Recordatorios de cuotas de crédito ───────────────────────────────────────
 
@@ -104,6 +105,15 @@ async function checkCreditInstallments() {
     let branding = null;
     try { branding = await getAdminBranding(inst.owner_admin_id); } catch {}
 
+    let payUrl = null;
+    if (inst.id && inst.owner_admin_id) {
+      try {
+        payUrl = await generateInstallmentPayToken(inst.id, inst.owner_admin_id);
+      } catch (err) {
+        console.warn('[CreditReminderWorker] No payUrl for installment', inst.id, err.message);
+      }
+    }
+
     if (inst.customer_email) {
       try {
         await sendCreditReminderEmail(
@@ -118,7 +128,8 @@ async function checkCreditInstallments() {
             daysOverdue,
           },
           type,
-          branding
+          branding,
+          payUrl
         );
       } catch (err) {
         console.error(`[CreditReminderWorker] Email falló para cuota ${inst.id}:`, err.message);
@@ -131,7 +142,12 @@ async function checkCreditInstallments() {
         recipientUserId: null,
         event:           'credit_reminder',
         channel:         'whatsapp',
-        payload,
+        payload: {
+          ...payload,
+          installment_id: inst.id,
+          owner_admin_id: inst.owner_admin_id,
+          pay_url:        payUrl,
+        },
         templateKey,
         referenceType:   'credit_payment_schedule',
         referenceId:     inst.id,

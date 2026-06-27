@@ -134,6 +134,7 @@ const contactRoutes       = safeRequire("./routes/contact.routes",          "con
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
+const creditPayRoutes   = safeRequire("./routes/creditPay.routes",       "creditPay.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -165,6 +166,7 @@ startNotificationWorker();
 // ============================================
 
 // — Auth —
+if (creditPayRoutes)     app.use("/pay",               creditPayRoutes);
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 
 // — Panel de administración —
@@ -232,6 +234,7 @@ app.get("/api/health", (req, res) => {
       agent:         !!agentRoutes,
       aura:          !!auraRoutes,
       financePin:    !!financePinRoutes,
+      creditPay:     !!creditPayRoutes,
       wompi:          !!wompiRoutes,
       paymentAccounts: !!paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,
