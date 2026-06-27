@@ -22,7 +22,10 @@ app.use((req, _res, next) => {
 // Compresión gzip/brotli — reduce payload hasta un 70%
 app.use(compression());
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(helmet({
+  crossOriginResourcePolicy:  { policy: "cross-origin" },
+  crossOriginOpenerPolicy:    false,   // ← permite que el popup de Google se comunique
+}));
 
 // CORS — solo origenes explícitamente permitidos
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5174,http://localhost:3000")

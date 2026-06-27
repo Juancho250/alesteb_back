@@ -12,6 +12,7 @@ const storefrontAuth  = require("../controllers/storefront.auth.controller");
 const reviewsCtrl     = require("../controllers/reviews.controller");
 const wompiCtrl       = require("../controllers/wompi.controller");
 const analyticsCtrl   = require("../controllers/analytics.controller");
+const googleAuth      = require("../controllers/storefront.google.controller");
 const inv                   = require("../services/inventory.service");
 const procurement           = require("../services/procurement.service");
 const { notifyTenant, Payloads } = require("../services/push.service");
@@ -977,6 +978,7 @@ router.post("/auth/refresh", storefrontAuth.refreshToken);
 router.post("/auth/logout", auth, storefrontAuth.logout);
 router.get("/auth/profile", auth, storefrontAuth.getProfile);
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
+router.post("/auth/google", googleAuth.googleAuth);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HISTORIAL Y ESTADÍSTICAS DEL USUARIO
