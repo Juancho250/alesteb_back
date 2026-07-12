@@ -96,6 +96,7 @@ exports.getAll = async (req, res) => {
       queryParams.push(adminId);
     }
 
+
     let filtersClause = "";
     if (categoria) {
       filtersClause += ` AND c.slug = $${pi++}`;
