@@ -84,7 +84,7 @@ exports.getAll = async (req, res) => {
 
     const { categoria, search, min_price, max_price } = req.query;
     const page   = Math.max(1, parseInt(req.query.page)  || 1);
-    const limit  = Math.min(100, parseInt(req.query.limit) || 12);
+    const limit  = Math.min(5000, parseInt(req.query.limit) || 12);
     const offset = (page - 1) * limit;
 
     const queryParams = [];
