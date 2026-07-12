@@ -850,6 +850,7 @@ exports.getOrderDetail = async (req, res) => {
     const { rows } = await db.query(
       `SELECT
         si.id, si.product_id, si.variant_id, si.quantity,
+        si.fulfillment_mode_snapshot,
         si.unit_price, si.subtotal, si.discount_amount,
         p.name, p.sku,
         pv.sku AS variant_sku,

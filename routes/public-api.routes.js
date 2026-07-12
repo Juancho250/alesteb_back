@@ -118,12 +118,37 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
            p.sale_price,
            p.sale_price AS price,
            p.stock,
+           GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) AS disponible_inmediato,
            p.has_variants,
            p.fulfillment_mode,
            p.supplier_lead_time_days,
+           p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
            CASE
-             WHEN p.fulfillment_mode = 'on_demand' THEN 'normal'
-             WHEN p.stock <= 0           THEN 'out'
+             WHEN NOT p.has_variants
+                  AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                  AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+               THEN true ELSE false
+           END AS is_on_demand,
+           CASE
+             WHEN NOT p.has_variants
+                  AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                  AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+               THEN 'on_demand' ELSE 'stock'
+           END AS sale_mode,
+           CASE
+             WHEN NOT p.has_variants
+                  AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                  AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+               THEN 'Venta bajo pedido'
+             ELSE 'Disponible para entrega inmediata'
+           END AS availability_label,
+           -- Vocabulario del catálogo público: on_demand | out | low | normal.
+           -- No confundir con stock_status de v_stock_disponible.
+           CASE
+             WHEN p.fulfillment_mode IN ('hybrid', 'on_demand')
+                  AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+               THEN 'on_demand'
+             WHEN GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0 THEN 'out'
              WHEN p.stock <= p.min_stock THEN 'low'
              ELSE 'normal'
            END AS stock_status,
@@ -232,13 +257,38 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
          p.id, p.name, p.sku, p.description,
          p.sale_price,
          p.sale_price AS price,
-         p.stock,
+           p.stock,
+         GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) AS disponible_inmediato,
          p.has_variants,
          p.fulfillment_mode,
          p.supplier_lead_time_days,
+         p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
          CASE
-           WHEN p.fulfillment_mode = 'on_demand' THEN 'normal'
-           WHEN p.stock <= 0           THEN 'out'
+           WHEN NOT p.has_variants
+                AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+             THEN true ELSE false
+         END AS is_on_demand,
+         CASE
+           WHEN NOT p.has_variants
+                AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+             THEN 'on_demand' ELSE 'stock'
+         END AS sale_mode,
+         CASE
+           WHEN NOT p.has_variants
+                AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+                AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+             THEN 'Venta bajo pedido'
+           ELSE 'Disponible para entrega inmediata'
+         END AS availability_label,
+         -- Vocabulario del catálogo público: on_demand | out | low | normal.
+         -- No confundir con stock_status de v_stock_disponible.
+         CASE
+           WHEN p.fulfillment_mode IN ('hybrid', 'on_demand')
+                AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+             THEN 'on_demand'
+           WHEN GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0 THEN 'out'
            WHEN p.stock <= p.min_stock THEN 'low'
            ELSE 'normal'
          END AS stock_status,
@@ -379,6 +429,8 @@ router.get("/inventory", requireApiPermission("inventory:read"), async (req, res
       `SELECT
          p.id, p.name, p.sku,
          p.stock, p.min_stock, p.max_stock,
+         -- Vocabulario resumido de este endpoint de inventario: out | low | normal.
+         -- No confundir con el catálogo público ni con v_stock_disponible.
          CASE
            WHEN p.stock <= 0           THEN 'out'
            WHEN p.stock <= p.min_stock THEN 'low'
@@ -912,7 +964,7 @@ router.get("/inventory/availability", requireApiPermission("products:read"), asy
     const params = variantId ? [productId, variantId, adminId] : [productId, adminId];
 
     const { rows } = await db.query(
-      `SELECT disponible, min_stock, stock_safety, fulfillment_mode
+      `SELECT disponible_inmediato, min_stock, safety_stock, fulfillment_mode
        FROM v_stock_disponible WHERE ${conditions.join(" AND ")} LIMIT 1`,
       params
     );

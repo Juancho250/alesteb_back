@@ -17,7 +17,27 @@ const fetchFullProduct = async (id) => {
       (SELECT url FROM product_images WHERE product_id = p.id AND is_main = true LIMIT 1) AS main_image,
       best_discount.type  AS discount_type,
       best_discount.value AS discount_value,
-      COALESCE(best_discount.final_price, p.sale_price) AS final_price
+      COALESCE(best_discount.final_price, p.sale_price) AS final_price,
+      GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) AS disponible_inmediato,
+      p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
+      CASE
+        WHEN GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+             AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN true
+        ELSE false
+      END AS is_on_demand,
+      CASE
+        WHEN GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+             AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN 'on_demand'
+        ELSE 'stock'
+      END AS sale_mode,
+      CASE
+        WHEN GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+             AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN 'Venta bajo pedido'
+        ELSE 'Disponible para entrega inmediata'
+      END AS availability_label
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN users      u ON u.id = p.owner_admin_id
@@ -68,7 +88,10 @@ const validateProductData = (data, isUpdate = false) => {
     if (isNaN(price) || price < 0) errors.push("Precio inválido");
   }
   if (!isUpdate || data.stock !== undefined) {
-    const stock = Number(data.stock);
+    // En creación, omitir stock o enviarlo como null equivale a stock inicial cero.
+    const stock = data.stock === undefined || data.stock === null || data.stock === ""
+      ? 0
+      : Number(data.stock);
     if (isNaN(stock) || stock < 0 || !Number.isInteger(stock)) errors.push("Stock debe ser entero positivo");
   }
   if (!isUpdate && !data.category_id) errors.push("Categoría es requerida");
@@ -142,7 +165,28 @@ exports.getAll = async (req, res) => {
           ELSE
             (p.fulfillment_mode != 'stock' OR COALESCE(vsd_simple.disponible_inmediato, 0) > 0)
         END AS is_sellable,
-        p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand
+        p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
+        CASE
+          WHEN NOT p.has_variants
+               AND COALESCE(vsd_simple.disponible_inmediato, 0) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN true
+          ELSE false
+        END AS is_on_demand,
+        CASE
+          WHEN NOT p.has_variants
+               AND COALESCE(vsd_simple.disponible_inmediato, 0) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN 'on_demand'
+          ELSE 'stock'
+        END AS sale_mode,
+        CASE
+          WHEN NOT p.has_variants
+               AND COALESCE(vsd_simple.disponible_inmediato, 0) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN 'Venta bajo pedido'
+          ELSE 'Disponible para entrega inmediata'
+        END AS availability_label
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN users      u ON u.id = p.owner_admin_id
@@ -256,6 +300,27 @@ exports.getById = async (req, res) => {
     const result = await db.query(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug,
         u.name AS owner_admin_name,
+        GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) AS disponible_inmediato,
+        p.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
+        CASE
+          WHEN NOT p.has_variants
+               AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN true ELSE false
+        END AS is_on_demand,
+        CASE
+          WHEN NOT p.has_variants
+               AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN 'on_demand' ELSE 'stock'
+        END AS sale_mode,
+        CASE
+          WHEN NOT p.has_variants
+               AND GREATEST(0, p.stock - p.stock_reserved - p.stock_safety) <= 0
+               AND p.fulfillment_mode IN ('hybrid', 'on_demand')
+            THEN 'Venta bajo pedido'
+          ELSE 'Disponible para entrega inmediata'
+        END AS availability_label,
         d.name AS discount_name, d.type AS discount_type, d.value AS discount_value,
         CASE
           WHEN d.type = 'percentage'
@@ -480,8 +545,8 @@ exports.create = async (req, res) => {
     const productResult = await client.query(
       `INSERT INTO products
          (name, sale_price, stock, category_id, description, owner_admin_id, created_by,
-          default_supplier_id, supplier_lead_time_days, supplier_cost_estimate)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $9)
+          default_supplier_id, supplier_lead_time_days, supplier_cost_estimate, fulfillment_mode)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, 'hybrid')
        RETURNING id`,
       [name.trim(), Number(sale_price), category_id,
        description?.trim() || null, ownerAdminId, req.user.id,

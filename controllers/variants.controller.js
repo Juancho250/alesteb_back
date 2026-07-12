@@ -19,6 +19,26 @@ const getVariantsForProduct = async (productId) => {
       pv.id, pv.product_id, pv.sku, pv.sale_price, pv.stock, pv.is_active,
       pv.created_at, pv.updated_at,
       COALESCE(spv.disponible_inmediato, 0) AS disponible_inmediato,
+      pm.fulfillment_mode,
+      pm.fulfillment_mode IN ('hybrid', 'on_demand') AS can_order_on_demand,
+      CASE
+        WHEN COALESCE(spv.disponible_inmediato, 0) <= 0
+             AND pm.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN true
+        ELSE false
+      END AS is_on_demand,
+      CASE
+        WHEN COALESCE(spv.disponible_inmediato, 0) <= 0
+             AND pm.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN 'on_demand'
+        ELSE 'stock'
+      END AS sale_mode,
+      CASE
+        WHEN COALESCE(spv.disponible_inmediato, 0) <= 0
+             AND pm.fulfillment_mode IN ('hybrid', 'on_demand')
+          THEN 'Venta bajo pedido'
+        ELSE 'Disponible para entrega inmediata'
+      END AS availability_label,
       (pm.fulfillment_mode != 'stock' OR COALESCE(spv.disponible_inmediato, 0) > 0) AS is_sellable,
       COALESCE(
         json_agg(
