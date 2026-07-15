@@ -24,6 +24,8 @@ async function syncPaymentStatus(client, saleId) {
   return { paid: paidN, status };
 }
 
+exports.syncPaymentStatus = syncPaymentStatus;
+
 // Verify sale belongs to tenant + is a fiado sale
 async function checkSaleAccess(saleId, ownerAdminId) {
   const { rows: [sale] } = await db.query(

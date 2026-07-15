@@ -22,7 +22,10 @@ app.use((req, _res, next) => {
 // Compresión gzip/brotli — reduce payload hasta un 70%
 app.use(compression());
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(helmet({
+  crossOriginResourcePolicy:  { policy: "cross-origin" },
+  crossOriginOpenerPolicy:    false,   // ← permite que el popup de Google se comunique
+}));
 
 // CORS — solo origenes explícitamente permitidos
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5174,http://localhost:3000")
@@ -120,6 +123,7 @@ const salesRoutes         = safeRequire("./routes/sales.routes",            "sal
 const bannersRoutes       = safeRequire("./routes/banners.routes",          "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
+const auraRoutes          = safeRequire("./routes/aura.routes",             "aura.routes");
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
 const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
@@ -130,6 +134,7 @@ const contactRoutes       = safeRequire("./routes/contact.routes",          "con
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
+const creditPayRoutes   = safeRequire("./routes/creditPay.routes",       "creditPay.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -161,6 +166,7 @@ startNotificationWorker();
 // ============================================
 
 // — Auth —
+if (creditPayRoutes)     app.use("/pay",               creditPayRoutes);
 if (authRoutes)          app.use("/api/auth",          authRoutes);
 
 // — Panel de administración —
@@ -185,6 +191,7 @@ if (variantsRoutes)      app.use("/api",               variantsRoutes);
 if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
+if (auraRoutes)          app.use("/api/aura",          auraRoutes);
 if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
 if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
@@ -225,7 +232,9 @@ app.get("/api/health", (req, res) => {
       reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
+      aura:          !!auraRoutes,
       financePin:    !!financePinRoutes,
+      creditPay:     !!creditPayRoutes,
       wompi:          !!wompiRoutes,
       paymentAccounts: !!paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,

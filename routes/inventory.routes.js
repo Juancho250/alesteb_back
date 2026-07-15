@@ -30,6 +30,9 @@ function send(res, err) {
 router.get('/products', requireAdmin, async (req, res) => {
   try {
     const ownerId = req.adminId;
+    // stock_status viene directamente de v_stock_disponible y usa:
+    // on_demand_only | available_on_demand | out_of_stock | reserved_full |
+    // low_stock | overstock | normal. No es el vocabulario del catálogo público.
     const { rows } = await db.query(
       `SELECT
          v.*,
@@ -70,6 +73,9 @@ router.get('/availability', async (req, res) => {
       params.push(req.adminId);
     }
 
+    // Al usar SELECT *, stock_status conserva el vocabulario de v_stock_disponible:
+    // on_demand_only | available_on_demand | out_of_stock | reserved_full |
+    // low_stock | overstock | normal.
     const { rows } = await db.query(
       `SELECT * FROM v_stock_disponible WHERE ${conditions.join(' AND ')} LIMIT 1`,
       params,

@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const https  = require("https");
 const db     = require("../config/db");
 const { encrypt, decrypt } = require("../utils/crypto");
+const { processInstallmentPayment } = require("../controllers/creditPay.controller");
 
 // ─── Wompi endpoints ──────────────────────────────────────────────────────────
 // Evaluated lazily inside functions so tests can override process.env after module load.
@@ -259,10 +260,10 @@ async function processWompiWebhook(rawBody) {
   let txRows = [];
   try {
     const res = await db.query(
-      `SELECT spt.id AS tx_id, spt.sale_id, spt.account_id, spt.status AS tx_status,
+      `SELECT spt.id AS tx_id, spt.sale_id, spt.store_payment_account_id AS account_id, spt.status AS tx_status,
               spa.events_secret_encrypted, spa.admin_id
        FROM sale_payment_transactions spt
-       JOIN store_payment_accounts spa ON spa.id = spt.account_id
+       JOIN store_payment_accounts spa ON spa.id = spt.store_payment_account_id
        WHERE spt.reference = $1`,
       [reference]
     );
@@ -357,6 +358,20 @@ async function processWompiWebhook(rawBody) {
        WHERE id = $2 AND status != 'approved'`,
       [String(tx.id ?? ""), tx_id]
     );
+
+    if (reference.startsWith("INST-")) {
+      await processInstallmentPayment(client, tx);
+      await client.query(
+        "UPDATE payment_webhook_events SET processed = true WHERE id = $1",
+        [eventRow.id]
+      );
+      await client.query("COMMIT");
+      return {
+        processed: true,
+        reason:    "installment_approved",
+        reference,
+      };
+    }
 
     // Lock the sale row to prevent concurrent payment processing
     const { rows: saleRows } = await client.query(
