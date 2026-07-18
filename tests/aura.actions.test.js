@@ -301,6 +301,69 @@ async function handleQuery(sql, params = []) {
     };
   }
 
+  if (sql.includes("FROM marketing_campaigns mc") && sql.includes("LEFT JOIN marketing_segments")) {
+    const campaign = campaignsTable.find((row) =>
+      Number(row.owner_admin_id) === Number(params[0]) && row.id === params[1]
+    );
+    return {
+      rows: campaign ? [{
+        ...campaign,
+        segment_id: null,
+        segment_name: null,
+        segment_definition: null,
+        segment_estimated_size: 0,
+      }] : [],
+      rowCount: campaign ? 1 : 0,
+    };
+  }
+
+  if (sql.includes("FROM campaign_contents") && sql.includes("ORDER BY channel ASC")) {
+    const rows = contentsTable.filter((row) => row.campaign_id === params[0]);
+    return { rows, rowCount: rows.length };
+  }
+
+  if (sql.includes("WITH reset_previous AS") && sql.includes("INSERT INTO campaign_recipients")) {
+    const ownerAdminId = Number(params[0]);
+    const channel = params[1];
+    const campaignId = params.find((value) => typeof value === "string" && value.includes("-"));
+    const recipients = recipientsTable.filter((recipient) =>
+      Number(recipient.owner_admin_id) === ownerAdminId
+      && recipient.campaign_id === campaignId
+      && recipient.channel === channel
+    );
+    for (const recipient of recipients) {
+      const user = usersTable.find((item) =>
+        item.id === recipient.recipient_user_id
+        && Number(item.owner_admin_id) === ownerAdminId
+        && item.is_active
+      );
+      const consent = consentsTable.find((item) =>
+        Number(item.owner_admin_id) === ownerAdminId
+        && item.user_id === recipient.recipient_user_id
+        && item.channel === channel
+      );
+      const hasContact = channel === "email" ? Boolean(user?.email) : Boolean(user?.phone);
+      recipient.status = consent?.status === "revoked"
+        ? "excluded_opt_out"
+        : consent?.status !== "granted"
+          ? "excluded_no_consent"
+          : hasContact
+            ? "ready"
+            : "excluded_missing_contact";
+      recipient.consent_snapshot = { status: consent?.status || "unknown" };
+    }
+    return {
+      rows: [{
+        prepared: recipients.length,
+        ready: recipients.filter((row) => row.status === "ready").length,
+        missing_consent: recipients.filter((row) => row.status === "excluded_no_consent").length,
+        opt_out: recipients.filter((row) => row.status === "excluded_opt_out").length,
+        missing_contact: recipients.filter((row) => row.status === "excluded_missing_contact").length,
+      }],
+      rowCount: 1,
+    };
+  }
+
   if (sql.includes("WITH eligible AS") && sql.includes("INSERT INTO notification_queue")) {
     const ownerAdminId = Number(params[0]);
     const campaignId = params[1];
@@ -346,9 +409,13 @@ async function handleQuery(sql, params = []) {
         rendered_message: params[6],
       };
       notificationQueue.push(row);
-      rows.push({ id: row.id });
+      rows.push({ id: row.id, recipient_user_id: row.recipient_user_id });
     }
     return { rows, rowCount: rows.length };
+  }
+
+  if (sql.includes("INSERT INTO campaign_events") && sql.includes("event_type")) {
+    return { rows: [], rowCount: Array.isArray(params[2]) ? params[2].length : 1 };
   }
 
   if (sql.includes("UPDATE marketing_campaigns") && sql.includes("CASE WHEN status = 'draft'")) {
@@ -534,6 +601,7 @@ test("rejectAction does not execute anything", async () => {
 });
 
 test("enqueue campaign delivery respects consent, opt-out and tenant isolation", async () => {
+  campaignsTable[0].status = "approved";
   const action = addAction("enqueue_campaign_delivery", {
     campaignId: "11111111-1111-4111-8111-111111111111",
   });
@@ -545,6 +613,19 @@ test("enqueue campaign delivery respects consent, opt-out and tenant isolation",
   assert.equal(notificationQueue[0].recipient_user_id, 41);
   assert.deepEqual(notificationQueue[0].recipient, { userId: 41 });
   assert.equal(JSON.stringify(notificationQueue).includes("x@example.test"), false);
+});
+
+test("enqueue campaign delivery requires prior human approval", async () => {
+  const action = addAction("enqueue_campaign_delivery", {
+    campaignId: "11111111-1111-4111-8111-111111111111",
+  });
+
+  await assert.rejects(
+    () => auraActions.approveAction({ ...adminCtx, actionId: action.id }),
+    (err) => err.code === "CAMPAIGN_APPROVAL_REQUIRED"
+  );
+  assert.equal(notificationQueue.length, 0);
+  assert.equal(campaignsTable[0].status, "draft");
 });
 
 test("claimNotificationJobs never reclaims terminal legacy rows regardless of attempts", async () => {

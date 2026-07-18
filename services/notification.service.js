@@ -110,9 +110,9 @@ async function enqueueNotification({
       `INSERT INTO notification_queue
          (owner_admin_id, recipient_user_id, recipient_phone, recipient_email,
           channel, event, template_key, rendered_subject, rendered_message,
-          payload, status, attempts, max_attempts, last_error, scheduled_for,
+          payload, status, attempts, max_attempts, last_error, available_at, scheduled_for,
           reference_type, reference_id, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',0,3,$11,NOW(),$12,$13,NOW(),NOW())`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',0,3,$11,NOW(),NOW(),$12,$13,NOW(),NOW())`,
       [
         ownerAdminId, recipientUserId ?? null,
         recipientPhone, recipientEmail,
@@ -133,9 +133,9 @@ async function enqueueNotification({
     `INSERT INTO notification_queue
        (owner_admin_id, recipient_user_id, recipient_phone, recipient_email,
         channel, event, template_key, rendered_subject, rendered_message,
-        payload, status, attempts, max_attempts, scheduled_for,
+        payload, status, attempts, max_attempts, available_at, scheduled_for,
         reference_type, reference_id, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',0,3,NOW(),$11,$12,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',0,3,NOW(),NOW(),$11,$12,NOW(),NOW())
      RETURNING id`,
     [
       ownerAdminId, recipientUserId ?? null,
@@ -156,6 +156,9 @@ async function enqueueNotification({
  * Respects quiet_hours and exponential backoff on failure.
  */
 async function processQueueBatch(limit = 20) {
+  const { processNotificationOutboxBatch } = require('./notificationOutbox.service');
+  return processNotificationOutboxBatch(limit);
+
   // Recover jobs stuck in 'sending' after a process crash (reset after 5 min)
 
   // ✅ Check rápido antes de abrir conexión costosa

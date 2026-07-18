@@ -9,6 +9,7 @@ const AVAILABLE_PERMISSIONS = [
   "sales:read",
   "sales:write",
   "customers:read",
+  "analytics:write",
 ];
 
 const generateApiKey = () => {
@@ -319,6 +320,7 @@ exports.getAvailablePermissions = (_req, res) => {
       "sales:read":      "Ver historial de ventas",
       "sales:write":     "Crear ventas (punto de venta externo)",
       "customers:read":  "Ver clientes",
+      "analytics:write": "Registrar eventos de analitica del storefront",
       "all":             "Acceso completo",
     },
   });

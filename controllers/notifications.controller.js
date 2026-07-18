@@ -3,12 +3,13 @@ const crypto   = require('crypto');
 const db = require("../config/db");
 const { getOrCreateSettings, enqueueNotification } = require("../services/notification.service");
 const whatsapp = require("../services/providers/whatsapp.provider");
+const { updateProviderStatusByMessageId } = require("../services/notificationOutbox.service");
 
 // Verifies X-Hub-Signature-256 sent by Meta on every webhook POST.
 // Returns true if META_WA_APP_SECRET is not set (dev/unconfig mode).
 function _verifyMetaSignature(req) {
   const appSecret = process.env.META_WA_APP_SECRET;
-  if (!appSecret) return true;
+  if (!appSecret) return process.env.NODE_ENV !== 'production';
   const sig = req.headers['x-hub-signature-256'];
   if (!sig || !req.rawBody) return false;
   const expected = 'sha256=' + crypto
@@ -20,6 +21,34 @@ function _verifyMetaSignature(req) {
   } catch {
     return false;
   }
+}
+
+function _verifyTwilioSignature(req) {
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!token) return process.env.NODE_ENV !== 'production';
+  const sig = req.headers['x-twilio-signature'];
+  if (!sig) return false;
+
+  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const base = Object.keys(body)
+    .sort()
+    .reduce((acc, key) => acc + key + String(body[key]), url);
+  const expected = crypto.createHmac('sha1', token).update(base).digest('base64');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+function mapWhatsAppStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'read') return 'read';
+  if (normalized === 'delivered') return 'delivered';
+  if (normalized === 'sent') return 'sent';
+  if (['failed', 'undelivered'].includes(normalized)) return 'failed';
+  return null;
 }
 
 exports.getAll = async (req, res) => {
@@ -421,7 +450,12 @@ exports.verifyWebhookWhatsapp = (req, res) => {
 exports.webhookWhatsapp = async (req, res) => {
   const provider = process.env.WHATSAPP_PROVIDER || 'meta_cloud';
 
-  // Verify HMAC signature for Meta (skip if APP_SECRET not configured)
+  if (provider === 'twilio' && !_verifyTwilioSignature(req)) {
+    console.warn('[WEBHOOK WHATSAPP] Firma Twilio invalida - request rechazado');
+    return res.sendStatus(403);
+  }
+
+  // Verify HMAC signature for Meta (skip if APP_SECRET not configured outside production)
   if (provider === 'meta_cloud' && !_verifyMetaSignature(req)) {
     console.warn('[WEBHOOK WHATSAPP] Firma HMAC inválida — request rechazado');
     return res.sendStatus(403);
@@ -436,23 +470,16 @@ exports.webhookWhatsapp = async (req, res) => {
 
       for (const s of statuses) {
         if (!s.id) continue;
-        const dbStatus = s.status === 'delivered' || s.status === 'read' ? 'sent' : null;
+        const dbStatus = mapWhatsAppStatus(s.status);
         if (!dbStatus) continue;
-        await db.query(
-          `UPDATE notification_queue SET status = $1, updated_at = NOW()
-           WHERE provider_message_id = $2 AND status != 'failed'`,
-          [dbStatus, s.id]
-        );
+        await updateProviderStatusByMessageId(s.id, dbStatus, s);
       }
     } else if (provider === 'twilio') {
       const msgSid  = req.body?.MessageSid;
       const status  = req.body?.MessageStatus;
-      if (msgSid && ['delivered', 'read', 'sent'].includes(status)) {
-        await db.query(
-          `UPDATE notification_queue SET status = 'sent', updated_at = NOW()
-           WHERE provider_message_id = $1 AND status != 'failed'`,
-          [msgSid]
-        );
+      const dbStatus = mapWhatsAppStatus(status);
+      if (msgSid && dbStatus) {
+        await updateProviderStatusByMessageId(msgSid, dbStatus, req.body);
       }
     }
 

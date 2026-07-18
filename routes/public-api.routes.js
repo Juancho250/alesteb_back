@@ -33,7 +33,7 @@ router.get("/ping", (req, res) => {
 });
 
 // POST /public-api/v1/analytics/pageview
-router.post("/analytics/pageview", analyticsCtrl.trackPageview);
+router.post("/analytics/pageview", requireApiPermission("analytics:write"), analyticsCtrl.trackPageview);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /public-api/v1/profile

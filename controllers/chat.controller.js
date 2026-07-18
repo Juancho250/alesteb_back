@@ -1,9 +1,19 @@
 // controllers/chat.controller.js
 const db = require('../config/db');
 const cloudinary = require('../config/cloudinary');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const { CloudinaryStorage } = require('../middleware/cloudinaryStorage');
 const multer = require('multer');
 const { getIO } = require('../config/socket');
+
+function safeChatImageBaseName(originalName) {
+  const base = String(originalName || 'image').replace(/\.[^.]*$/, '');
+  const safe = base
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return safe || 'image';
+}
 
 // ── Multer / Cloudinary ───────────────────────────────────────────────────────
 const chatStorage = new CloudinaryStorage({
@@ -11,7 +21,7 @@ const chatStorage = new CloudinaryStorage({
   params: async (req, file) => ({
     folder: 'chat_images',
     allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-    public_id: `chat-${Date.now()}-${file.originalname.split('.')[0]}`,
+    public_id: `chat-${Date.now()}-${safeChatImageBaseName(file.originalname)}`,
     transformation: [{ quality: 'auto', fetch_format: 'auto' }],
   }),
 });

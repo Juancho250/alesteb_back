@@ -57,6 +57,61 @@ async function _sendMetaCloud(phone, message) {
   }
 }
 
+async function _sendMetaCloudTemplate(phone, templateName, components = [], languageCode = 'es_CO') {
+  const phoneNumberId = process.env.META_WA_PHONE_NUMBER_ID;
+  const accessToken   = process.env.META_WA_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken) {
+    return {
+      success: false,
+      error: 'Variables META_WA_PHONE_NUMBER_ID y META_WA_ACCESS_TOKEN no configuradas',
+    };
+  }
+
+  if (!templateName) {
+    return { success: false, error: 'Template WhatsApp requerido' };
+  }
+
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+      {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to:                phone,
+          type:              'template',
+          template: {
+            name:     templateName,
+            language: { code: languageCode || 'es_CO' },
+            ...(Array.isArray(components) && components.length ? { components } : {}),
+          },
+        }),
+      }
+    );
+
+    const data = await resp.json().catch(() => ({}));
+
+    if (!resp.ok) {
+      return {
+        success: false,
+        error: data?.error?.message ?? `HTTP ${resp.status}`,
+      };
+    }
+
+    return {
+      success:           true,
+      providerMessageId: data?.messages?.[0]?.id ?? null,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function _sendTwilio(phone, message) {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken  = process.env.TWILIO_AUTH_TOKEN;
@@ -96,4 +151,17 @@ async function send(rawPhone, message, countryCode = '57') {
   return _sendMetaCloud(phone, message);
 }
 
-module.exports = { send };
+async function sendTemplate(rawPhone, templateName, components = [], languageCode = 'es_CO', countryCode = '57') {
+  const phone    = _normalizePhone(rawPhone, countryCode);
+  const provider = process.env.WHATSAPP_PROVIDER || 'meta_cloud';
+
+  if (provider === 'twilio') {
+    return {
+      success: false,
+      error: 'Plantillas WhatsApp via Twilio no configuradas en este backend',
+    };
+  }
+  return _sendMetaCloudTemplate(phone, templateName, components, languageCode);
+}
+
+module.exports = { send, sendTemplate };

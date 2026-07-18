@@ -59,7 +59,7 @@ const requireFeature = (feature) => async (req, res, next) => {
     // Superadmin bypasea todo
     if (req.user?.roles?.includes("superadmin")) return next();
 
-    const adminId = req.user?.id;
+    const adminId = req.adminId ?? req.user?.owner_admin_id ?? req.user?.id;
     if (!adminId) {
       return res.status(401).json({ success: false, message: "No autenticado", code: "NOT_AUTHENTICATED" });
     }
@@ -121,7 +121,7 @@ const requireLimit = (resource) => async (req, res, next) => {
   try {
     if (req.user?.roles?.includes("superadmin")) return next();
 
-    const adminId = req.user?.id;
+    const adminId = req.adminId ?? req.user?.owner_admin_id ?? req.user?.id;
     if (!adminId) {
       return res.status(401).json({ success: false, message: "No autenticado", code: "NOT_AUTHENTICATED" });
     }
@@ -177,7 +177,7 @@ const requireActiveSubscription = async (req, res, next) => {
   try {
     if (req.user?.roles?.includes("superadmin")) return next();
 
-    const adminId = req.user?.id;
+    const adminId = req.adminId ?? req.user?.owner_admin_id ?? req.user?.id;
     if (!adminId) return next(); // auth middleware ya lo maneja
 
     const sub = await getSubscriptionData(adminId);

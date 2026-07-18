@@ -7,6 +7,92 @@ const db                          = require('../config/db');
 const { sendCreditReminderEmail } = require('../config/emailConfig');
 const { getAdminBranding }        = require('./branding.service');
 const { generateInstallmentPayToken } = require('./creditPayToken.service');
+const {
+  processNotificationOutboxBatch,
+  recoverStaleNotificationJobs,
+} = require('./notificationOutbox.service');
+
+const workerState = {
+  enabled: false,
+  running: false,
+  lastStartedAt: null,
+  lastCompletedAt: null,
+  lastErrorCode: null,
+  processed: 0,
+  recovered: 0,
+};
+
+function envFlag(name, fallback = false) {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return String(value).toLowerCase() === 'true';
+}
+
+function logWorker(level, event, details = {}) {
+  console[level === 'error' ? 'error' : 'log'](JSON.stringify({
+    level,
+    event,
+    worker: 'notification_outbox',
+    ...details,
+  }));
+}
+
+async function withTimeout(promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error('Notification worker tick timeout');
+          err.code = 'NOTIFICATION_WORKER_TIMEOUT';
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runNotificationWorkerTick() {
+  if (workerState.running) return { skipped: true, reason: 'tick_already_running' };
+  workerState.running = true;
+  workerState.lastStartedAt = new Date().toISOString();
+  const timeoutMs = Math.min(
+    Math.max(Number(process.env.AURA_NOTIFICATION_WORKER_TIMEOUT_MS || 60_000), 5_000),
+    300_000
+  );
+  try {
+    const recovery = await recoverStaleNotificationJobs();
+    const result = await withTimeout(
+      processNotificationOutboxBatch(
+        Math.min(Math.max(Number(process.env.AURA_NOTIFICATION_BATCH_SIZE || 20), 1), 100),
+        process.env.RENDER_INSTANCE_ID || `notification-worker:${process.pid}`
+      ),
+      timeoutMs
+    );
+    workerState.processed += Number(result.processed || 0);
+    workerState.recovered += Number(recovery.recovered || 0);
+    workerState.lastCompletedAt = new Date().toISOString();
+    workerState.lastErrorCode = null;
+    logWorker('info', 'notification_worker_tick_completed', {
+      processed: Number(result.processed || 0),
+      recovered: Number(recovery.recovered || 0),
+    });
+    return { ...result, recovered: Number(recovery.recovered || 0) };
+  } catch (err) {
+    workerState.lastErrorCode = String(err.code || 'NOTIFICATION_WORKER_ERROR').slice(0, 80);
+    logWorker('error', 'notification_worker_tick_failed', { errorCode: workerState.lastErrorCode });
+    throw err;
+  } finally {
+    workerState.running = false;
+  }
+}
+
+function getNotificationWorkerHealth() {
+  return { ...workerState };
+}
 
 // ── Recordatorios de cuotas de crédito ───────────────────────────────────────
 
@@ -189,4 +275,53 @@ function startNotificationWorker() {
   console.log('[CreditReminderWorker] ✅ Recordatorios de cuotas registrado (08:00 Bogotá)');
 }
 
-module.exports = { startNotificationWorker };
+// Safe AURA entrypoint. The legacy scheduler above remains for compatibility but
+// is no longer exported to resident processes.
+function startSafeNotificationWorker() {
+  const enabled = envFlag('AURA_NOTIFICATION_WORKER_ENABLED', false);
+  workerState.enabled = enabled;
+  if (!enabled) {
+    logWorker('info', 'notification_worker_disabled');
+    return {
+      enabled: false,
+      stop() {},
+      getHealth: getNotificationWorkerHealth,
+    };
+  }
+
+  const tasks = [cron.schedule(
+    process.env.AURA_NOTIFICATION_WORKER_CRON || '*/30 * * * * *',
+    () => runNotificationWorkerTick().catch(() => {}),
+    { noOverlap: true }
+  )];
+
+  if (envFlag('LEGACY_CREDIT_REMINDER_WORKER_ENABLED', false)) {
+    tasks.push(cron.schedule('0 8 * * *', async () => {
+      try {
+        await checkCreditInstallments();
+      } catch (err) {
+        logWorker('error', 'credit_reminder_tick_failed', {
+          errorCode: String(err.code || 'CREDIT_REMINDER_ERROR').slice(0, 80),
+        });
+      }
+    }, { timezone: 'America/Bogota', noOverlap: true }));
+  }
+
+  logWorker('info', 'notification_worker_started', { taskCount: tasks.length });
+  return {
+    enabled: true,
+    stop() {
+      for (const task of tasks) task.stop();
+      workerState.enabled = false;
+      logWorker('info', 'notification_worker_stopped');
+    },
+    getHealth: getNotificationWorkerHealth,
+  };
+}
+
+module.exports = {
+  startNotificationWorker: startSafeNotificationWorker,
+  runNotificationWorkerTick,
+  getNotificationWorkerHealth,
+  checkCreditInstallments,
+};

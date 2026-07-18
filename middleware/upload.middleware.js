@@ -1,5 +1,5 @@
 const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const { CloudinaryStorage } = require("./cloudinaryStorage");
 const cloudinary = require("../config/cloudinary");
 
 function createUpload(folder = "general", maxSizeMB = 5) {

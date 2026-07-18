@@ -14,8 +14,9 @@ const isProd = process.env.NODE_ENV === "production";
 // ============================================
 
 // X-Request-Id — trazabilidad en logs y respuestas
-app.use((req, _res, next) => {
+app.use((req, res, next) => {
   req.id = crypto.randomUUID();
+  res.setHeader("X-Request-Id", req.id);
   next();
 });
 
@@ -40,7 +41,7 @@ app.use((req, res, next) => {
     return cors({
       origin:         true,
       methods:        CORS_METHODS,
-      allowedHeaders: ["Content-Type", "X-API-Key", "Authorization"],
+      allowedHeaders: ["Content-Type", "X-API-Key", "Authorization", "X-Tenant-Admin-Id"],
       maxAge:         86400,
     })(req, res, next);
   }
@@ -51,7 +52,7 @@ app.use((req, res, next) => {
     },
     credentials:    true,
     methods:        CORS_METHODS,
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Tenant-Admin-Id"],
   })(req, res, next);
 });
 
@@ -143,23 +144,8 @@ const publicApiRoutes = safeRequire("./routes/public-api.routes", "public-api.ro
 
 console.log("[APP] Rutas cargadas.\n");
 
-// ============================================
-// ⏱️ TAREAS PROGRAMADAS
-// ============================================
-require("./services/agent.cron");            // Agente autónomo
-require("./services/notificationScheduler"); // Push notifications
-
-// Cron de suscripciones: vencimientos, sync de uso y notificaciones
-const { startSubscriptionCron } = require("./services/subscription.cron");
-startSubscriptionCron();
-
-// Motor de inventario: reservas expiradas + alertas de stock bajo
-const { startInventoryJobs } = require("./services/inventory.jobs");
-startInventoryJobs();
-
-// Worker de notificaciones salientes (WhatsApp, email) — cada 30 segundos
-const { startNotificationWorker } = require("./services/notification.worker");
-startNotificationWorker();
+// Las tareas programadas se inician exclusivamente desde worker.js.
+// El proceso web nunca registra crons para evitar ejecuciones duplicadas por réplica.
 
 // ============================================
 // 🔌 REGISTRO DE RUTAS
@@ -242,10 +228,12 @@ app.get("/api/health", (req, res) => {
       publicApi:     !!publicApiRoutes,
     },
     services: {
-      agent_cron:             true,
-      notification_scheduler: true,
-      subscription_cron:      true,
-      notification_worker:    true,
+      agent_cron:             false,
+      notification_scheduler: false,
+      subscription_cron:      false,
+      inventory_jobs:         false,
+      notification_worker:    false,
+      external_worker:        true,
     },
   });
 });

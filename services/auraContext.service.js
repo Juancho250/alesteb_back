@@ -56,8 +56,15 @@ async function safeQuery(label, query, params = [], fallback = null) {
     const { rows } = await db.query(query, params);
     return rows;
   } catch (err) {
-    console.warn(`[AURA context] ${label}: ${err.message}`);
-    return fallback;
+    console.error(JSON.stringify({
+      level: "error",
+      event: "aura_context_query_failed",
+      queryLabel: label,
+      errorCode: err.code || "DB_ERROR",
+    }));
+    const contextErr = new Error("No fue posible construir el contexto de AURA");
+    contextErr.code = "AURA_CONTEXT_QUERY_ERROR";
+    throw contextErr;
   }
 }
 
@@ -143,7 +150,7 @@ async function getSleepingProducts(scope) {
        MAX(s.sale_date) AS "lastSaleAt"
      FROM products p
      LEFT JOIN sale_items si ON si.product_id = p.id
-     LEFT JOIN sales s ON s.id = si.sale_id
+     LEFT JOIN sales s ON s.id = si.sale_id AND s.payment_status = 'paid'
      WHERE p.is_active = true ${s.clause}
      GROUP BY p.id, p.name, p.sku, p.stock
      HAVING MAX(s.sale_date) IS NULL
