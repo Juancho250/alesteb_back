@@ -699,7 +699,7 @@ exports.registerPayment = async (req, res) => {
 
     const { rows: saleRows } = await client.query(
       `SELECT s.id, s.sale_number, s.total, s.amount_paid, s.payment_status, s.customer_id,
-              s.owner_admin_id,
+              s.owner_admin_id, s.delivery_status,
               u.email AS customer_email,
               u.name  AS customer_name
       FROM sales s
@@ -708,10 +708,10 @@ exports.registerPayment = async (req, res) => {
     );
     const sale = saleRows[0];
 
+    if (sale.delivery_status === "cancelled")
+      return res.status(400).json({ success: false, message: "No se puede abonar a una venta cancelada" });
     if (sale.payment_status === "paid")
       return res.status(400).json({ success: false, message: "Esta venta ya está pagada por completo" });
-    if (sale.payment_status === "cancelled")
-      return res.status(400).json({ success: false, message: "No se puede abonar a una venta cancelada" });
 
     const pending = Number(sale.total) - Number(sale.amount_paid);
     if (Number(amount) > pending)
@@ -893,7 +893,10 @@ exports.cancelOrder = async (req, res) => {
     await client.query("BEGIN");
 
     const { rows } = await client.query(
-      "SELECT id, customer_id, payment_status, owner_admin_id, discount_id FROM sales WHERE id = $1", [id]
+      `SELECT id, customer_id, payment_status, delivery_status, owner_admin_id, discount_id
+       FROM sales
+       WHERE id = $1`,
+      [id]
     );
     if (!rows.length) {
       await client.query("ROLLBACK");
@@ -913,6 +916,11 @@ exports.cancelOrder = async (req, res) => {
           return res.status(403).json({ success: false, message: "Sin permiso para cancelar este pedido" });
         }
       }
+    }
+
+    if (order.delivery_status === "cancelled") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ success: false, message: "Este pedido ya está cancelado" });
     }
 
     if (!["pending", "partial"].includes(order.payment_status)) {
@@ -936,7 +944,8 @@ exports.cancelOrder = async (req, res) => {
     }
 
     await client.query(
-      "UPDATE sales SET payment_status = 'cancelled', updated_at = NOW() WHERE id = $1", [id]
+      "UPDATE sales SET delivery_status = 'cancelled', updated_at = NOW() WHERE id = $1",
+      [id]
     );
 
     // Revertir uso del descuento si la venta tenía uno vinculado

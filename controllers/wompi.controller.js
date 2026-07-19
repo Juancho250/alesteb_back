@@ -16,7 +16,7 @@ const getSession = async (req, res) => {
     const { sale_id } = req.params;
 
     const { rows } = await db.query(
-      `SELECT id, sale_number, total, payment_status, owner_admin_id, customer_id
+      `SELECT id, sale_number, total, payment_status, delivery_status, owner_admin_id, customer_id
        FROM sales WHERE id = $1`,
       [sale_id]
     );
@@ -45,11 +45,11 @@ const getSession = async (req, res) => {
       }
     }
 
+    if (sale.delivery_status === "cancelled")
+      return res.status(400).json({ success: false, message: "Esta venta está cancelada" });
+
     if (sale.payment_status === "paid")
       return res.status(400).json({ success: false, message: "Esta venta ya fue pagada" });
-
-    if (sale.payment_status === "cancelled")
-      return res.status(400).json({ success: false, message: "Esta venta está cancelada" });
 
     let sessionData;
     try {

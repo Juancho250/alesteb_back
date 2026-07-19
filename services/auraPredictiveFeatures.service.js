@@ -5,13 +5,50 @@ const db = require('../config/db');
 
 const FEATURE_VERSION = 'predictive_features_v1';
 const MAX_BACKFILL_DAYS = 370;
-const CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'anulado', 'annulled', 'void']);
+const CANCELLED_DELIVERY_STATUS = 'cancelled';
+const PREDICTIVE_STATEMENT_NAMES = Object.freeze({
+  productFeatures: 'insertProductFeatures',
+  variantFeatures: 'insertVariantFeatures',
+  storeFeatures: 'insertStoreFeatures',
+  dataQuality: 'auditPredictiveDataQuality',
+});
 
 function createPredictiveError(message, code = 'AURA_PREDICTIVE_ERROR', status = 400) {
   const err = new Error(message);
   err.code = code;
   err.status = status;
   return err;
+}
+
+function attachPredictiveStatementContext(err, statementName, sql) {
+  if (!err || (typeof err !== 'object' && typeof err !== 'function')) return err;
+  try {
+    if (!Object.prototype.hasOwnProperty.call(err, 'auraStatementName')) {
+      Object.defineProperty(err, 'auraStatementName', {
+        value: statementName,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+    if (!Object.prototype.hasOwnProperty.call(err, 'auraSql')) {
+      Object.defineProperty(err, 'auraSql', {
+        value: sql,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+  } catch {
+    // Preserve the original database error even if it is not extensible.
+  }
+  return err;
+}
+
+async function executePredictiveStatement(client, statementName, sql, params) {
+  try {
+    return await client.query(sql, params);
+  } catch (err) {
+    throw attachPredictiveStatementContext(err, statementName, sql);
+  }
 }
 
 function toDateOnly(value, field = 'date') {
@@ -62,15 +99,11 @@ function normalizeStatus(value) {
 
 function isPaidNonCancelledSale(sale) {
   return normalizeStatus(sale.payment_status) === 'paid'
-    && !CANCELLED_STATUSES.has(normalizeStatus(sale.payment_status))
-    && !CANCELLED_STATUSES.has(normalizeStatus(sale.status))
-    && !CANCELLED_STATUSES.has(normalizeStatus(sale.delivery_status));
+    && normalizeStatus(sale.delivery_status) !== CANCELLED_DELIVERY_STATUS;
 }
 
 function isCancelledSale(sale) {
-  return CANCELLED_STATUSES.has(normalizeStatus(sale.payment_status))
-    || CANCELLED_STATUSES.has(normalizeStatus(sale.status))
-    || CANCELLED_STATUSES.has(normalizeStatus(sale.delivery_status));
+  return normalizeStatus(sale.delivery_status) === CANCELLED_DELIVERY_STATUS;
 }
 
 function saleDateOnly(sale) {
@@ -306,9 +339,7 @@ async function insertProductFeatures(client, { ownerAdminId, featureDate, runId,
       WHERE s.owner_admin_id = $1
         AND s.sale_date::date BETWEEN ($2::date - INTERVAL '89 days') AND $2::date
         AND s.payment_status = 'paid'
-        AND LOWER(COALESCE(s.payment_status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-        AND LOWER(COALESCE(s.status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-        AND LOWER(COALESCE(s.delivery_status::text, '')) NOT IN ('cancelled', 'canceled')
+        AND COALESCE(s.delivery_status::text, 'pending') <> 'cancelled'
     ),
     sales_daily AS (
       SELECT
@@ -336,31 +367,27 @@ async function insertProductFeatures(client, { ownerAdminId, featureDate, runId,
       JOIN sale_items si ON si.sale_id = s.id
       WHERE s.owner_admin_id = $1
         AND s.sale_date::date = $2::date
-        AND (
-          LOWER(COALESCE(s.payment_status::text, '')) IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-          OR LOWER(COALESCE(s.status::text, '')) IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-          OR LOWER(COALESCE(s.delivery_status::text, '')) IN ('cancelled', 'canceled')
-        )
+        AND COALESCE(s.delivery_status::text, 'pending') = 'cancelled'
       GROUP BY si.product_id
     ),
     returns_daily AS (
-      SELECT product_id, SUM(GREATEST(0, COALESCE(qty_delta, 0)))::numeric(14,3) AS returns_units
-      FROM stock_ledger
-      WHERE owner_admin_id = $1
-        AND created_at::date = $2::date
-        AND movement_type = 'return'
-      GROUP BY product_id
+      SELECT sl.product_id, SUM(GREATEST(0, COALESCE(sl.qty_delta, 0)))::numeric(14,3) AS returns_units
+      FROM stock_ledger sl
+      WHERE sl.owner_admin_id = $1
+        AND sl.created_at::date = $2::date
+        AND sl.movement_type = 'return'
+      GROUP BY sl.product_id
     ),
     ledger_daily AS (
       SELECT
-        product_id,
-        (ARRAY_AGG(qty_before ORDER BY created_at ASC, id ASC))[1]::numeric(14,3) AS stock_initial,
-        (ARRAY_AGG(qty_after ORDER BY created_at DESC, id DESC))[1]::numeric(14,3) AS stock_final_from_ledger,
-        COUNT(*) FILTER (WHERE COALESCE(qty_after, 0) <= 0)::int AS stockouts
-      FROM stock_ledger
-      WHERE owner_admin_id = $1
-        AND created_at::date = $2::date
-      GROUP BY product_id
+        sl.product_id,
+        (ARRAY_AGG(sl.qty_before ORDER BY sl.created_at ASC, sl.id ASC))[1]::numeric(14,3) AS stock_initial,
+        (ARRAY_AGG(sl.qty_after ORDER BY sl.created_at DESC, sl.id DESC))[1]::numeric(14,3) AS stock_final_from_ledger,
+        COUNT(*) FILTER (WHERE COALESCE(sl.qty_after, 0) <= 0)::int AS stockouts
+      FROM stock_ledger sl
+      WHERE sl.owner_admin_id = $1
+        AND sl.created_at::date = $2::date
+      GROUP BY sl.product_id
     ),
     duplicate_items AS (
       SELECT product_id, COUNT(*)::int AS duplicate_sale_items_count
@@ -559,13 +586,17 @@ async function insertProductFeatures(client, { ownerAdminId, featureDate, runId,
       recalculation_count = daily_product_features.recalculation_count + 1
     RETURNING product_id`;
 
-  const { rowCount } = await client.query(sql, [ownerAdminId, featureDate, FEATURE_VERSION, runId]);
+  const { rowCount } = await executePredictiveStatement(
+    client,
+    PREDICTIVE_STATEMENT_NAMES.productFeatures,
+    sql,
+    [ownerAdminId, featureDate, FEATURE_VERSION, runId]
+  );
   return rowCount;
 }
 
 async function insertVariantFeatures(client, { ownerAdminId, featureDate, runId }) {
-  const { rowCount } = await client.query(
-    `WITH variant_base AS (
+  const sql = `WITH variant_base AS (
        SELECT
          p.owner_admin_id,
          p.id AS product_id,
@@ -588,9 +619,7 @@ async function insertVariantFeatures(client, { ownerAdminId, featureDate, runId 
        WHERE s.owner_admin_id = $1
          AND s.sale_date::date BETWEEN ($2::date - INTERVAL '89 days') AND $2::date
          AND s.payment_status = 'paid'
-         AND LOWER(COALESCE(s.payment_status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-         AND LOWER(COALESCE(s.status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-         AND LOWER(COALESCE(s.delivery_status::text, '')) NOT IN ('cancelled', 'canceled')
+         AND COALESCE(s.delivery_status::text, 'pending') <> 'cancelled'
      ),
      sales_daily AS (
        SELECT
@@ -621,44 +650,39 @@ async function insertVariantFeatures(client, { ownerAdminId, featureDate, runId 
        WHERE s.owner_admin_id = $1
          AND s.sale_date::date = $2::date
          AND si.variant_id IS NOT NULL
-         AND (
-           LOWER(COALESCE(s.payment_status::text, '')) IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-           OR LOWER(COALESCE(s.status::text, '')) IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-           OR LOWER(COALESCE(s.delivery_status::text, '')) IN ('cancelled', 'canceled')
-         )
+         AND COALESCE(s.delivery_status::text, 'pending') = 'cancelled'
        GROUP BY si.variant_id
      ),
      returns_daily AS (
-       SELECT variant_id, SUM(GREATEST(0, COALESCE(qty_delta, 0)))::numeric(14,3) AS returns_units
-       FROM stock_ledger
-       WHERE owner_admin_id = $1
-         AND created_at::date = $2::date
-         AND movement_type = 'return'
-         AND variant_id IS NOT NULL
-       GROUP BY variant_id
+       SELECT sl.variant_id, SUM(GREATEST(0, COALESCE(sl.qty_delta, 0)))::numeric(14,3) AS returns_units
+       FROM stock_ledger sl
+       WHERE sl.owner_admin_id = $1
+         AND sl.created_at::date = $2::date
+         AND sl.movement_type = 'return'
+         AND sl.variant_id IS NOT NULL
+       GROUP BY sl.variant_id
      ),
      ledger_daily AS (
        SELECT
-         variant_id,
-         (ARRAY_AGG(qty_before ORDER BY created_at ASC, id ASC))[1]::numeric(14,3) AS stock_initial,
-         (ARRAY_AGG(qty_after ORDER BY created_at DESC, id DESC))[1]::numeric(14,3) AS stock_final_from_ledger,
-         COUNT(*) FILTER (WHERE COALESCE(qty_after, 0) <= 0)::int AS stockouts
-       FROM stock_ledger
-       WHERE owner_admin_id = $1
-         AND created_at::date = $2::date
-         AND variant_id IS NOT NULL
-       GROUP BY variant_id
+         sl.variant_id,
+         (ARRAY_AGG(sl.qty_before ORDER BY sl.created_at ASC, sl.id ASC))[1]::numeric(14,3) AS stock_initial,
+         (ARRAY_AGG(sl.qty_after ORDER BY sl.created_at DESC, sl.id DESC))[1]::numeric(14,3) AS stock_final_from_ledger,
+         COUNT(*) FILTER (WHERE COALESCE(sl.qty_after, 0) <= 0)::int AS stockouts
+       FROM stock_ledger sl
+       WHERE sl.owner_admin_id = $1
+         AND sl.created_at::date = $2::date
+         AND sl.variant_id IS NOT NULL
+       GROUP BY sl.variant_id
      ),
      pending_purchase AS (
        SELECT
-         poi.variant_id,
-         SUM(GREATEST(0, COALESCE(poi.quantity, 0) - COALESCE(poi.received_quantity, 0)))::numeric(14,3) AS pending_purchase_units
-       FROM purchase_order_items poi
-       JOIN purchase_orders po ON po.id = poi.purchase_order_id
-       WHERE po.owner_admin_id = $1
-         AND po.status NOT IN ('received', 'cancelled')
-         AND poi.variant_id IS NOT NULL
-       GROUP BY poi.variant_id
+         pro.variant_id,
+         SUM(COALESCE(pro.quantity, 0))::numeric(14,3) AS pending_purchase_units
+       FROM procurement_orders pro
+       WHERE pro.owner_admin_id = $1
+         AND pro.status NOT IN ('received', 'cancelled')
+         AND pro.variant_id IS NOT NULL
+       GROUP BY pro.variant_id
      ),
      features AS (
        SELECT
@@ -812,15 +836,18 @@ async function insertVariantFeatures(client, { ownerAdminId, featureDate, runId 
        source_fingerprint = EXCLUDED.source_fingerprint,
        last_calculated_at = NOW(),
        recalculation_count = daily_variant_features.recalculation_count + 1
-     RETURNING variant_id`,
+     RETURNING variant_id`;
+  const { rowCount } = await executePredictiveStatement(
+    client,
+    PREDICTIVE_STATEMENT_NAMES.variantFeatures,
+    sql,
     [ownerAdminId, featureDate, FEATURE_VERSION, runId]
   );
   return rowCount;
 }
 
 async function insertStoreFeatures(client, { ownerAdminId, featureDate, runId }) {
-  const { rowCount } = await client.query(
-    `INSERT INTO daily_store_features (
+  const sql = `INSERT INTO daily_store_features (
        owner_admin_id, feature_date, feature_version, calculation_run_id,
        units_sold, gross_revenue, net_revenue, discounts_allocated, tax_allocated,
        returns_units, cancelled_units, estimated_margin,
@@ -834,42 +861,42 @@ async function insertStoreFeatures(client, { ownerAdminId, featureDate, runId })
        $2::date,
        $3::text,
        $4::uuid,
-       COALESCE(SUM(units_sold), 0),
-       COALESCE(SUM(gross_revenue), 0),
-       COALESCE(SUM(net_revenue), 0),
-       COALESCE(SUM(discounts_allocated), 0),
-       COALESCE(SUM(tax_allocated), 0),
-       COALESCE(SUM(returns_units), 0),
-       COALESCE(SUM(cancelled_units), 0),
-       COALESCE(SUM(estimated_margin), 0),
+       COALESCE(SUM(dpf.units_sold), 0),
+       COALESCE(SUM(dpf.gross_revenue), 0),
+       COALESCE(SUM(dpf.net_revenue), 0),
+       COALESCE(SUM(dpf.discounts_allocated), 0),
+       COALESCE(SUM(dpf.tax_allocated), 0),
+       COALESCE(SUM(dpf.returns_units), 0),
+       COALESCE(SUM(dpf.cancelled_units), 0),
+       COALESCE(SUM(dpf.estimated_margin), 0),
        COUNT(*)::int,
-       COUNT(*) FILTER (WHERE units_sold > 0)::int,
-       COUNT(*) FILTER (WHERE stock_available_final <= 0)::int,
-       COALESCE(SUM(pending_purchase_units), 0),
-       COALESCE(SUM(campaign_events_count), 0)::int,
+       COUNT(*) FILTER (WHERE dpf.units_sold > 0)::int,
+       COUNT(*) FILTER (WHERE dpf.stock_available_final <= 0)::int,
+       COALESCE(SUM(dpf.pending_purchase_units), 0),
+       COALESCE(SUM(dpf.campaign_events_count), 0)::int,
        EXTRACT(DOW FROM $2::date)::smallint,
        EXTRACT(MONTH FROM $2::date)::smallint,
-       (COALESCE(SUM(rolling_units_90), 0) >= 10 AND COALESCE(AVG(completeness_score), 0) >= 0.65),
-       COALESCE(AVG(completeness_score), 0)::numeric(5,4),
-       COALESCE(SUM(duplicate_sale_items_count), 0)::int,
-       COALESCE(SUM(anomaly_count), 0)::int,
+       (COALESCE(SUM(dpf.rolling_units_90), 0) >= 10 AND COALESCE(AVG(dpf.completeness_score), 0) >= 0.65),
+       COALESCE(AVG(dpf.completeness_score), 0)::numeric(5,4),
+       COALESCE(SUM(dpf.duplicate_sale_items_count), 0)::int,
+       COALESCE(SUM(dpf.anomaly_count), 0)::int,
        jsonb_build_object(
          'source', 'daily_product_features',
          'productRows', COUNT(*),
-         'insufficientProducts', COUNT(*) FILTER (WHERE is_data_sufficient = false),
-         'qualityAverage', COALESCE(AVG(completeness_score), 0)
+         'insufficientProducts', COUNT(*) FILTER (WHERE dpf.is_data_sufficient = false),
+         'qualityAverage', COALESCE(AVG(dpf.completeness_score), 0)
        ),
        md5(jsonb_build_object(
-         'units', COALESCE(SUM(units_sold), 0),
-         'net', COALESCE(SUM(net_revenue), 0),
-         'margin', COALESCE(SUM(estimated_margin), 0),
-         'quality', COALESCE(AVG(completeness_score), 0)
+         'units', COALESCE(SUM(dpf.units_sold), 0),
+         'net', COALESCE(SUM(dpf.net_revenue), 0),
+         'margin', COALESCE(SUM(dpf.estimated_margin), 0),
+         'quality', COALESCE(AVG(dpf.completeness_score), 0)
        )::text),
        NOW()
-     FROM daily_product_features
-     WHERE owner_admin_id = $1
-       AND feature_date = $2::date
-       AND feature_version = $3
+     FROM daily_product_features dpf
+     WHERE dpf.owner_admin_id = $1
+       AND dpf.feature_date = $2::date
+       AND dpf.feature_version = $3
      ON CONFLICT (owner_admin_id, feature_date, feature_version)
      DO UPDATE SET
        calculation_run_id = EXCLUDED.calculation_run_id,
@@ -894,7 +921,11 @@ async function insertStoreFeatures(client, { ownerAdminId, featureDate, runId })
        source_fingerprint = EXCLUDED.source_fingerprint,
        last_calculated_at = NOW(),
        recalculation_count = daily_store_features.recalculation_count + 1
-     RETURNING owner_admin_id`,
+     RETURNING owner_admin_id`;
+  const { rowCount } = await executePredictiveStatement(
+    client,
+    PREDICTIVE_STATEMENT_NAMES.storeFeatures,
+    sql,
     [ownerAdminId, featureDate, FEATURE_VERSION, runId]
   );
   return rowCount;
@@ -903,12 +934,11 @@ async function insertStoreFeatures(client, { ownerAdminId, featureDate, runId })
 async function auditPredictiveDataQuality({ ownerAdminId, dateFrom, dateTo }, client = db) {
   const from = toDateOnly(dateFrom, 'dateFrom');
   const to = toDateOnly(dateTo, 'dateTo');
-  const { rows } = await client.query(
-    `WITH sales_scope AS (
-       SELECT *
-       FROM sales
-       WHERE owner_admin_id = $1
-         AND sale_date::date BETWEEN $2::date AND $3::date
+  const sql = `WITH sales_scope AS (
+       SELECT s.*
+       FROM sales s
+       WHERE s.owner_admin_id = $1
+         AND s.sale_date::date BETWEEN $2::date AND $3::date
      ),
      item_scope AS (
        SELECT si.*
@@ -922,14 +952,18 @@ async function auditPredictiveDataQuality({ ownerAdminId, dateFrom, dateTo }, cl
        HAVING COUNT(*) > 1
      )
      SELECT
-       (SELECT COUNT(*)::int FROM sales_scope) AS sales_count,
-       (SELECT COUNT(*)::int FROM item_scope) AS sale_items_count,
-       (SELECT COUNT(*)::int FROM duplicate_items) AS duplicate_sale_item_groups,
-       (SELECT COUNT(*)::int FROM item_scope WHERE quantity < 0 OR subtotal < 0 OR unit_price < 0) AS sale_item_anomalies,
-       (SELECT COUNT(*)::int FROM products WHERE owner_admin_id = $1 AND COALESCE(is_active, true) = true AND purchase_price IS NULL) AS products_missing_cost,
-       (SELECT COUNT(*)::int FROM products WHERE owner_admin_id = $1 AND COALESCE(is_active, true) = true AND supplier_lead_time_days IS NULL) AS products_missing_lead_time,
-       (SELECT COUNT(*)::int FROM stock_ledger WHERE owner_admin_id = $1 AND created_at::date BETWEEN $2::date AND $3::date AND qty_after < 0) AS negative_stock_events,
-       (SELECT COUNT(*)::int FROM purchase_order_items poi JOIN purchase_orders po ON po.id = poi.purchase_order_id WHERE po.owner_admin_id = $1 AND poi.quantity < COALESCE(poi.received_quantity, 0)) AS purchase_overreceived_items`,
+        (SELECT COUNT(*)::int FROM sales_scope) AS sales_count,
+        (SELECT COUNT(*)::int FROM item_scope) AS sale_items_count,
+        (SELECT COUNT(*)::int FROM duplicate_items) AS duplicate_sale_item_groups,
+        (SELECT COUNT(*)::int FROM item_scope WHERE quantity < 0 OR subtotal < 0 OR unit_price < 0) AS sale_item_anomalies,
+        (SELECT COUNT(*)::int FROM products p WHERE p.owner_admin_id = $1 AND COALESCE(p.is_active, true) = true AND p.purchase_price IS NULL) AS products_missing_cost,
+        (SELECT COUNT(*)::int FROM products p WHERE p.owner_admin_id = $1 AND COALESCE(p.is_active, true) = true AND p.supplier_lead_time_days IS NULL) AS products_missing_lead_time,
+        (SELECT COUNT(*)::int FROM stock_ledger sl WHERE sl.owner_admin_id = $1 AND sl.created_at::date BETWEEN $2::date AND $3::date AND sl.qty_after < 0) AS negative_stock_events,
+        (SELECT COUNT(*)::int FROM purchase_order_items poi JOIN purchase_orders po ON po.id = poi.purchase_order_id WHERE po.owner_admin_id = $1 AND poi.quantity < COALESCE(poi.received_quantity, 0)) AS purchase_overreceived_items`;
+  const { rows } = await executePredictiveStatement(
+    client,
+    PREDICTIVE_STATEMENT_NAMES.dataQuality,
+    sql,
     [ownerAdminId, from, to]
   );
   return rows[0] || {};
@@ -1006,7 +1040,19 @@ async function rebuildPredictiveFeatures({ ownerAdminId, dateFrom, dateTo, userI
   }
 }
 
-async function listActiveTenantIds(client = db) {
+async function listActiveTenantIds(client = db, ownerAdminId = null) {
+  const requestedOwnerAdminId = ownerAdminId === null || ownerAdminId === undefined
+    ? null
+    : Number(ownerAdminId);
+  if (
+    requestedOwnerAdminId !== null
+    && (!Number.isSafeInteger(requestedOwnerAdminId) || requestedOwnerAdminId <= 0)
+  ) {
+    throw createPredictiveError(
+      'ownerAdminId invalido',
+      'AURA_PREDICTIVE_TENANT_INVALID'
+    );
+  }
   const { rows } = await client.query(
     `SELECT DISTINCT u.id
      FROM users u
@@ -1015,14 +1061,20 @@ async function listActiveTenantIds(client = db) {
      WHERE u.owner_admin_id IS NULL
        AND COALESCE(u.is_active, true) = true
        AND r.name = 'admin'
-     ORDER BY u.id`
+       AND ($1::int IS NULL OR u.id = $1)
+     ORDER BY u.id`,
+    [requestedOwnerAdminId]
   );
   return rows.map((row) => Number(row.id));
 }
 
-async function runDailyPredictiveFeatureJob({ targetDate = addDays(new Date().toISOString().slice(0, 10), -1) } = {}) {
+async function runDailyPredictiveFeatureJob({
+  targetDate = addDays(new Date().toISOString().slice(0, 10), -1),
+  ownerAdminId = null,
+  throwOnError = false,
+} = {}) {
   const featureDate = toDateOnly(targetDate, 'targetDate');
-  const tenantIds = await listActiveTenantIds();
+  const tenantIds = await listActiveTenantIds(db, ownerAdminId);
   const results = [];
   for (const ownerAdminId of tenantIds) {
     try {
@@ -1040,6 +1092,7 @@ async function runDailyPredictiveFeatureJob({ targetDate = addDays(new Date().to
         ownerAdminId,
         code: err.code || 'AURA_PREDICTIVE_ERROR',
       }));
+      if (throwOnError) throw err;
       results.push({ ownerAdminId, success: false, code: err.code || 'AURA_PREDICTIVE_ERROR' });
     }
   }

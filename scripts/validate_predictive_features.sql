@@ -23,9 +23,7 @@ valid_sales AS (
   JOIN params p ON p.owner_admin_id = s.owner_admin_id
   WHERE s.sale_date::date BETWEEN p.date_from AND p.date_to
     AND s.payment_status = 'paid'
-    AND LOWER(COALESCE(s.payment_status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-    AND LOWER(COALESCE(s.status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-    AND LOWER(COALESCE(s.delivery_status::text, '')) NOT IN ('cancelled', 'canceled')
+    AND COALESCE(s.delivery_status::text, 'pending') <> 'cancelled'
 ),
 source_product AS (
   SELECT

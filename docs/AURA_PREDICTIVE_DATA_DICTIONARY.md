@@ -30,14 +30,14 @@ Campos usados/verificados por codigo:
 - `discount_amount`
 - `total`
 - `payment_status`
-- `status`
 - `delivery_status`
 - `discount_id`
 - `created_by`
 
 Filtro de demanda vendida:
 - `payment_status = 'paid'`
-- `payment_status`, `status` y `delivery_status` no pueden estar en `cancelled`, `canceled`, `anulado`, `annulled`, `void`.
+- `delivery_status <> 'cancelled'`.
+- `payment_status` solo admite `paid`, `pending` y `partial`.
 
 Limitacion:
 - Ventas parciales o pendientes no cuentan como demanda pagada para features financieras.
@@ -122,8 +122,6 @@ Campo faltante recomendado:
 ### Anulaciones y cancelaciones
 
 Fuentes:
-- `sales.payment_status`
-- `sales.status`
 - `sales.delivery_status`
 - `stock_ledger.movement_type = 'sale_cancelled'`
 
@@ -132,8 +130,9 @@ Tratamiento:
 - `cancelled_units` cuenta items de ventas canceladas del dia.
 - El reintegro de stock se refleja como movimiento de ledger, no como devolucion financiera.
 
-Limitacion:
-- `cancelOrder` marca `payment_status = 'cancelled'`; no necesariamente marca `delivery_status`.
+Regla verificada:
+- `cancelOrder` conserva `payment_status` en `pending` o `partial` y marca
+  `delivery_status = 'cancelled'`.
 
 ### Stock fisico
 
@@ -241,16 +240,22 @@ Campos usados/verificados:
 - `purchase_orders.total_cost`
 - `purchase_orders.expected_delivery_date`
 - `purchase_order_items.product_id`
-- `purchase_order_items.variant_id`
 - `purchase_order_items.quantity`
 - `purchase_order_items.received_quantity`
 - `purchase_order_items.unit_cost`
+- `procurement_orders.owner_admin_id`
+- `procurement_orders.product_id`
+- `procurement_orders.variant_id`
+- `procurement_orders.quantity`
+- `procurement_orders.status`
 
 Tratamiento:
-- `pending_purchase_units = sum(max(0, quantity - received_quantity))` para ordenes no `received` ni `cancelled`.
+- Producto: `pending_purchase_units = sum(max(0, quantity - received_quantity))` desde items de ordenes no `received` ni `cancelled`.
+- Variante: se suma `procurement_orders.quantity` para estados no `received` ni `cancelled`, porque el esquema real de `purchase_order_items` no contiene `variant_id`.
 
 Limitacion:
 - MOQ no esta verificado en el esquema actual.
+- Las ordenes de compra generales solo conservan granularidad de producto; la granularidad de variante depende de `procurement_orders`.
 
 ### Proveedores
 
