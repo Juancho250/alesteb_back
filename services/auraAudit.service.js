@@ -161,7 +161,7 @@ async function recordAuraRunFailure({
   const outputTokens = normalizeTokens(usage.outputTokens ?? usage.output_tokens);
   const totalTokens = normalizeTokens(usage.totalTokens ?? usage.total_tokens ?? inputTokens + outputTokens);
   const cost = normalizeCost(estimatedCost, { inputTokens, outputTokens });
-  const errorCode = boundedString(error?.code || "AURA_ERROR", 100);
+  const errorCode = boundedString(error?.auditCode || error?.code || "AURA_ERROR", 100);
   const errorMessageRedacted = redactText(error?.message || "AURA fallo", 1000);
 
   const { rows } = await db.query(

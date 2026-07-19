@@ -884,6 +884,40 @@ test("AURA audit redacts sensitive input and records token usage", async () => {
   assert.equal(calls.some((call) => call.sql.includes("INSERT INTO ai_usage_daily")), true);
 });
 
+test("failed provider run keeps the quota reservation and increments errors", async () => {
+  const req = {
+    id: "52525252-5252-4252-8252-525252525252",
+    auraAdminId: 101,
+    user: { id: 11, roles: ["admin"], owner_admin_id: 101 },
+  };
+  const res = responseDouble();
+  let continued = false;
+
+  await auraQuota(req, res, () => { continued = true; });
+  const providerError = new Error("Invalid schema for function 'get_sales_summary'");
+  providerError.code = "AURA_OPENAI_ERROR";
+  providerError.auditCode = "AURA_OPENAI_BAD_REQUEST";
+  await auraAudit.recordAuraRunFailure({
+    runId: "53535353-5353-4353-8353-535353535353",
+    ownerAdminId: 101,
+    error: providerError,
+    latencyMs: 282,
+  });
+
+  assert.equal(continued, true);
+  assert.equal(req.auraUsage.requests, 1);
+  const failedRun = calls.find(
+    (call) => call.sql.includes("UPDATE aura_runs") && call.sql.includes("status = 'failed'")
+  );
+  assert.equal(failedRun.params[7], "AURA_OPENAI_BAD_REQUEST");
+  assert.match(failedRun.params[8], /Invalid schema/);
+  const usageError = calls.find(
+    (call) => call.sql.includes("INSERT INTO ai_usage_daily") && !call.sql.includes("WITH reservation")
+  );
+  assert.equal(usageError.params[5], 1);
+  assert.equal(calls.some((call) => /requests\s*=\s*requests\s*-\s*1/i.test(call.sql)), false);
+});
+
 test("conversation ids are opaque but reject unsafe characters", () => {
   assert.equal(normalizeConversationId("9223372036854775807"), "9223372036854775807");
   assert.equal(

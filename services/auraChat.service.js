@@ -62,7 +62,7 @@ async function executeAuraChat({
   const safeConversationId = normalizeConversationId(conversationId);
   const runId = crypto.randomUUID();
   const startedAt = Date.now();
-  const configuredModel = process.env.OPENAI_MODEL || "gpt-5-mini";
+  const configuredModel = auraOpenAI.normalizeOpenAIModel();
   let persistedConversationId = safeConversationId;
   let providerUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let providerCost = 0;

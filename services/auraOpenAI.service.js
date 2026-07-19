@@ -5,6 +5,7 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-5-mini";
 const MAX_SUGGESTED_ACTIONS = 6;
 const DEFAULT_TIMEOUT_MS = 18_000;
+const PROVIDER_ERROR_MESSAGE_MAX = 300;
 const ALLOWED_ACTION_TYPES = new Set([
   "inventory_review",
   "supplier_order_suggestion",
@@ -20,6 +21,15 @@ function envFlag(name, defaultValue = false) {
   const value = process.env[name];
   if (value === undefined || value === null || value === "") return defaultValue;
   return ["true", "1", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeOpenAIModel(value = process.env.OPENAI_MODEL || DEFAULT_MODEL) {
+  let model = String(value || "").trim();
+  const quote = model[0];
+  if ((quote === '"' || quote === "'") && model.endsWith(quote)) {
+    model = model.slice(1, -1).trim();
+  }
+  return model || DEFAULT_MODEL;
 }
 
 function isAuraMockProviderEnabled() {
@@ -83,12 +93,12 @@ function validateAuraProviderConfig() {
   }
 
   const timeoutMs = configuredTimeoutMs();
-  const requestedModel = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const requestedModel = normalizeOpenAIModel();
   console.log(JSON.stringify({
     level: "info",
     event: "aura_provider_config_validated",
     provider: mockEnabled ? "mock" : "openai",
-    model: mockEnabled ? "aura-mock-v1" : requestedModel,
+    model: mockEnabled ? "aura-mock-v1" : sanitizeProviderField(requestedModel, 100),
     timeoutMs,
     hasApiKey: Boolean(process.env.OPENAI_API_KEY),
     mockEnabled,
@@ -182,6 +192,79 @@ async function postOpenAIResponse(payload, timeoutMs, signal) {
       signal,
     }
   );
+}
+
+function sanitizeProviderField(value, maxLength) {
+  if (value === undefined || value === null || value === "") return null;
+  return String(value)
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gi, "[redacted-secret]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted-secret]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, "[redacted-phone]")
+    .slice(0, maxLength);
+}
+
+function sanitizeOpenAIProviderError(err) {
+  const providerError = err?.response?.data?.error;
+  const status = Number(err?.response?.status);
+  return {
+    status: Number.isInteger(status) && status > 0 ? status : null,
+    type: sanitizeProviderField(providerError?.type, 100),
+    code: sanitizeProviderField(providerError?.code || err?.code, 100),
+    param: sanitizeProviderField(providerError?.param, 160),
+    message: sanitizeProviderField(
+      providerError?.message || err?.message || "OpenAI request failed",
+      PROVIDER_ERROR_MESSAGE_MAX
+    ),
+  };
+}
+
+function providerAuditCode(status) {
+  if (status === 400) return "AURA_OPENAI_BAD_REQUEST";
+  if (status === 401) return "AURA_OPENAI_AUTHENTICATION_ERROR";
+  if (status === 403) return "AURA_OPENAI_PERMISSION_ERROR";
+  if (status === 404) return "AURA_OPENAI_MODEL_NOT_FOUND";
+  if (status === 429) return "AURA_OPENAI_RATE_LIMIT";
+  if (status >= 500) return "AURA_OPENAI_UNAVAILABLE";
+  return "AURA_OPENAI_ERROR";
+}
+
+function approximateInputBytes(input) {
+  try {
+    return Buffer.byteLength(JSON.stringify(input), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function summarizeOpenAIRequest(payload, requestId) {
+  return {
+    model: sanitizeProviderField(normalizeOpenAIModel(payload?.model), 100),
+    requestId: sanitizeProviderField(requestId, 100),
+    toolCount: Array.isArray(payload?.tools) ? payload.tools.length : 0,
+    inputBytes: approximateInputBytes(payload?.input),
+  };
+}
+
+function logOpenAIRequestFailure(err, requestSummary) {
+  const diagnostic = sanitizeOpenAIProviderError(err);
+  console.error(JSON.stringify({
+    level: "error",
+    event: "aura_openai_request_failed",
+    provider: "openai",
+    status: diagnostic.status,
+    error: {
+      type: diagnostic.type,
+      code: diagnostic.code,
+      param: diagnostic.param,
+      message: diagnostic.message,
+    },
+    model: requestSummary.model,
+    requestId: requestSummary.requestId,
+    toolCount: requestSummary.toolCount,
+    inputBytes: requestSummary.inputBytes,
+  }));
+  return diagnostic;
 }
 
 function parseAuraJson(rawText) {
@@ -286,6 +369,39 @@ function buildInput({ message, history, businessContext }) {
   ];
 }
 
+function buildOpenAIResponsePayload({
+  model,
+  input,
+  instructions,
+  tools,
+  toolChoice,
+  previousResponseId,
+  maxOutputTokens,
+  reasoning,
+}) {
+  const payload = {
+    model: normalizeOpenAIModel(model),
+    input,
+  };
+
+  if (typeof instructions === "string" && instructions) payload.instructions = instructions;
+  if (typeof previousResponseId === "string" && previousResponseId) {
+    payload.previous_response_id = previousResponseId;
+  }
+  if (Array.isArray(tools) && tools.length) {
+    payload.tools = tools;
+    if (toolChoice !== undefined) payload.tool_choice = toolChoice;
+  }
+  if (Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) {
+    payload.max_output_tokens = maxOutputTokens;
+  }
+  if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
+    payload.reasoning = reasoning;
+  }
+
+  return payload;
+}
+
 async function executeRequestedTools(functionCalls, toolContext, toolsUsed, remaining) {
   if (functionCalls.length > remaining) {
     const err = new Error("Limite de tools AURA alcanzado");
@@ -340,20 +456,29 @@ async function generateAuraReply({ message, history, businessContext, toolContex
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const toolsUsed = [];
   let providerUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const requestedModel = normalizeOpenAIModel();
+  let requestSummary = summarizeOpenAIRequest(
+    { model: requestedModel, input: null, tools: [] },
+    toolContext?.requestId
+  );
+  const sendOpenAIResponse = async (payload) => {
+    requestSummary = summarizeOpenAIRequest(payload, toolContext?.requestId);
+    return postOpenAIResponse(payload, timeoutMs, controller.signal);
+  };
 
   try {
-    const requestedModel = process.env.OPENAI_MODEL || DEFAULT_MODEL;
-    const basePayload = {
+    const openAITools = auraTools.getOpenAITools();
+    const basePayload = buildOpenAIResponsePayload({
       model: requestedModel,
       instructions: SYSTEM_PROMPT,
       input: buildInput({ message, history, businessContext }),
-      tools: auraTools.getOpenAITools(),
-      tool_choice: "auto",
-      max_output_tokens: 900,
+      tools: openAITools,
+      toolChoice: "auto",
+      maxOutputTokens: 900,
       reasoning: { effort: "low" },
-    };
+    });
 
-    let response = await postOpenAIResponse(basePayload, timeoutMs, controller.signal);
+    let response = await sendOpenAIResponse(basePayload);
     providerUsage = addUsage(providerUsage, response.data?.usage || {});
 
     for (let round = 0; round < auraTools.MAX_TOOL_ROUNDS; round += 1) {
@@ -367,19 +492,17 @@ async function generateAuraReply({ message, history, businessContext, toolContex
         auraTools.MAX_TOOLS_PER_RUN - toolsUsed.length
       );
 
-      response = await postOpenAIResponse(
-        {
+      response = await sendOpenAIResponse(
+        buildOpenAIResponsePayload({
           model: requestedModel,
           instructions: SYSTEM_PROMPT,
-          previous_response_id: response.data?.id,
+          previousResponseId: response.data?.id,
           input: toolOutputs,
-          tools: auraTools.getOpenAITools(),
-          tool_choice: "auto",
-          max_output_tokens: 900,
+          tools: openAITools,
+          toolChoice: "auto",
+          maxOutputTokens: 900,
           reasoning: { effort: "low" },
-        },
-        timeoutMs,
-        controller.signal
+        })
       );
       providerUsage = addUsage(providerUsage, response.data?.usage || {});
     }
@@ -409,38 +532,26 @@ async function generateAuraReply({ message, history, businessContext, toolContex
   } catch (err) {
     if (toolsUsed.length && !err.toolsUsed) err.toolsUsed = toolsUsed;
 
-    if (err.response?.status === 429) {
-      const rateErr = new Error("Rate limit de OpenAI");
-      rateErr.code = "AURA_OPENAI_RATE_LIMIT";
-      rateErr.toolsUsed = toolsUsed;
-      throw rateErr;
-    }
+    if (err.code && err.code.startsWith("AURA_TOOL")) throw err;
 
-    if (
+    const timedOut = (
       err.code === "ECONNABORTED" ||
       err.code === "ETIMEDOUT" ||
       err.code === "ERR_CANCELED" ||
       err.name === "CanceledError"
-    ) {
-      const timeoutErr = new Error("Timeout del proveedor OpenAI");
-      timeoutErr.code = "AURA_OPENAI_TIMEOUT";
-      timeoutErr.toolsUsed = toolsUsed;
-      throw timeoutErr;
-    }
-
-    if (err.code && err.code.startsWith("AURA_TOOL")) {
-      throw err;
-    }
-
-    console.error(JSON.stringify({
-      level: "error",
-      event: "aura_openai_request_failed",
-      provider: "openai",
-      status: err.response?.status || null,
-      errorCode: err.code || "OPENAI_ERROR",
-    }));
-    const providerErr = new Error("Error del proveedor OpenAI");
-    providerErr.code = "AURA_OPENAI_ERROR";
+    );
+    const diagnostic = logOpenAIRequestFailure(err, requestSummary);
+    const providerErr = new Error(diagnostic.message || "Error del proveedor OpenAI");
+    providerErr.code = timedOut
+      ? "AURA_OPENAI_TIMEOUT"
+      : diagnostic.status === 429
+        ? "AURA_OPENAI_RATE_LIMIT"
+        : "AURA_OPENAI_ERROR";
+    providerErr.auditCode = timedOut
+      ? "AURA_OPENAI_TIMEOUT"
+      : providerAuditCode(diagnostic.status);
+    providerErr.providerStatus = diagnostic.status;
+    providerErr.providerError = diagnostic;
     providerErr.toolsUsed = toolsUsed;
     throw providerErr;
   } finally {
@@ -452,6 +563,8 @@ validateAuraProviderConfig();
 
 module.exports = {
   generateAuraReply,
+  buildOpenAIResponsePayload,
+  normalizeOpenAIModel,
   normalizeSuggestedActions,
   validateAuraProviderConfig,
   isAuraMockProviderEnabled,

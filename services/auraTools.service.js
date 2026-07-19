@@ -43,6 +43,14 @@ const CUSTOMER_GROWTH_SEGMENTS = new Set([
 ]);
 const CUSTOMER_CHURN_LEVELS = new Set(["bajo", "medio", "alto", "critico", "insuficiente"]);
 
+function nullableSchema(type, options = {}) {
+  return { type: [type, "null"], ...options };
+}
+
+function nullableEnum(type, values) {
+  return nullableSchema(type, { enum: [...values, null] });
+}
+
 const PAID_VALID_SALES_SQL = `
   s.payment_status = 'paid'
   AND LOWER(COALESCE(s.payment_status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
@@ -61,10 +69,10 @@ const OPENAI_TOOLS = [
       additionalProperties: false,
       properties: {
         period: { type: "string", enum: [...PERIODS] },
-        dateFrom: { type: "string", description: "YYYY-MM-DD, requerido solo si period=custom" },
-        dateTo: { type: "string", description: "YYYY-MM-DD, requerido solo si period=custom" },
+        dateFrom: nullableSchema("string", { description: "YYYY-MM-DD, requerido solo si period=custom" }),
+        dateTo: nullableSchema("string", { description: "YYYY-MM-DD, requerido solo si period=custom" }),
       },
-      required: ["period"],
+      required: ["period", "dateFrom", "dateTo"],
     },
   },
   {
@@ -77,12 +85,12 @@ const OPENAI_TOOLS = [
       additionalProperties: false,
       properties: {
         period: { type: "string", enum: [...PERIODS] },
-        dateFrom: { type: "string", description: "YYYY-MM-DD, requerido solo si period=custom" },
-        dateTo: { type: "string", description: "YYYY-MM-DD, requerido solo si period=custom" },
-        limit: { type: "integer", minimum: 1, maximum: MAX_TOP_PRODUCTS_LIMIT },
+        dateFrom: nullableSchema("string", { description: "YYYY-MM-DD, requerido solo si period=custom" }),
+        dateTo: nullableSchema("string", { description: "YYYY-MM-DD, requerido solo si period=custom" }),
+        limit: nullableSchema("integer", { minimum: 1, maximum: MAX_TOP_PRODUCTS_LIMIT }),
         metric: { type: "string", enum: [...TOP_PRODUCT_METRICS] },
       },
-      required: ["period", "metric"],
+      required: ["period", "dateFrom", "dateTo", "limit", "metric"],
     },
   },
   {
@@ -94,10 +102,10 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        threshold: { type: "integer", minimum: 0, maximum: 1000000 },
-        limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+        threshold: nullableSchema("integer", { minimum: 0, maximum: 1000000 }),
+        limit: nullableSchema("integer", { minimum: 1, maximum: MAX_LIMIT }),
       },
-      required: [],
+      required: ["threshold", "limit"],
     },
   },
   {
@@ -109,10 +117,10 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        daysWithoutSales: { type: "integer", minimum: 1, maximum: 365 },
-        limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+        daysWithoutSales: nullableSchema("integer", { minimum: 1, maximum: 365 }),
+        limit: nullableSchema("integer", { minimum: 1, maximum: MAX_LIMIT }),
       },
-      required: [],
+      required: ["daysWithoutSales", "limit"],
     },
   },
   {
@@ -125,7 +133,7 @@ const OPENAI_TOOLS = [
       additionalProperties: false,
       properties: {
         status: {
-          type: "string",
+          type: ["string", "null"],
           enum: [
             "pending",
             "partial",
@@ -134,11 +142,12 @@ const OPENAI_TOOLS = [
             "procurement_pending",
             "procurement_partial",
             "procurement_complete",
+            null,
           ],
         },
-        limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+        limit: nullableSchema("integer", { minimum: 1, maximum: MAX_LIMIT }),
       },
-      required: [],
+      required: ["status", "limit"],
     },
   },
   {
@@ -150,9 +159,9 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+        limit: nullableSchema("integer", { minimum: 1, maximum: MAX_LIMIT }),
       },
-      required: [],
+      required: ["limit"],
     },
   },
   {
@@ -164,9 +173,9 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        period: { type: "string", enum: ["30d", "90d"] },
+        period: nullableEnum("string", ["30d", "90d"]),
       },
-      required: [],
+      required: ["period"],
     },
   },
   {
@@ -178,9 +187,9 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        period: { type: "string", enum: ["30d", "90d"] },
+        period: nullableEnum("string", ["30d", "90d"]),
       },
-      required: [],
+      required: ["period"],
     },
   },
   {
@@ -194,12 +203,12 @@ const OPENAI_TOOLS = [
       properties: {
         channel: { type: "string", enum: [...CAMPAIGN_DRAFT_CHANNELS] },
         objective: { type: "string", maxLength: 120 },
-        audienceLabel: { type: "string", maxLength: 120 },
-        offer: { type: "string", maxLength: 180 },
-        productName: { type: "string", maxLength: 120 },
-        tone: { type: "string", enum: ["premium", "direct", "warm", "urgent"] },
+        audienceLabel: nullableSchema("string", { maxLength: 120 }),
+        offer: nullableSchema("string", { maxLength: 180 }),
+        productName: nullableSchema("string", { maxLength: 120 }),
+        tone: nullableEnum("string", ["premium", "direct", "warm", "urgent"]),
       },
-      required: ["channel", "objective"],
+      required: ["channel", "objective", "audienceLabel", "offer", "productName", "tone"],
     },
   },
   {
@@ -212,9 +221,9 @@ const OPENAI_TOOLS = [
       additionalProperties: false,
       properties: {
         goal: { type: "string", enum: [...CAMPAIGN_SEGMENT_GOALS] },
-        channel: { type: "string", enum: [...CAMPAIGN_DRAFT_CHANNELS] },
+        channel: nullableEnum("string", [...CAMPAIGN_DRAFT_CHANNELS]),
       },
-      required: ["goal"],
+      required: ["goal", "channel"],
     },
   },
   {
@@ -235,7 +244,7 @@ const OPENAI_TOOLS = [
     type: "function",
     name: "propose_aura_action",
     description: "Crea una accion AURA pendiente de aprobacion. No ejecuta nada ni confirma por texto libre.",
-    strict: true,
+    strict: false,
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -243,6 +252,8 @@ const OPENAI_TOOLS = [
         actionType: { type: "string", enum: [...AURA_ACTION_TYPES] },
         payload: {
           type: "object",
+          properties: {},
+          required: [],
           additionalProperties: true,
           description: "Payload tipado para la accion. Sera revalidado por backend antes de guardarse.",
         },
@@ -259,12 +270,12 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        horizon: { type: "integer", enum: [...FORECAST_HORIZONS] },
-        productId: { type: "integer", minimum: 1 },
-        variantId: { type: "integer", minimum: 1 },
-        limit: { type: "integer", minimum: 1, maximum: 10 },
+        horizon: nullableEnum("integer", [...FORECAST_HORIZONS]),
+        productId: nullableSchema("integer", { minimum: 1 }),
+        variantId: nullableSchema("integer", { minimum: 1 }),
+        limit: nullableSchema("integer", { minimum: 1, maximum: 10 }),
       },
-      required: [],
+      required: ["horizon", "productId", "variantId", "limit"],
     },
   },
   {
@@ -276,11 +287,11 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        segment: { type: "string", enum: [...CUSTOMER_GROWTH_SEGMENTS] },
-        churnLevel: { type: "string", enum: [...CUSTOMER_CHURN_LEVELS] },
-        limit: { type: "integer", minimum: 1, maximum: 8 },
+        segment: nullableEnum("string", [...CUSTOMER_GROWTH_SEGMENTS]),
+        churnLevel: nullableEnum("string", [...CUSTOMER_CHURN_LEVELS]),
+        limit: nullableSchema("integer", { minimum: 1, maximum: 8 }),
       },
-      required: [],
+      required: ["segment", "churnLevel", "limit"],
     },
   },
   {
@@ -292,11 +303,11 @@ const OPENAI_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        channel: { type: "string", enum: [...DIRECT_CAMPAIGN_CHANNELS] },
-        campaignType: { type: "string", maxLength: 120 },
-        segment: { type: "string", maxLength: 80 },
+        channel: nullableEnum("string", [...DIRECT_CAMPAIGN_CHANNELS]),
+        campaignType: nullableSchema("string", { maxLength: 120 }),
+        segment: nullableSchema("string", { maxLength: 80 }),
       },
-      required: [],
+      required: ["channel", "campaignType", "segment"],
     },
   },
 ];
@@ -1380,6 +1391,80 @@ function summarizeToolResult(result) {
   return { kind: "object", keys: Object.keys(result).slice(0, 10) };
 }
 
+function validateOpenAISchema(schema, path, strict) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    throw createToolError(`${path} debe ser un JSON Schema`, "AURA_TOOL_SCHEMA_INVALID", 500);
+  }
+
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.includes("object")) {
+    const properties = schema.properties;
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+      throw createToolError(`${path}.properties debe ser un objeto`, "AURA_TOOL_SCHEMA_INVALID", 500);
+    }
+    if (!Array.isArray(schema.required)) {
+      throw createToolError(`${path}.required debe ser un arreglo`, "AURA_TOOL_SCHEMA_INVALID", 500);
+    }
+
+    const propertyNames = Object.keys(properties);
+    const unknownRequired = schema.required.filter((name) => !propertyNames.includes(name));
+    if (unknownRequired.length) {
+      throw createToolError(
+        `${path}.required contiene propiedades inexistentes: ${unknownRequired.join(", ")}`,
+        "AURA_TOOL_SCHEMA_INVALID",
+        500
+      );
+    }
+
+    if (strict) {
+      if (schema.additionalProperties !== false) {
+        throw createToolError(
+          `${path}.additionalProperties debe ser false cuando strict=true`,
+          "AURA_TOOL_SCHEMA_INVALID",
+          500
+        );
+      }
+      const missingRequired = propertyNames.filter((name) => !schema.required.includes(name));
+      if (missingRequired.length) {
+        throw createToolError(
+          `${path}.required debe incluir: ${missingRequired.join(", ")}`,
+          "AURA_TOOL_SCHEMA_INVALID",
+          500
+        );
+      }
+    }
+
+    for (const [name, propertySchema] of Object.entries(properties)) {
+      validateOpenAISchema(propertySchema, `${path}.properties.${name}`, strict);
+    }
+  }
+
+  if (types.includes("array") && schema.items) {
+    validateOpenAISchema(schema.items, `${path}.items`, strict);
+  }
+}
+
+function validateOpenAIToolSchemas(tools) {
+  if (!Array.isArray(tools) || !tools.length) {
+    throw createToolError("AURA debe exponer al menos una tool", "AURA_TOOL_SCHEMA_INVALID", 500);
+  }
+
+  const names = new Set();
+  for (const [index, tool] of tools.entries()) {
+    const path = `tools[${index}]`;
+    if (tool?.type !== "function" || !/^[A-Za-z0-9_-]{1,64}$/.test(tool?.name || "")) {
+      throw createToolError(`${path} no es una function tool valida`, "AURA_TOOL_SCHEMA_INVALID", 500);
+    }
+    if (names.has(tool.name)) {
+      throw createToolError(`${path}.name esta duplicado`, "AURA_TOOL_SCHEMA_INVALID", 500);
+    }
+    names.add(tool.name);
+    validateOpenAISchema(tool.parameters, `${path}.parameters`, tool.strict === true);
+  }
+
+  return true;
+}
+
 async function executeAuraTool(toolName, rawArgs, ctx) {
   const safeCtx = requireTrustedCtx(ctx);
   const validatedArgs = validateToolArguments(toolName, rawArgs);
@@ -1443,13 +1528,16 @@ async function runAuraToolCall(toolName, rawArgs, ctx) {
 }
 
 function getOpenAITools() {
-  return OPENAI_TOOLS.map((tool) => ({ ...tool, parameters: { ...tool.parameters } }));
+  const tools = JSON.parse(JSON.stringify(OPENAI_TOOLS));
+  validateOpenAIToolSchemas(tools);
+  return tools;
 }
 
 module.exports = {
   MAX_TOOLS_PER_RUN,
   MAX_TOOL_ROUNDS,
   getOpenAITools,
+  validateOpenAIToolSchemas,
   executeAuraTool,
   runAuraToolCall,
   validateToolArguments,

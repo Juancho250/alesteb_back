@@ -349,6 +349,43 @@ test("AURA tool schemas do not expose trusted context to the model", () => {
   assert.ok(tools.every((tool) => tool.parameters.additionalProperties === false));
 });
 
+test("Responses API tool schemas satisfy strict mode requirements", () => {
+  const tools = auraTools.getOpenAITools();
+
+  assert.equal(auraTools.validateOpenAIToolSchemas(tools), true);
+  for (const tool of tools.filter((item) => item.strict)) {
+    assert.deepEqual(
+      [...tool.parameters.required].sort(),
+      Object.keys(tool.parameters.properties).sort(),
+      tool.name
+    );
+  }
+
+  const actionTool = tools.find((tool) => tool.name === "propose_aura_action");
+  assert.equal(actionTool.strict, false);
+  assert.equal(actionTool.parameters.properties.payload.additionalProperties, true);
+});
+
+test("Responses API schema validation identifies the first missing required property", () => {
+  assert.throws(
+    () => auraTools.validateOpenAIToolSchemas([{
+      type: "function",
+      name: "get_sales_summary",
+      strict: true,
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          period: { type: "string" },
+          dateFrom: { type: ["string", "null"] },
+        },
+        required: ["period"],
+      },
+    }]),
+    /tools\[0\]\.parameters\.required debe incluir: dateFrom/
+  );
+});
+
 test("AURA tools reject additional properties such as forged ownerAdminId", async () => {
   await assert.rejects(
     () => auraTools.executeAuraTool(
