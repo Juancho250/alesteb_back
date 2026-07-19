@@ -130,6 +130,8 @@ async function executeAuraChat({
         answer: aura.reply,
         insights: businessContext.insights,
         suggestions: aura.suggestedActions,
+        jobs: aura.jobs || [],
+        requiresPolling: Boolean(aura.requiresPolling),
       },
       toolsUsed: aura.toolsUsed || [],
       usage: providerUsage,
@@ -157,6 +159,8 @@ async function executeAuraChat({
       insights: businessContext.insights,
       suggestions: aura.suggestedActions,
       suggestedActions: aura.suggestedActions,
+      jobs: aura.jobs || [],
+      requiresPolling: Boolean(aura.requiresPolling),
       model: aura.model,
       usage: providerUsage,
     };

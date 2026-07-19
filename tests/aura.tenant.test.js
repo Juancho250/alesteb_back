@@ -745,6 +745,12 @@ test("AURA chat returns the Phase 1 envelope and ignores client-supplied history
       answer: "Ventas estables.",
       insights: { salesToday: 1000, pendingOrders: 2 },
       suggestions: [{ type: "reporting_review", label: "Revisar cierre", priority: "medium", requiresConfirmation: true }],
+      jobs: [{
+        jobId: "10000000-0000-4000-8000-000000000001",
+        format: "1:1",
+        status: "queued",
+      }],
+      requiresPolling: true,
     };
   };
 
@@ -768,8 +774,11 @@ test("AURA chat returns the Phase 1 envelope and ignores client-supplied history
     assert.equal(res.body.conversationId, "conv-1");
     assert.equal(res.body.runId, "run-1");
     assert.equal(res.body.answer, "Ventas estables.");
+    assert.equal(res.body.reply, "Ventas estables.");
     assert.deepEqual(res.body.insights[0], { key: "salesToday", value: 1000 });
     assert.equal(res.body.suggestions[0].requiresConfirmation, true);
+    assert.equal(res.body.jobs[0].status, "queued");
+    assert.equal(res.body.requiresPolling, true);
     assert.deepEqual(res.body.usage, { requestsRemaining: 99 });
   } finally {
     auraChat.executeAuraChat = originalExecuteAuraChat;

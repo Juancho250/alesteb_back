@@ -166,7 +166,7 @@ function validateGeneratedImageBase64(b64Json) {
   };
 }
 
-async function createImageFromPrompt({ prompt, size }) {
+async function createImageFromPrompt({ prompt, size, quality = null }) {
   const { imageModel, mock } = requireOpenAIConfig();
   if (mock) {
     return {
@@ -182,6 +182,7 @@ async function createImageFromPrompt({ prompt, size }) {
       prompt,
       n: 1,
       size,
+      quality: quality || process.env.OPENAI_IMAGE_QUALITY || "high",
     });
     return {
       b64Json: extractImageBase64(data),
@@ -196,7 +197,7 @@ async function createImageFromPrompt({ prompt, size }) {
   }
 }
 
-async function editImageFromCatalog({ prompt, sourceImageUrl, size }) {
+async function editImageFromCatalog({ prompt, sourceImageUrl, size, quality = null }) {
   const { imageModel, mock } = requireOpenAIConfig();
   if (mock) {
     return {
@@ -212,7 +213,7 @@ async function editImageFromCatalog({ prompt, sourceImageUrl, size }) {
       prompt,
       images: [{ image_url: sourceImageUrl }],
       size,
-      quality: process.env.OPENAI_IMAGE_QUALITY || "high",
+      quality: quality || process.env.OPENAI_IMAGE_QUALITY || "high",
       output_format: "png",
     });
     return {

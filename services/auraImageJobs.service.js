@@ -8,17 +8,31 @@ const JOB_TYPES = {
 };
 
 const FORMATS = {
-  instagram_square: { size: "1024x1024", width: 1024, height: 1024 },
-  instagram_story: { size: "1024x1536", width: 1024, height: 1536 },
-  whatsapp_square: { size: "1024x1024", width: 1024, height: 1024 },
-  facebook_feed: { size: "1536x1024", width: 1536, height: 1024 },
-  ecommerce_banner: { size: "1536x1024", width: 1536, height: 1024 },
+  instagram_square: { size: "1024x1024", width: 1024, height: 1024, aspectRatio: "1:1" },
+  instagram_story: { size: "1024x1536", width: 1024, height: 1536, aspectRatio: "9:16" },
+  whatsapp_square: { size: "1024x1024", width: 1024, height: 1024, aspectRatio: "1:1" },
+  facebook_feed: { size: "1536x1024", width: 1536, height: 1024, aspectRatio: "16:9" },
+  ecommerce_banner: { size: "1536x1024", width: 1536, height: 1024, aspectRatio: "16:9" },
+  "1:1": { size: "1024x1024", width: 1024, height: 1024, aspectRatio: "1:1" },
+  "4:5": { size: "1024x1280", width: 1024, height: 1280, aspectRatio: "4:5" },
+  "9:16": { size: "1152x2048", width: 1152, height: 2048, aspectRatio: "9:16" },
+  "16:9": { size: "2048x1152", width: 2048, height: 1152, aspectRatio: "16:9" },
 };
 
 const MAX_INSTRUCTIONS_LENGTH = 1200;
 const MAX_OBJECTIVE_LENGTH = 240;
 const MAX_STYLE_LENGTH = 160;
 const PROMPT_VERSION = "aura-growth-image-v1";
+const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
+const IMAGE_CHANNELS = new Set([
+  "instagram",
+  "tiktok",
+  "whatsapp",
+  "facebook",
+  "ecommerce",
+  "email",
+  "push",
+]);
 
 function createImageJobError(message, code = "AURA_IMAGE_JOB_ERROR", status = 400) {
   const err = new Error(message);
@@ -91,6 +105,37 @@ function cleanFormat(value) {
     throw createImageJobError("format no soportado", "AURA_IMAGE_INVALID_FORMAT", 400);
   }
   return format;
+}
+
+function cleanQuality(value) {
+  const quality = cleanText(value || "high", "quality", { required: true, max: 20 });
+  if (!IMAGE_QUALITIES.has(quality)) {
+    throw createImageJobError("quality no soportado", "AURA_IMAGE_INVALID_QUALITY", 400);
+  }
+  return quality;
+}
+
+function cleanBoolean(value, field, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  throw createImageJobError(`${field} debe ser booleano`, "AURA_IMAGE_INVALID_INPUT", 400);
+}
+
+function cleanChannels(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > IMAGE_CHANNELS.size) {
+    throw createImageJobError("channels debe ser un arreglo valido", "AURA_IMAGE_INVALID_INPUT", 400);
+  }
+  const channels = value.map((item) => cleanText(item, "channel", { required: true, max: 40 }));
+  if (channels.some((channel) => !IMAGE_CHANNELS.has(channel))) {
+    throw createImageJobError("channel no soportado", "AURA_IMAGE_INVALID_INPUT", 400);
+  }
+  return [...new Set(channels)].sort();
 }
 
 function maxDailyJobs() {
@@ -178,14 +223,24 @@ function assertSafeGeneratedPublicId(ownerAdminId, publicId) {
   }
 }
 
-function buildPrompt({ mode, productName, objective, style, instructions, format }) {
+function buildPrompt({
+  mode,
+  productName,
+  objective,
+  style,
+  instructions,
+  format,
+  preserveProduct,
+}) {
   const base = [
     "Crear una pieza visual premium para campana de ALESTEB.",
     `Formato: ${format}.`,
     productName ? `Producto real del catalogo: ${productName}.` : "Usar la foto real del catalogo como referencia principal.",
     objective ? `Objetivo comercial: ${objective}.` : "Objetivo comercial: promocionar producto.",
     style ? `Estilo visual: ${style}.` : "Estilo visual: premium futurista, limpio, alto valor.",
-    "Conservar exactamente el producto, su forma, colores, proporciones, marca visible y detalles principales.",
+    preserveProduct
+      ? "Conservar exactamente el producto, su forma, colores, proporciones, marca visible y detalles principales."
+      : "Mantener el producto reconocible y no sustituirlo por otro articulo.",
     "No inventar claims medicos, descuentos, precios ni logos nuevos.",
     "No agregar texto pequeno ilegible ni datos personales.",
   ];
@@ -355,6 +410,83 @@ async function loadCatalogImage(client, { ownerAdminId, productId, variantId }) 
   return rows[0];
 }
 
+async function loadAuthorizedSourceImage(client, {
+  ownerAdminId,
+  productId,
+  variantId,
+  sourceImageUrl,
+}) {
+  if (!sourceImageUrl) {
+    return loadCatalogImage(client, { ownerAdminId, productId, variantId });
+  }
+
+  validateCloudinaryCatalogUrl(sourceImageUrl);
+  const { rows } = await client.query(
+    `/* aura_authorized_image_source */
+     SELECT source.product_id, source.product_name, source.variant_id,
+            source.image_url, source.source_type
+     FROM (
+       SELECT p.id AS product_id, p.name AS product_name,
+              pv.id AS variant_id, vi.url AS image_url,
+              'variant_image'::text AS source_type, 1 AS source_priority
+       FROM variant_images vi
+       JOIN product_variants pv ON pv.id = vi.variant_id
+       JOIN products p ON p.id = pv.product_id
+       WHERE vi.url = $1
+         AND p.owner_admin_id = $2
+
+       UNION ALL
+
+       SELECT p.id AS product_id, p.name AS product_name,
+              pv.id AS variant_id, pi.url AS image_url,
+              CASE WHEN pv.id IS NULL
+                THEN 'product_image'
+                ELSE 'product_image_variant_fallback'
+              END::text AS source_type,
+              2 AS source_priority
+       FROM product_images pi
+       JOIN products p ON p.id = pi.product_id
+       LEFT JOIN product_variants pv
+         ON pv.product_id = p.id
+        AND pv.id = $4
+       WHERE pi.url = $1
+         AND p.owner_admin_id = $2
+         AND ($4::int IS NULL OR pv.id IS NOT NULL)
+
+       UNION ALL
+
+       SELECT ca.product_id, p.name AS product_name, ca.variant_id,
+              CASE
+                WHEN ca.generated_asset_url = $1 THEN ca.generated_asset_url
+                ELSE ca.original_asset_url
+              END AS image_url,
+              'campaign_asset'::text AS source_type,
+              3 AS source_priority
+       FROM campaign_assets ca
+       LEFT JOIN products p
+         ON p.id = ca.product_id
+        AND p.owner_admin_id = ca.owner_admin_id
+       WHERE ca.owner_admin_id = $2
+         AND ca.status <> 'deleted'
+         AND (ca.generated_asset_url = $1 OR ca.original_asset_url = $1)
+     ) source
+     WHERE ($3::int IS NULL OR source.product_id = $3)
+       AND ($4::int IS NULL OR source.variant_id = $4)
+     ORDER BY source.source_priority ASC
+     LIMIT 1`,
+    [sourceImageUrl, ownerAdminId, productId, variantId]
+  );
+
+  if (!rows.length) {
+    throw createImageJobError(
+      "La imagen fuente no pertenece al catalogo o assets autorizados de este tenant",
+      "AURA_IMAGE_SOURCE_UNAUTHORIZED",
+      404
+    );
+  }
+  return rows[0];
+}
+
 async function reserveDailyQuota(client, ownerAdminId) {
   await client.query("SELECT pg_advisory_xact_lock(2070, $1)", [ownerAdminId]);
   const limit = maxDailyJobs();
@@ -423,6 +555,10 @@ function imageJobDedupeKey({
   style,
   instructions,
   sourceImagePublicId,
+  quality = "high",
+  preserveProduct = true,
+  variationIndex = 0,
+  channels = [],
 }) {
   return stableHash({
     type,
@@ -436,6 +572,10 @@ function imageJobDedupeKey({
     instructions,
     promptVersion: PROMPT_VERSION,
     sourceImagePublicId,
+    quality,
+    preserveProduct,
+    variationIndex,
+    channels: [...channels].sort(),
   });
 }
 
@@ -446,18 +586,63 @@ function normalizePayload(payload = {}, mode) {
   const format = cleanFormat(payload.format);
   const objective = cleanText(payload.objective, "objective", { max: MAX_OBJECTIVE_LENGTH });
   const style = cleanText(payload.style, "style", { max: MAX_STYLE_LENGTH });
+  const sourceImageUrl = cleanText(payload.sourceImageUrl, "sourceImageUrl", { max: 2048 });
   const instructions = cleanText(payload.instructions, "instructions", {
     required: mode === "edit",
     max: MAX_INSTRUCTIONS_LENGTH,
   });
+  const quality = cleanQuality(payload.quality);
+  const preserveProduct = cleanBoolean(payload.preserveProduct, "preserveProduct", true);
+  const variationIndex = cleanInteger(payload.variationIndex, "variationIndex", {
+    min: 0,
+    max: 3,
+  }) ?? 0;
+  const channels = cleanChannels(payload.channels);
   return {
     campaignId,
     productId,
     variantId,
+    sourceImageUrl,
     objective,
     format,
     style,
     instructions,
+    quality,
+    preserveProduct,
+    variationIndex,
+    channels,
+  };
+}
+
+async function inspectImageRequest(input) {
+  const ctx = requireCtx(input);
+  const payload = normalizePayload(input.payload || {}, input.mode === "edit" ? "edit" : "generate");
+  const campaign = await assertCampaign(db, ctx.ownerAdminId, payload.campaignId);
+  const hasSourceReference = Boolean(
+    payload.sourceImageUrl || payload.productId || payload.variantId
+  );
+  const source = hasSourceReference
+    ? await loadAuthorizedSourceImage(db, {
+        ownerAdminId: ctx.ownerAdminId,
+        productId: payload.productId,
+        variantId: payload.variantId,
+        sourceImageUrl: payload.sourceImageUrl,
+      })
+    : null;
+
+  return {
+    campaign: campaign
+      ? { id: campaign.id, channel: campaign.channel, status: campaign.status }
+      : null,
+    source: source
+      ? {
+          available: true,
+          productId: source.product_id === null ? null : Number(source.product_id),
+          productName: source.product_name || null,
+          variantId: source.variant_id === null ? null : Number(source.variant_id),
+          sourceType: source.source_type || "catalog",
+        }
+      : { available: false },
   };
 }
 
@@ -473,31 +658,37 @@ async function enqueueImageJob(input) {
 
   return withTransaction(async (client) => {
     await assertCampaign(client, ctx.ownerAdminId, payload.campaignId);
-    const catalog = await loadCatalogImage(client, {
+    const source = await loadAuthorizedSourceImage(client, {
       ownerAdminId: ctx.ownerAdminId,
       productId: payload.productId,
       variantId: payload.variantId,
+      sourceImageUrl: payload.sourceImageUrl,
     });
     const formatSpec = FORMATS[payload.format];
     const prompt = buildPrompt({
       mode,
-      productName: catalog.product_name,
+      productName: source.product_name,
       objective: payload.objective,
       style: payload.style,
       instructions: payload.instructions,
       format: payload.format,
+      preserveProduct: payload.preserveProduct,
     });
     const dedupeKey = imageJobDedupeKey({
       type,
       ownerAdminId: ctx.ownerAdminId,
       campaignId: payload.campaignId,
-      productId: Number(catalog.product_id),
-      variantId: catalog.variant_id ? Number(catalog.variant_id) : null,
+      productId: source.product_id === null ? null : Number(source.product_id),
+      variantId: source.variant_id === null ? null : Number(source.variant_id),
       objective: payload.objective,
       format: payload.format,
       style: payload.style,
       instructions: payload.instructions,
-      sourceImagePublicId: cloudinaryPublicIdFromUrl(catalog.image_url),
+      sourceImagePublicId: cloudinaryPublicIdFromUrl(source.image_url),
+      quality: payload.quality,
+      preserveProduct: payload.preserveProduct,
+      variationIndex: payload.variationIndex,
+      channels: payload.channels,
     });
 
     const existing = await findExistingJob(client, ctx.ownerAdminId, type, dedupeKey);
@@ -535,15 +726,21 @@ async function enqueueImageJob(input) {
       mode,
       assetId,
       campaignId: payload.campaignId,
-      productId: Number(catalog.product_id),
-      variantId: catalog.variant_id ? Number(catalog.variant_id) : null,
+      productId: source.product_id === null ? null : Number(source.product_id),
+      variantId: source.variant_id === null ? null : Number(source.variant_id),
       objective: payload.objective,
       format: payload.format,
       size: formatSpec.size,
+      requestedAspectRatio: formatSpec.aspectRatio,
       style: payload.style,
       instructions: payload.instructions,
-      sourceImageUrl: catalog.image_url,
-      sourceImagePublicId: cloudinaryPublicIdFromUrl(catalog.image_url),
+      quality: payload.quality,
+      preserveProduct: payload.preserveProduct,
+      variationIndex: payload.variationIndex,
+      channels: payload.channels,
+      sourceImageUrl: source.image_url,
+      sourceImagePublicId: cloudinaryPublicIdFromUrl(source.image_url),
+      sourceType: source.source_type || "catalog",
       prompt,
       promptVersion: PROMPT_VERSION,
       requestedAt: new Date().toISOString(),
@@ -609,17 +806,22 @@ async function enqueueImageJob(input) {
         assetId,
         ctx.ownerAdminId,
         payload.campaignId,
-        Number(catalog.product_id),
-        catalog.variant_id ? Number(catalog.variant_id) : null,
+        source.product_id === null ? null : Number(source.product_id),
+        source.variant_id === null ? null : Number(source.variant_id),
         mode === "edit" ? "aura_edited" : "aura_generated",
-        catalog.image_url,
+        source.image_url,
         payload.format,
         prompt,
         PROMPT_VERSION,
         process.env.OPENAI_IMAGE_MODEL || null,
         JSON.stringify({
           requestedSize: formatSpec,
-          sourceImagePublicId: cloudinaryPublicIdFromUrl(catalog.image_url),
+          quality: payload.quality,
+          preserveProduct: payload.preserveProduct,
+          variationIndex: payload.variationIndex,
+          channels: payload.channels,
+          sourceType: source.source_type || "catalog",
+          sourceImagePublicId: cloudinaryPublicIdFromUrl(source.image_url),
           quota: { usedBeforeRequest: usage.used, limit: usage.limit },
         }),
         ctx.userId,
@@ -655,6 +857,9 @@ async function getAssetById({ ownerAdminId, assetId, client = db }) {
 
 async function getJob(input) {
   const ctx = requireCtx(input);
+  if (!isUuid(input.jobId)) {
+    throw createImageJobError("jobId invalido", "AURA_IMAGE_INVALID_JOB_ID", 400);
+  }
   const { rows } = await db.query(
     `SELECT *
      FROM ai_jobs
@@ -960,10 +1165,12 @@ async function processImageJob(job) {
         prompt: job.input.prompt,
         sourceImageUrl: job.input.sourceImageUrl,
         size: job.input.size,
+        quality: job.input.quality,
       })
     : await imageProvider.createImageFromPrompt({
         prompt: job.input.prompt,
         size: job.input.size,
+        quality: job.input.quality,
       });
 
   const outputModeration = await imageProvider.moderateImageRequest({
@@ -1007,6 +1214,7 @@ module.exports = {
   safeCloudinaryFolder,
   assertSafeGeneratedPublicId,
   imageJobDedupeKey,
+  inspectImageRequest,
   enqueueImageJob,
   getJob,
   listCampaignAssets,

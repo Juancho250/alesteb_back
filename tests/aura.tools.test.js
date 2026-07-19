@@ -315,6 +315,102 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
+const imageJobsPath = require.resolve("../services/auraImageJobs.service");
+const imageToolCalls = [];
+const imageJobIds = [
+  "10000000-0000-4000-8000-000000000001",
+  "10000000-0000-4000-8000-000000000002",
+  "10000000-0000-4000-8000-000000000003",
+  "10000000-0000-4000-8000-000000000004",
+];
+const fakeImageJobs = {
+  async inspectImageRequest(input) {
+    imageToolCalls.push({ operation: "inspect", input });
+    if (input.payload.productId === 2020) {
+      const err = new Error("Producto no encontrado para este tenant");
+      err.code = "AURA_IMAGE_SOURCE_NOT_FOUND";
+      err.status = 404;
+      throw err;
+    }
+    const available = Boolean(
+      input.payload.sourceImageUrl
+      || input.payload.productId
+      || input.payload.variantId
+    );
+    return {
+      campaign: input.payload.campaignId
+        ? { id: input.payload.campaignId, channel: "instagram", status: "draft" }
+        : null,
+      source: available
+        ? {
+            available: true,
+            productId: input.payload.productId || 501,
+            productName: "Chaqueta Aura",
+            variantId: input.payload.variantId || null,
+            sourceType: input.payload.variantId ? "variant_image" : "product_image",
+          }
+        : { available: false },
+    };
+  },
+  async enqueueImageJob(input) {
+    imageToolCalls.push({ operation: "enqueue", input });
+    if (input.payload.productId === 2020) {
+      const err = new Error("Producto no encontrado para este tenant");
+      err.code = "AURA_IMAGE_SOURCE_NOT_FOUND";
+      err.status = 404;
+      throw err;
+    }
+    const index = Number(input.payload.variationIndex || 0);
+    return {
+      deduped: false,
+      created: true,
+      job: {
+        id: imageJobIds[index],
+        status: "queued",
+        input: {
+          format: input.payload.format,
+        },
+      },
+      asset: {
+        id: `asset-${index}`,
+        status: "pending",
+      },
+    };
+  },
+  async getJob(input) {
+    imageToolCalls.push({ operation: "get", input });
+    return {
+      job: {
+        id: input.jobId,
+        type: "aura_image_generate",
+        status: "queued",
+        input: { format: "1:1" },
+        attempts: 0,
+        maxAttempts: 3,
+        errorCode: null,
+        createdAt: "2026-07-19T12:00:00Z",
+        completedAt: null,
+      },
+      asset: {
+        id: "asset-1",
+        status: "pending",
+        generatedAssetUrl: null,
+        width: null,
+        height: null,
+        format: "1:1",
+        moderationStatus: "pending",
+      },
+    };
+  },
+};
+
+require.cache[imageJobsPath] = {
+  id: imageJobsPath,
+  filename: imageJobsPath,
+  loaded: true,
+  exports: fakeImageJobs,
+};
+
 const auraTools = require("../services/auraTools.service");
 
 const ctxA = {
@@ -336,13 +432,14 @@ function tenantQueries() {
 
 test.beforeEach(() => {
   calls.length = 0;
+  imageToolCalls.length = 0;
 });
 
 test("AURA tool schemas do not expose trusted context to the model", () => {
   const tools = auraTools.getOpenAITools();
   const serialized = JSON.stringify(tools);
 
-  assert.equal(tools.length, 15);
+  assert.equal(tools.length, 19);
   assert.equal(serialized.includes("ownerAdminId"), false);
   assert.equal(serialized.includes("owner_admin_id"), false);
   assert.equal(serialized.includes("userId"), false);
@@ -431,6 +528,266 @@ test("AURA Growth draft tools reject forged tenant fields", async () => {
     /Propiedades no permitidas/
   );
   assert.equal(calls.length, 0);
+});
+
+test("AURA image tools are strict, registered and selected only for explicit visual intent", () => {
+  const tools = auraTools.getOpenAITools();
+  const imageToolNames = [
+    "prepare_campaign_creatives",
+    "generate_campaign_images",
+    "edit_campaign_image",
+    "get_image_job_status",
+  ];
+
+  for (const name of imageToolNames) {
+    const tool = tools.find((item) => item.name === name);
+    assert.ok(tool, name);
+    assert.equal(tool.strict, true, name);
+    assert.equal(tool.parameters.additionalProperties, false, name);
+    assert.deepEqual(
+      [...tool.parameters.required].sort(),
+      Object.keys(tool.parameters.properties).sort(),
+      name
+    );
+  }
+
+  const consultative = auraTools.selectOpenAITools("Resume las ventas de hoy");
+  const visual = auraTools.selectOpenAITools("Genera las imagenes para la campana");
+  assert.equal(consultative.imageToolsEnabled, true);
+  assert.equal(
+    consultative.tools.some((tool) => imageToolNames.includes(tool.name)),
+    false
+  );
+  assert.ok(imageToolNames.every(
+    (name) => visual.tools.some((tool) => tool.name === name)
+  ));
+});
+
+test("prepare_campaign_creatives validates the tenant source without creating jobs", async () => {
+  const result = await auraTools.executeAuraTool("prepare_campaign_creatives", {
+    campaignId: "11111111-1111-4111-8111-111111111111",
+    productId: 501,
+    variantId: null,
+    sourceImageUrl: null,
+    channels: ["instagram", "whatsapp"],
+    formats: ["1:1", "9:16"],
+    prompt: "Producto sobre fondo limpio",
+    copy: "Nueva coleccion",
+    callToAction: "Ver producto",
+    preserveProduct: true,
+  }, ctxA);
+
+  assert.equal(result.data.mode, "creative_plan_only");
+  assert.equal(result.data.sourceImage.available, true);
+  assert.equal(result.data.jobs.length, 0);
+  assert.equal(result.data.publication.automatic, false);
+  assert.equal(imageToolCalls.filter((call) => call.operation === "enqueue").length, 0);
+  assert.equal(imageToolCalls[0].input.ownerAdminId, 101);
+});
+
+test("prepare_campaign_creatives reports a missing source without claiming product fidelity", async () => {
+  const result = await auraTools.executeAuraTool("prepare_campaign_creatives", {
+    campaignId: null,
+    productId: null,
+    variantId: null,
+    sourceImageUrl: null,
+    channels: ["instagram"],
+    formats: ["1:1"],
+    prompt: "Pieza premium",
+    copy: null,
+    callToAction: null,
+    preserveProduct: true,
+  }, ctxA);
+
+  assert.equal(result.data.sourceImage.available, false);
+  assert.equal(result.data.warnings.length, 2);
+  assert.match(result.data.warnings[1], /No se puede prometer/);
+});
+
+test("generate_campaign_images creates at most four asynchronous jobs with product source", async () => {
+  const imageJobBudget = { remaining: 4 };
+  const result = await auraTools.executeAuraTool("generate_campaign_images", {
+    campaignId: "11111111-1111-4111-8111-111111111111",
+    productId: 501,
+    variantId: null,
+    sourceImageUrl: null,
+    prompt: "Crear piezas premium conservando el producto",
+    formats: ["1:1", "4:5", "9:16", "16:9"],
+    quality: "high",
+    imageCount: 4,
+    preserveProduct: true,
+    channelMapping: {
+      instagram: "4:5",
+      whatsapp: "1:1",
+      tiktok: "9:16",
+      facebook: "16:9",
+    },
+  }, {
+    ...ctxA,
+    imageJobBudget,
+  });
+
+  assert.equal(result.data.jobs.length, 4);
+  assert.equal(result.data.requiresPolling, true);
+  assert.equal(result.data.publication.automatic, false);
+  assert.deepEqual(
+    result.data.jobs.map((job) => job.format),
+    ["1:1", "4:5", "9:16", "16:9"]
+  );
+  const enqueues = imageToolCalls.filter((call) => call.operation === "enqueue");
+  assert.equal(enqueues.length, 4);
+  assert.ok(enqueues.every((call) => call.input.ownerAdminId === 101));
+  assert.ok(enqueues.every((call) => call.input.payload.productId === 501));
+  assert.equal(imageJobBudget.remaining, 0);
+  await assert.rejects(
+    () => auraTools.executeAuraTool("edit_campaign_image", {
+      campaignId: null,
+      productId: 501,
+      variantId: null,
+      sourceImageUrl: null,
+      prompt: "Quinto job no permitido",
+      format: "1:1",
+      quality: "high",
+      preserveProduct: true,
+    }, {
+      ...ctxA,
+      imageJobBudget,
+    }),
+    /maximo 4 jobs/
+  );
+});
+
+test("generate_campaign_images accepts a tenant variant and rejects more than four jobs", async () => {
+  const result = await auraTools.executeAuraTool("generate_campaign_images", {
+    campaignId: null,
+    productId: 501,
+    variantId: 701,
+    sourceImageUrl: null,
+    prompt: "Crear dos variantes visuales",
+    formats: ["1:1"],
+    quality: "medium",
+    imageCount: 2,
+    preserveProduct: true,
+    channelMapping: null,
+  }, ctxA);
+
+  assert.equal(result.data.jobs.length, 2);
+  assert.ok(imageToolCalls.every((call) => call.input.payload.variantId === 701));
+  await assert.rejects(
+    () => auraTools.executeAuraTool("generate_campaign_images", {
+      campaignId: null,
+      productId: 501,
+      variantId: null,
+      sourceImageUrl: null,
+      prompt: "Demasiadas imagenes",
+      formats: ["1:1"],
+      quality: "low",
+      imageCount: 5,
+      preserveProduct: true,
+      channelMapping: null,
+    }, ctxA),
+    /entre 1 y 4/
+  );
+});
+
+test("generate_campaign_images asks for a source instead of creating prompt-only jobs", async () => {
+  const result = await auraTools.executeAuraTool("generate_campaign_images", {
+    campaignId: null,
+    productId: null,
+    variantId: null,
+    sourceImageUrl: null,
+    prompt: "Crear imagen",
+    formats: ["1:1"],
+    quality: "high",
+    imageCount: 1,
+    preserveProduct: true,
+    channelMapping: null,
+  }, ctxA);
+
+  assert.equal(result.data.jobs.length, 0);
+  assert.equal(result.data.requiresSourceImage, true);
+  assert.equal(imageToolCalls.length, 0);
+});
+
+test("edit_campaign_image requires and forwards an authorized source", async () => {
+  const sourceImageUrl = "https://res.cloudinary.com/demo/image/upload/alesteb/products/chaqueta.png";
+  const result = await auraTools.executeAuraTool("edit_campaign_image", {
+    campaignId: null,
+    productId: null,
+    variantId: null,
+    sourceImageUrl,
+    prompt: "Mejorar iluminacion sin alterar el producto",
+    format: "4:5",
+    quality: "high",
+    preserveProduct: true,
+  }, ctxA);
+
+  assert.equal(result.data.jobs.length, 1);
+  assert.equal(result.data.publication.automatic, false);
+  assert.equal(imageToolCalls[0].input.mode, "edit");
+  assert.equal(imageToolCalls[0].input.payload.sourceImageUrl, sourceImageUrl);
+
+  await assert.rejects(
+    () => auraTools.executeAuraTool("edit_campaign_image", {
+      campaignId: null,
+      productId: null,
+      variantId: null,
+      sourceImageUrl: null,
+      prompt: "Mejorar imagen",
+      format: "1:1",
+      quality: "high",
+      preserveProduct: true,
+    }, ctxA),
+    /Selecciona o adjunta/
+  );
+});
+
+test("image tools preserve tenant context and sanitize prompt and source from tools_used", async () => {
+  await assert.rejects(
+    () => auraTools.executeAuraTool("generate_campaign_images", {
+      campaignId: null,
+      productId: 2020,
+      variantId: null,
+      sourceImageUrl: null,
+      prompt: "No debe cruzar tenants",
+      formats: ["1:1"],
+      quality: "high",
+      imageCount: 1,
+      preserveProduct: true,
+      channelMapping: null,
+    }, ctxA),
+    /Producto no encontrado/
+  );
+
+  const sourceImageUrl = "https://res.cloudinary.com/demo/image/upload/private-source.png";
+  const execution = await auraTools.runAuraToolCall("edit_campaign_image", {
+    campaignId: null,
+    productId: null,
+    variantId: null,
+    sourceImageUrl,
+    prompt: "PROMPT_PRIVATE_MARKER",
+    format: "1:1",
+    quality: "high",
+    preserveProduct: true,
+  }, ctxA);
+  const serializedAudit = JSON.stringify(execution.audit);
+
+  assert.equal(execution.output.success, true);
+  assert.equal(serializedAudit.includes("PROMPT_PRIVATE_MARKER"), false);
+  assert.equal(serializedAudit.includes(sourceImageUrl), false);
+  assert.equal(execution.audit.arguments.sourceImageProvided, true);
+  assert.equal(execution.audit.arguments.promptLength, "PROMPT_PRIVATE_MARKER".length);
+});
+
+test("get_image_job_status uses the authenticated tenant and returns no prompt", async () => {
+  const jobId = "10000000-0000-4000-8000-000000000001";
+  const result = await auraTools.executeAuraTool("get_image_job_status", { jobId }, ctxB);
+
+  assert.equal(result.data.job.jobId, jobId);
+  assert.equal(result.data.job.status, "queued");
+  assert.equal(result.data.publication.automatic, false);
+  assert.equal(imageToolCalls[0].input.ownerAdminId, 202);
+  assert.equal(JSON.stringify(result.data).includes("prompt"), false);
 });
 
 test("get_sales_summary is tenant-scoped", async () => {
@@ -573,5 +930,99 @@ test("Responses API flow executes read-only tools and returns audited tool usage
     assert.equal(result.usage.totalTokens, 32);
   } finally {
     axios.post = originalPost;
+  }
+});
+
+test("Responses API image flow returns backend job ids and requires polling", async () => {
+  const axios = require("axios");
+  const originalPost = axios.post;
+  const originalConsoleLog = console.log;
+  const posts = [];
+  const logs = [];
+
+  delete require.cache[require.resolve("../services/auraOpenAI.service")];
+  const auraOpenAI = require("../services/auraOpenAI.service");
+
+  console.log = (line) => logs.push(String(line));
+  axios.post = async (_url, payload) => {
+    posts.push(payload);
+    if (posts.length === 1) {
+      return {
+        data: {
+          id: "resp-image-1",
+          model: "gpt-5-mini",
+          output: [{
+            type: "function_call",
+            call_id: "call-image-1",
+            name: "generate_campaign_images",
+            arguments: JSON.stringify({
+              campaignId: "11111111-1111-4111-8111-111111111111",
+              productId: 501,
+              variantId: null,
+              sourceImageUrl: null,
+              prompt: "PROMPT_NOT_FOR_LOGS",
+              formats: ["1:1", "4:5", "9:16", "16:9"],
+              quality: "high",
+              imageCount: 4,
+              preserveProduct: true,
+              channelMapping: null,
+            }),
+          }],
+          usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+        },
+      };
+    }
+    return {
+      data: {
+        id: "resp-image-2",
+        model: "gpt-5-mini",
+        output_text: JSON.stringify({
+          reply: "Texto del modelo que no debe reemplazar la confirmacion estructurada.",
+          jobs: [{ jobId: "fabricated", format: "1:1", status: "completed" }],
+          requiresPolling: false,
+          suggestedActions: [],
+        }),
+        output: [],
+        usage: { input_tokens: 8, output_tokens: 12, total_tokens: 20 },
+      },
+    };
+  };
+
+  try {
+    const result = await auraOpenAI.generateAuraReply({
+      message: "Genera las imagenes para todas las redes",
+      history: [],
+      businessContext: {
+        insights: {},
+        promptContext: { period: { today: "2026-07-19" }, metrics: {}, lists: {} },
+      },
+      toolContext: ctxA,
+    });
+
+    assert.equal(posts.length, 2);
+    assert.ok(posts[0].tools.some((tool) => tool.name === "generate_campaign_images"));
+    assert.equal(result.reply, "Se crearon los trabajos de imagen.");
+    assert.equal(result.jobs.length, 4);
+    assert.deepEqual(result.jobs.map((job) => job.jobId), imageJobIds);
+    assert.equal(result.jobs.some((job) => job.jobId === "fabricated"), false);
+    assert.equal(result.requiresPolling, true);
+    assert.equal(result.toolsUsed[0].tool, "generate_campaign_images");
+    assert.equal(JSON.stringify(result.toolsUsed).includes("PROMPT_NOT_FOR_LOGS"), false);
+
+    const selectionLog = logs
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .find((entry) => entry?.event === "aura_tools_selected");
+    assert.equal(selectionLog.imageToolsEnabled, true);
+    assert.ok(selectionLog.selectedToolNames.includes("generate_campaign_images"));
+    assert.equal(JSON.stringify(selectionLog).includes("PROMPT_NOT_FOR_LOGS"), false);
+  } finally {
+    axios.post = originalPost;
+    console.log = originalConsoleLog;
   }
 });

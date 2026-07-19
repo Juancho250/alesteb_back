@@ -37,6 +37,20 @@ const products = [
     image_url: "https://example.com/not-allowed.png",
   },
 ];
+const variants = [
+  {
+    id: 701,
+    product_id: 501,
+    owner_admin_id: 101,
+    image_url: "https://res.cloudinary.com/demo/image/upload/v1720000000/alesteb/products/chaqueta-negra.webp",
+  },
+  {
+    id: 702,
+    product_id: 502,
+    owner_admin_id: 202,
+    image_url: "https://res.cloudinary.com/demo/image/upload/v1720000000/alesteb/products/bolso-rojo.webp",
+  },
+];
 
 function now() {
   return new Date("2026-07-14T12:00:00Z");
@@ -132,8 +146,87 @@ async function handleQuery(sql, params = []) {
     return { rows: [], rowCount: 0 };
   }
 
-  if (sql.includes("FROM product_variants pv")) {
+  if (sql.includes("aura_authorized_image_source")) {
+    const [sourceImageUrl, ownerAdminId, productId, variantId] = params;
+    const variant = variants.find(
+      (item) => item.image_url === sourceImageUrl
+        && item.owner_admin_id === Number(ownerAdminId)
+        && (!productId || item.product_id === Number(productId))
+        && (!variantId || item.id === Number(variantId))
+    );
+    if (variant) {
+      const product = products.find((item) => item.id === variant.product_id);
+      return {
+        rows: [{
+          product_id: product.id,
+          product_name: product.name,
+          variant_id: variant.id,
+          image_url: variant.image_url,
+          source_type: "variant_image",
+        }],
+        rowCount: 1,
+      };
+    }
+    const product = products.find(
+      (item) => item.image_url === sourceImageUrl
+        && item.owner_admin_id === Number(ownerAdminId)
+        && (!productId || item.id === Number(productId))
+    );
+    if (product && !variantId) {
+      return {
+        rows: [{
+          product_id: product.id,
+          product_name: product.name,
+          variant_id: null,
+          image_url: product.image_url,
+          source_type: "product_image",
+        }],
+        rowCount: 1,
+      };
+    }
+    const asset = assets.find(
+      (item) => item.owner_admin_id === Number(ownerAdminId)
+        && item.status !== "deleted"
+        && [item.original_asset_url, item.generated_asset_url].includes(sourceImageUrl)
+        && (!productId || item.product_id === Number(productId))
+        && (!variantId || item.variant_id === Number(variantId))
+    );
+    if (asset) {
+      const assetProduct = products.find((item) => item.id === asset.product_id);
+      return {
+        rows: [{
+          product_id: asset.product_id,
+          product_name: assetProduct?.name || null,
+          variant_id: asset.variant_id,
+          image_url: sourceImageUrl,
+          source_type: "campaign_asset",
+        }],
+        rowCount: 1,
+      };
+    }
     return { rows: [], rowCount: 0 };
+  }
+
+  if (sql.includes("FROM product_variants pv")) {
+    const variantId = Number(params[0]);
+    const ownerAdminId = Number(params[1]);
+    const productId = params[2] === null ? null : Number(params[2]);
+    const variant = variants.find(
+      (item) => item.id === variantId
+        && item.owner_admin_id === ownerAdminId
+        && (!productId || item.product_id === productId)
+    );
+    if (!variant) return { rows: [], rowCount: 0 };
+    const product = products.find((item) => item.id === variant.product_id);
+    return {
+      rows: [{
+        product_id: product.id,
+        product_name: product.name,
+        variant_id: variant.id,
+        image_url: variant.image_url,
+      }],
+      rowCount: 1,
+    };
   }
 
   if (sql.includes("FROM products p") && sql.includes("product_images")) {
@@ -379,12 +472,79 @@ test("AURA image jobs reject catalog images from another tenant", async () => {
   assert.equal(assets.length, 0);
 });
 
+test("AURA image jobs reject campaigns from another tenant", async () => {
+  await assert.rejects(
+    () => enqueueBasic(ctxA, { campaignId: campaignB }),
+    /Campana no encontrada/
+  );
+  assert.equal(jobs.length, 0);
+  assert.equal(assets.length, 0);
+});
+
+test("AURA image jobs resolve tenant variants and keep quality provenance", async () => {
+  const result = await enqueueBasic(ctxA, {
+    productId: 501,
+    variantId: 701,
+    format: "4:5",
+    quality: "medium",
+    preserveProduct: true,
+    channels: ["instagram"],
+  });
+
+  assert.equal(result.job.input.variantId, 701);
+  assert.equal(result.job.input.format, "4:5");
+  assert.equal(result.job.input.size, "1024x1280");
+  assert.equal(result.job.input.requestedAspectRatio, "4:5");
+  assert.equal(result.job.input.quality, "medium");
+  assert.deepEqual(result.job.input.channels, ["instagram"]);
+  assert.equal(result.asset.metadata.quality, "medium");
+});
+
+test("AURA image jobs accept only source URLs recorded for the same tenant", async () => {
+  const ownSource = products.find((item) => item.id === 501).image_url;
+  const result = await enqueueBasic(ctxA, {
+    productId: null,
+    sourceImageUrl: ownSource,
+  });
+
+  assert.equal(result.job.input.productId, 501);
+  assert.equal(result.job.input.sourceImageUrl, ownSource);
+
+  const crossTenantSource = products.find((item) => item.id === 502).image_url;
+  await assert.rejects(
+    () => enqueueBasic(ctxA, {
+      productId: null,
+      sourceImageUrl: crossTenantSource,
+      objective: "intento cross tenant",
+    }),
+    /no pertenece al catalogo/
+  );
+  assert.equal(jobs.length, 1);
+});
+
 test("AURA image jobs reject arbitrary non-Cloudinary URLs even when stored on product", async () => {
   await assert.rejects(
     () => enqueueBasic(ctxA, { productId: 503 }),
     /Solo se permiten URLs verificadas de Cloudinary/
   );
   assert.equal(jobs.length, 0);
+});
+
+test("AURA image job dedupe keeps four deterministic slots without publishing", async () => {
+  for (let variationIndex = 0; variationIndex < 4; variationIndex += 1) {
+    await enqueueBasic(ctxA, {
+      campaignId: campaignA,
+      productId: 501,
+      format: "1:1",
+      variationIndex,
+    });
+  }
+
+  assert.equal(jobs.length, 4);
+  assert.equal(new Set(jobs.map((job) => job.dedupe_key)).size, 4);
+  assert.equal(assets.length, 4);
+  assert.equal(calls.some((call) => call.sql.includes("notification_queue")), false);
+  assert.equal(calls.some((call) => call.sql.includes("campaign_recipients")), false);
 });
 
 test("AURA image jobs dedupe identical active requests", async () => {

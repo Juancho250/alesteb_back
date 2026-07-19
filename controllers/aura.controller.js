@@ -101,8 +101,11 @@ exports.chat = async (req, res) => {
       conversationId: result.conversationId,
       runId: result.runId,
       answer: result.answer || result.reply,
+      reply: result.reply || result.answer,
       insights: insightsToArray(result.insights),
       suggestions: result.suggestions || result.suggestedActions || [],
+      jobs: Array.isArray(result.jobs) ? result.jobs : [],
+      requiresPolling: Boolean(result.requiresPolling),
       usage: quotaUsage(req),
     });
   } catch (err) {

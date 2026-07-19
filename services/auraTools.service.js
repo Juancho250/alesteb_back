@@ -3,9 +3,11 @@ const auraActions = require("./auraActions.service");
 const auraForecasting = require("./auraForecasting.service");
 const auraCustomerGrowth = require("./auraCustomerGrowth.service");
 const auraSendTime = require("./auraSendTime.service");
+const auraImageJobs = require("./auraImageJobs.service");
 
 const MAX_TOOLS_PER_RUN = 5;
 const MAX_TOOL_ROUNDS = 3;
+const MAX_IMAGE_JOBS_PER_RUN = 4;
 const MAX_LIMIT = 50;
 const MAX_TOP_PRODUCTS_LIMIT = 10;
 const DEFAULT_SLEEPING_DAYS = 30;
@@ -42,6 +44,24 @@ const CUSTOMER_GROWTH_SEGMENTS = new Set([
   "dormidos",
 ]);
 const CUSTOMER_CHURN_LEVELS = new Set(["bajo", "medio", "alto", "critico", "insuficiente"]);
+const IMAGE_FORMATS = new Set(["1:1", "4:5", "9:16", "16:9"]);
+const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
+const IMAGE_CHANNELS = new Set([
+  "instagram",
+  "tiktok",
+  "whatsapp",
+  "facebook",
+  "ecommerce",
+  "email",
+  "push",
+]);
+const IMAGE_TOOL_NAMES = new Set([
+  "prepare_campaign_creatives",
+  "generate_campaign_images",
+  "edit_campaign_image",
+  "get_image_job_status",
+]);
+const UUID_PATTERN = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$";
 
 function nullableSchema(type, options = {}) {
   return { type: [type, "null"], ...options };
@@ -49,6 +69,21 @@ function nullableSchema(type, options = {}) {
 
 function nullableEnum(type, values) {
   return nullableSchema(type, { enum: [...values, null] });
+}
+
+function imageChannelMappingSchema() {
+  const properties = Object.fromEntries(
+    [...IMAGE_CHANNELS].map((channel) => [
+      channel,
+      nullableEnum("string", [...IMAGE_FORMATS]),
+    ])
+  );
+  return {
+    type: ["object", "null"],
+    additionalProperties: false,
+    properties,
+    required: Object.keys(properties),
+  };
 }
 
 const PAID_VALID_SALES_SQL = `
@@ -242,6 +277,137 @@ const OPENAI_TOOLS = [
   },
   {
     type: "function",
+    name: "prepare_campaign_creatives",
+    description: "Prepara un plan de creatividades con fuente, formatos, copy y advertencias. No crea jobs ni publica contenido.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        campaignId: nullableSchema("string", { pattern: UUID_PATTERN }),
+        productId: nullableSchema("integer", { minimum: 1 }),
+        variantId: nullableSchema("integer", { minimum: 1 }),
+        sourceImageUrl: nullableSchema("string", { maxLength: 2048 }),
+        channels: {
+          type: "array",
+          items: { type: "string", enum: [...IMAGE_CHANNELS] },
+          minItems: 1,
+          maxItems: IMAGE_CHANNELS.size,
+        },
+        formats: {
+          type: "array",
+          items: { type: "string", enum: [...IMAGE_FORMATS] },
+          minItems: 1,
+          maxItems: MAX_IMAGE_JOBS_PER_RUN,
+        },
+        prompt: { type: "string", maxLength: 1200 },
+        copy: nullableSchema("string", { maxLength: 1000 }),
+        callToAction: nullableSchema("string", { maxLength: 160 }),
+        preserveProduct: { type: "boolean" },
+      },
+      required: [
+        "campaignId",
+        "productId",
+        "variantId",
+        "sourceImageUrl",
+        "channels",
+        "formats",
+        "prompt",
+        "copy",
+        "callToAction",
+        "preserveProduct",
+      ],
+    },
+  },
+  {
+    type: "function",
+    name: "generate_campaign_images",
+    description: "Encola hasta cuatro jobs de imagen tenant-aware. Requiere una fuente autorizada y nunca publica en redes.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        campaignId: nullableSchema("string", { pattern: UUID_PATTERN }),
+        productId: nullableSchema("integer", { minimum: 1 }),
+        variantId: nullableSchema("integer", { minimum: 1 }),
+        sourceImageUrl: nullableSchema("string", { maxLength: 2048 }),
+        prompt: { type: "string", maxLength: 1200 },
+        formats: {
+          type: "array",
+          items: { type: "string", enum: [...IMAGE_FORMATS] },
+          minItems: 1,
+          maxItems: MAX_IMAGE_JOBS_PER_RUN,
+        },
+        quality: { type: "string", enum: [...IMAGE_QUALITIES] },
+        imageCount: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_IMAGE_JOBS_PER_RUN,
+        },
+        preserveProduct: { type: "boolean" },
+        channelMapping: imageChannelMappingSchema(),
+      },
+      required: [
+        "campaignId",
+        "productId",
+        "variantId",
+        "sourceImageUrl",
+        "prompt",
+        "formats",
+        "quality",
+        "imageCount",
+        "preserveProduct",
+        "channelMapping",
+      ],
+    },
+  },
+  {
+    type: "function",
+    name: "edit_campaign_image",
+    description: "Encola una edicion sobre una imagen Cloudinary autorizada del tenant. No sobrescribe originales ni publica contenido.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        campaignId: nullableSchema("string", { pattern: UUID_PATTERN }),
+        productId: nullableSchema("integer", { minimum: 1 }),
+        variantId: nullableSchema("integer", { minimum: 1 }),
+        sourceImageUrl: nullableSchema("string", { maxLength: 2048 }),
+        prompt: { type: "string", maxLength: 1200 },
+        format: { type: "string", enum: [...IMAGE_FORMATS] },
+        quality: { type: "string", enum: [...IMAGE_QUALITIES] },
+        preserveProduct: { type: "boolean" },
+      },
+      required: [
+        "campaignId",
+        "productId",
+        "variantId",
+        "sourceImageUrl",
+        "prompt",
+        "format",
+        "quality",
+        "preserveProduct",
+      ],
+    },
+  },
+  {
+    type: "function",
+    name: "get_image_job_status",
+    description: "Consulta el estado tenant-aware de un job de imagen existente sin procesarlo ni modificarlo.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        jobId: { type: "string", pattern: UUID_PATTERN },
+      },
+      required: ["jobId"],
+    },
+  },
+  {
+    type: "function",
     name: "propose_aura_action",
     description: "Crea una accion AURA pendiente de aprobacion. No ejecuta nada ni confirma por texto libre.",
     strict: false,
@@ -328,6 +494,7 @@ function requireTrustedCtx(ctx) {
     userId: ctx.userId,
     roles: Array.isArray(ctx.roles) ? ctx.roles : [],
     requestId: ctx.requestId || null,
+    imageJobBudget: ctx.imageJobBudget || null,
   };
 }
 
@@ -438,6 +605,61 @@ function optionalText(value, fallback, maxLength, field) {
     throw createToolError(`${field} no puede superar ${maxLength} caracteres`, "AURA_TOOL_INVALID_TEXT");
   }
   return text;
+}
+
+function optionalBoolean(value, fallback, field) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value !== "boolean") {
+    throw createToolError(`${field} debe ser booleano`, "AURA_TOOL_INVALID_BOOLEAN");
+  }
+  return value;
+}
+
+function optionalUuid(value, fallback, field) {
+  const text = optionalText(value, fallback, 36, field);
+  if (text === null) return null;
+  if (!(new RegExp(UUID_PATTERN)).test(text)) {
+    throw createToolError(`${field} invalido`, "AURA_TOOL_INVALID_UUID");
+  }
+  return text;
+}
+
+function requiredImageFormats(value, field = "formats") {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_IMAGE_JOBS_PER_RUN) {
+    throw createToolError(
+      `${field} debe incluir entre 1 y ${MAX_IMAGE_JOBS_PER_RUN} formatos`,
+      "AURA_TOOL_INVALID_IMAGE_FORMATS"
+    );
+  }
+  const formats = value.map((format) => optionalEnum(format, null, IMAGE_FORMATS, field));
+  return [...new Set(formats)];
+}
+
+function requiredImageChannels(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > IMAGE_CHANNELS.size) {
+    throw createToolError("channels debe ser un arreglo no vacio", "AURA_TOOL_INVALID_IMAGE_CHANNELS");
+  }
+  const channels = value.map((channel) => optionalEnum(
+    channel,
+    null,
+    IMAGE_CHANNELS,
+    "channel"
+  ));
+  return [...new Set(channels)];
+}
+
+function normalizeChannelMapping(value) {
+  if (value === undefined || value === null) return null;
+  const mapping = cleanObject(value);
+  rejectAdditionalProperties(mapping, [...IMAGE_CHANNELS]);
+  return Object.fromEntries(
+    Object.entries(mapping)
+      .filter(([, format]) => format !== undefined && format !== null && format !== "")
+      .map(([channel, format]) => [
+        channel,
+        optionalEnum(format, null, IMAGE_FORMATS, `channelMapping.${channel}`),
+      ])
+  );
 }
 
 function validateToolArguments(toolName, rawArgs = {}) {
@@ -555,6 +777,103 @@ function validateToolArguments(toolName, rawArgs = {}) {
     return {
       businessSignal,
     };
+  }
+
+  if (toolName === "prepare_campaign_creatives") {
+    rejectAdditionalProperties(args, [
+      "campaignId",
+      "productId",
+      "variantId",
+      "sourceImageUrl",
+      "channels",
+      "formats",
+      "prompt",
+      "copy",
+      "callToAction",
+      "preserveProduct",
+    ]);
+    const prompt = optionalText(args.prompt, null, 1200, "prompt");
+    if (!prompt) throw createToolError("prompt es requerido", "AURA_TOOL_MISSING_REQUIRED");
+    return {
+      campaignId: optionalUuid(args.campaignId, null, "campaignId"),
+      productId: optionalInteger(args.productId, null, 1, 2_147_483_647, "productId"),
+      variantId: optionalInteger(args.variantId, null, 1, 2_147_483_647, "variantId"),
+      sourceImageUrl: optionalText(args.sourceImageUrl, null, 2048, "sourceImageUrl"),
+      channels: requiredImageChannels(args.channels),
+      formats: requiredImageFormats(args.formats),
+      prompt,
+      copy: optionalText(args.copy, null, 1000, "copy"),
+      callToAction: optionalText(args.callToAction, null, 160, "callToAction"),
+      preserveProduct: optionalBoolean(args.preserveProduct, true, "preserveProduct"),
+    };
+  }
+
+  if (toolName === "generate_campaign_images") {
+    rejectAdditionalProperties(args, [
+      "campaignId",
+      "productId",
+      "variantId",
+      "sourceImageUrl",
+      "prompt",
+      "formats",
+      "quality",
+      "imageCount",
+      "preserveProduct",
+      "channelMapping",
+    ]);
+    const prompt = optionalText(args.prompt, null, 1200, "prompt");
+    if (!prompt) throw createToolError("prompt es requerido", "AURA_TOOL_MISSING_REQUIRED");
+    const formats = requiredImageFormats(args.formats);
+    return {
+      campaignId: optionalUuid(args.campaignId, null, "campaignId"),
+      productId: optionalInteger(args.productId, null, 1, 2_147_483_647, "productId"),
+      variantId: optionalInteger(args.variantId, null, 1, 2_147_483_647, "variantId"),
+      sourceImageUrl: optionalText(args.sourceImageUrl, null, 2048, "sourceImageUrl"),
+      prompt,
+      formats,
+      quality: optionalEnum(args.quality, "high", IMAGE_QUALITIES, "quality"),
+      imageCount: optionalInteger(
+        args.imageCount,
+        formats.length,
+        1,
+        MAX_IMAGE_JOBS_PER_RUN,
+        "imageCount"
+      ),
+      preserveProduct: optionalBoolean(args.preserveProduct, true, "preserveProduct"),
+      channelMapping: normalizeChannelMapping(args.channelMapping),
+    };
+  }
+
+  if (toolName === "edit_campaign_image") {
+    rejectAdditionalProperties(args, [
+      "campaignId",
+      "productId",
+      "variantId",
+      "sourceImageUrl",
+      "prompt",
+      "format",
+      "quality",
+      "preserveProduct",
+    ]);
+    const prompt = optionalText(args.prompt, null, 1200, "prompt");
+    if (!prompt) throw createToolError("prompt es requerido", "AURA_TOOL_MISSING_REQUIRED");
+    return {
+      campaignId: optionalUuid(args.campaignId, null, "campaignId"),
+      productId: optionalInteger(args.productId, null, 1, 2_147_483_647, "productId"),
+      variantId: optionalInteger(args.variantId, null, 1, 2_147_483_647, "variantId"),
+      sourceImageUrl: optionalText(args.sourceImageUrl, null, 2048, "sourceImageUrl"),
+      prompt,
+      format: optionalEnum(args.format, "1:1", IMAGE_FORMATS, "format"),
+      quality: optionalEnum(args.quality, "high", IMAGE_QUALITIES, "quality"),
+      preserveProduct: optionalBoolean(args.preserveProduct, true, "preserveProduct"),
+    };
+  }
+
+  if (toolName === "get_image_job_status") {
+    rejectAdditionalProperties(args, ["jobId"]);
+    const jobId = optionalUuid(args.jobId, null, "jobId");
+    if (!jobId) throw createToolError("jobId es requerido", "AURA_TOOL_MISSING_REQUIRED");
+    return { jobId };
   }
 
   if (toolName === "propose_aura_action") {
@@ -1278,6 +1597,227 @@ function suggestCampaignObjective(ctx, args) {
   };
 }
 
+function hasImageSourceReference(args) {
+  return Boolean(args.sourceImageUrl || args.productId || args.variantId);
+}
+
+function reserveImageJobBudget(ctx, count) {
+  if (count < 1 || count > MAX_IMAGE_JOBS_PER_RUN) {
+    throw createToolError(
+      `Cada run puede crear maximo ${MAX_IMAGE_JOBS_PER_RUN} jobs de imagen`,
+      "AURA_IMAGE_JOB_LIMIT_EXCEEDED",
+      400
+    );
+  }
+  if (!ctx.imageJobBudget) return;
+  const remaining = Number(ctx.imageJobBudget.remaining);
+  if (!Number.isInteger(remaining) || remaining < count) {
+    throw createToolError(
+      `Cada run puede crear maximo ${MAX_IMAGE_JOBS_PER_RUN} jobs de imagen`,
+      "AURA_IMAGE_JOB_LIMIT_EXCEEDED",
+      400
+    );
+  }
+  ctx.imageJobBudget.remaining = remaining - count;
+}
+
+function formatsForImageCount(formats, imageCount) {
+  return Array.from(
+    { length: imageCount },
+    (_item, index) => formats[index % formats.length]
+  );
+}
+
+function channelsForFormat(channelMapping, format) {
+  if (!channelMapping) return [];
+  return Object.entries(channelMapping)
+    .filter(([, mappedFormat]) => mappedFormat === format)
+    .map(([channel]) => channel);
+}
+
+function mapQueuedImageJob(result, format, channels = []) {
+  return {
+    jobId: result.job.id,
+    format,
+    status: result.job.status,
+    channels,
+    deduped: Boolean(result.deduped),
+  };
+}
+
+async function prepareCampaignCreatives(ctx, args) {
+  const safeCtx = requireTrustedCtx(ctx);
+  const validated = validateToolArguments("prepare_campaign_creatives", args);
+  const inspection = await auraImageJobs.inspectImageRequest({
+    ...safeCtx,
+    mode: "generate",
+    payload: {
+      campaignId: validated.campaignId,
+      productId: validated.productId,
+      variantId: validated.variantId,
+      sourceImageUrl: validated.sourceImageUrl,
+      format: validated.formats[0],
+      instructions: validated.prompt,
+      quality: "high",
+      preserveProduct: validated.preserveProduct,
+    },
+  });
+  const warnings = [];
+  if (!inspection.source.available) {
+    warnings.push("Selecciona o adjunta una imagen autorizada antes de generar las piezas.");
+  }
+  if (validated.preserveProduct && !inspection.source.available) {
+    warnings.push("No se puede prometer conservacion exacta del producto sin una imagen fuente.");
+  }
+
+  return {
+    mode: "creative_plan_only",
+    campaign: inspection.campaign,
+    product: inspection.source.available
+      ? {
+          productId: inspection.source.productId,
+          productName: inspection.source.productName,
+          variantId: inspection.source.variantId,
+        }
+      : null,
+    channels: validated.channels,
+    formats: validated.formats,
+    prompt: validated.prompt,
+    copy: validated.copy,
+    callToAction: validated.callToAction,
+    preserveProduct: validated.preserveProduct,
+    sourceImage: inspection.source,
+    warnings,
+    jobs: [],
+    requiresPolling: false,
+    publication: { automatic: false },
+  };
+}
+
+async function generateCampaignImages(ctx, args) {
+  const safeCtx = requireTrustedCtx(ctx);
+  const validated = validateToolArguments("generate_campaign_images", args);
+  if (!hasImageSourceReference(validated)) {
+    return {
+      mode: "async_image_jobs",
+      reply: "Selecciona o adjunta una imagen del producto antes de generar las piezas.",
+      jobs: [],
+      requiresPolling: false,
+      requiresSourceImage: true,
+      publication: { automatic: false },
+    };
+  }
+
+  reserveImageJobBudget(safeCtx, validated.imageCount);
+  const requestedFormats = formatsForImageCount(validated.formats, validated.imageCount);
+  const jobs = [];
+  for (const [variationIndex, format] of requestedFormats.entries()) {
+    const channels = channelsForFormat(validated.channelMapping, format);
+    const result = await auraImageJobs.enqueueImageJob({
+      ...safeCtx,
+      mode: "generate",
+      payload: {
+        campaignId: validated.campaignId,
+        productId: validated.productId,
+        variantId: validated.variantId,
+        sourceImageUrl: validated.sourceImageUrl,
+        objective: "Crear una pieza visual de campana",
+        format,
+        instructions: validated.prompt,
+        quality: validated.quality,
+        preserveProduct: validated.preserveProduct,
+        variationIndex,
+        channels,
+      },
+    });
+    jobs.push(mapQueuedImageJob(result, format, channels));
+  }
+
+  return {
+    mode: "async_image_jobs",
+    reply: "Se crearon los trabajos de imagen.",
+    jobs,
+    requiresPolling: jobs.some((job) => ["queued", "running"].includes(job.status)),
+    requiresSourceImage: false,
+    publication: { automatic: false },
+  };
+}
+
+async function editCampaignImage(ctx, args) {
+  const safeCtx = requireTrustedCtx(ctx);
+  const validated = validateToolArguments("edit_campaign_image", args);
+  if (!hasImageSourceReference(validated)) {
+    throw createToolError(
+      "Selecciona o adjunta una imagen autorizada antes de editarla",
+      "AURA_IMAGE_SOURCE_REQUIRED",
+      400
+    );
+  }
+
+  reserveImageJobBudget(safeCtx, 1);
+  const result = await auraImageJobs.enqueueImageJob({
+    ...safeCtx,
+    mode: "edit",
+    payload: {
+      campaignId: validated.campaignId,
+      productId: validated.productId,
+      variantId: validated.variantId,
+      sourceImageUrl: validated.sourceImageUrl,
+      objective: "Editar una pieza visual de campana",
+      format: validated.format,
+      instructions: validated.prompt,
+      quality: validated.quality,
+      preserveProduct: validated.preserveProduct,
+      variationIndex: 0,
+      channels: [],
+    },
+  });
+  const jobs = [mapQueuedImageJob(result, validated.format)];
+  return {
+    mode: "async_image_jobs",
+    reply: "Se creo el trabajo de edicion de imagen.",
+    jobs,
+    requiresPolling: ["queued", "running"].includes(result.job.status),
+    requiresSourceImage: false,
+    publication: { automatic: false },
+  };
+}
+
+async function getImageJobStatus(ctx, args) {
+  const safeCtx = requireTrustedCtx(ctx);
+  const validated = validateToolArguments("get_image_job_status", args);
+  const result = await auraImageJobs.getJob({
+    ...safeCtx,
+    jobId: validated.jobId,
+  });
+  return {
+    mode: "read_only",
+    job: {
+      jobId: result.job.id,
+      type: result.job.type,
+      status: result.job.status,
+      format: result.job.input?.format || null,
+      attempts: result.job.attempts,
+      maxAttempts: result.job.maxAttempts,
+      errorCode: result.job.errorCode,
+      createdAt: result.job.createdAt,
+      completedAt: result.job.completedAt,
+    },
+    asset: result.asset
+      ? {
+          assetId: result.asset.id,
+          status: result.asset.status,
+          generatedAssetUrl: result.asset.generatedAssetUrl,
+          width: result.asset.width,
+          height: result.asset.height,
+          format: result.asset.format,
+          moderationStatus: result.asset.moderationStatus,
+        }
+      : null,
+    publication: { automatic: false },
+  };
+}
+
 async function proposeAuraAction(ctx, args) {
   const safeCtx = requireTrustedCtx(ctx);
   const validated = validateToolArguments("propose_aura_action", args);
@@ -1369,6 +1909,10 @@ const TOOL_HANDLERS = {
   draft_campaign_copy: draftCampaignCopy,
   suggest_campaign_segment: suggestCampaignSegment,
   suggest_campaign_objective: suggestCampaignObjective,
+  prepare_campaign_creatives: prepareCampaignCreatives,
+  generate_campaign_images: generateCampaignImages,
+  edit_campaign_image: editCampaignImage,
+  get_image_job_status: getImageJobStatus,
   propose_aura_action: proposeAuraAction,
   get_demand_forecast: getDemandForecast,
   get_customer_growth_opportunities: getCustomerGrowthOpportunities,
@@ -1382,6 +1926,18 @@ function summarizeToolResult(result) {
   if (!result || typeof result !== "object") {
     return { kind: typeof result };
   }
+  if (Array.isArray(result.jobs)) {
+    return {
+      kind: "image_jobs",
+      jobCount: result.jobs.length,
+      jobs: result.jobs.slice(0, MAX_IMAGE_JOBS_PER_RUN).map((job) => ({
+        jobId: job.jobId,
+        format: job.format,
+        status: job.status,
+      })),
+      requiresPolling: Boolean(result.requiresPolling),
+    };
+  }
   if (Array.isArray(result.rows)) {
     return { kind: "object_with_rows", rowCount: result.rows.length };
   }
@@ -1389,6 +1945,32 @@ function summarizeToolResult(result) {
     return { kind: "rfm_segments", segmentCount: result.segments.length };
   }
   return { kind: "object", keys: Object.keys(result).slice(0, 10) };
+}
+
+function auditToolArguments(toolName, args) {
+  if (!IMAGE_TOOL_NAMES.has(toolName)) return args;
+  const safe = {
+    campaignId: args.campaignId || null,
+    productId: args.productId || null,
+    variantId: args.variantId || null,
+    sourceImageProvided: Boolean(args.sourceImageUrl),
+  };
+  if (typeof args.prompt === "string") safe.promptLength = args.prompt.length;
+  if (typeof args.copy === "string") safe.copyLength = args.copy.length;
+  if (typeof args.callToAction === "string") {
+    safe.callToActionLength = args.callToAction.length;
+  }
+  if (Array.isArray(args.channels)) safe.channels = args.channels;
+  if (Array.isArray(args.formats)) safe.formats = args.formats;
+  if (args.format) safe.format = args.format;
+  if (args.quality) safe.quality = args.quality;
+  if (args.imageCount) safe.imageCount = args.imageCount;
+  if (typeof args.preserveProduct === "boolean") {
+    safe.preserveProduct = args.preserveProduct;
+  }
+  if (args.channelMapping) safe.channelMapping = args.channelMapping;
+  if (args.jobId) safe.jobId = args.jobId;
+  return safe;
 }
 
 function validateOpenAISchema(schema, path, strict) {
@@ -1494,7 +2076,7 @@ async function runAuraToolCall(toolName, rawArgs, ctx) {
       },
       audit: {
         tool: toolName,
-        arguments: validatedArgs,
+        arguments: auditToolArguments(toolName, validatedArgs),
         durationMs,
         resultSummary: summarizeToolResult(result.data),
         error: null,
@@ -1515,7 +2097,7 @@ async function runAuraToolCall(toolName, rawArgs, ctx) {
       },
       audit: {
         tool: toolName,
-        arguments: validatedArgs,
+        arguments: auditToolArguments(toolName, validatedArgs),
         durationMs,
         resultSummary: null,
         error: {
@@ -1527,16 +2109,49 @@ async function runAuraToolCall(toolName, rawArgs, ctx) {
   }
 }
 
-function getOpenAITools() {
-  const tools = JSON.parse(JSON.stringify(OPENAI_TOOLS));
+function getOpenAITools({ includeImageTools = true } = {}) {
+  const selected = includeImageTools
+    ? OPENAI_TOOLS
+    : OPENAI_TOOLS.filter((tool) => !IMAGE_TOOL_NAMES.has(tool.name));
+  const tools = JSON.parse(JSON.stringify(selected));
   validateOpenAIToolSchemas(tools);
   return tools;
+}
+
+function normalizeIntentText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function hasExplicitImageIntent(message) {
+  const text = normalizeIntentText(message);
+  const visualSubject = /\b(imagen|imagenes|foto|fotos|creatividad|creatividades|pieza visual|piezas visuales|arte grafico|artes graficos)\b/.test(text);
+  const visualAction = /\b(genera|generar|crea|crear|edita|editar|mejora|mejorar|prepara|preparar|disena|disenar|consulta|consultar|estado)\b/.test(text);
+  const networkCreative = /\b(piezas?|creatividades?)\b.*\b(redes|instagram|tiktok|whatsapp|facebook)\b/.test(text);
+  return (visualSubject && visualAction) || networkCreative;
+}
+
+function selectOpenAITools(message) {
+  const imageToolsEnabled = true;
+  const imageIntent = hasExplicitImageIntent(message);
+  return {
+    tools: getOpenAITools({
+      includeImageTools: imageToolsEnabled && imageIntent,
+    }),
+    imageToolsEnabled,
+    imageIntent,
+  };
 }
 
 module.exports = {
   MAX_TOOLS_PER_RUN,
   MAX_TOOL_ROUNDS,
+  MAX_IMAGE_JOBS_PER_RUN,
   getOpenAITools,
+  selectOpenAITools,
+  hasExplicitImageIntent,
   validateOpenAIToolSchemas,
   executeAuraTool,
   runAuraToolCall,

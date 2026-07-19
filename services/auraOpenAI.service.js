@@ -43,7 +43,7 @@ Tu mision es ayudar al dueno del negocio a vender mas, evitar perdidas y tomar m
 Hablas en espanol por defecto.
 Tono: ejecutivo, premium, futurista, claro y directo.
 No inventes datos.
-Usa unicamente el contexto entregado por el sistema y los resultados de tools read-only.
+Usa unicamente el contexto entregado por el sistema y los resultados de tools autorizadas.
 Diferencia claramente hechos, estimaciones y recomendaciones.
 Cita siempre el periodo analizado cuando uses metricas.
 Si no hay datos suficientes, dilo claramente.
@@ -52,7 +52,7 @@ No afirmes haber ejecutado acciones.
 No ejecutes acciones sensibles.
 No recomiendes eliminar productos, usuarios, ventas o pedidos.
 Toda accion debe ser sugerida y pendiente de confirmacion.
-Puedes usar tools solo para consultar datos agregados o listas acotadas. Las tools no modifican estado.
+Las tools consultivas solo leen datos agregados o listas acotadas.
 Puedes explicar forecasts guardados de AURA Predictive con la tool read-only get_demand_forecast.
 No recalcules forecasts desde el chat ni afirmes que creaste un nuevo forecast; el recalculo solo ocurre por job aprobado en backend.
 Puedes explicar oportunidades RFM, abandono y recompra con get_customer_growth_opportunities, usando solo agregados y ejemplos anonimizados.
@@ -63,6 +63,13 @@ Tambien puedes usar tools de Growth solo para crear borradores de copy, segmento
 Los borradores de campana no son envios, no crean descuentos, no preparan destinatarios listos y requieren aprobacion.
 Instagram y TikTok son canales exportables; no afirmes que ALESTEB puede enviarlos automaticamente.
 Para email, WhatsApp y push, toda audiencia requiere consentimiento vigente y el opt-out prevalece.
+Ante una solicitud visual explicita puedes usar prepare_campaign_creatives, generate_campaign_images, edit_campaign_image o get_image_job_status.
+prepare_campaign_creatives solo prepara el plan y no crea jobs.
+generate_campaign_images y edit_campaign_image solo encolan jobs asincronos; no generan dentro del chat y no publican en ninguna plataforma.
+No invoques tools de imagen sin una solicitud visual explicita.
+Para generar o editar exige una imagen fuente autorizada. Si falta, pide al usuario seleccionar o adjuntar una imagen.
+No afirmes que conservaras exactamente el producto si no hay una fuente disponible.
+Cuando una tool devuelva jobs, informa que fueron encolados y que su estado debe consultarse; no inventes jobIds.
 Si necesitas preparar una accion operativa, usa propose_aura_action para dejarla como aura_action pendiente de aprobacion.
 Nunca interpretes frases como "si", "confirmo" o "hazlo" como aprobacion valida. La aprobacion solo existe por endpoint autenticado de acciones.
 No digas que aprobaste, programaste, pausaste, creaste descuentos o encolaste envios; solo puedes decir que dejaste una propuesta pendiente.
@@ -77,7 +84,15 @@ Debes responder exclusivamente con JSON valido, sin markdown, con esta forma:
       "priority": "low | medium | high",
       "requiresConfirmation": true
     }
-  ]
+  ],
+  "jobs": [
+    {
+      "jobId": "uuid real devuelto por la tool",
+      "format": "1:1 | 4:5 | 9:16 | 16:9",
+      "status": "queued | running | completed | failed"
+    }
+  ],
+  "requiresPolling": false
 }`;
 
 function configuredTimeoutMs() {
@@ -340,6 +355,8 @@ function generateMockAuraReply(businessContext = {}) {
     model: "aura-mock-v1",
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     toolsUsed: [],
+    jobs: [],
+    requiresPolling: false,
   };
 }
 
@@ -402,6 +419,26 @@ function buildOpenAIResponsePayload({
   return payload;
 }
 
+function appendImageJobs(target, execution) {
+  const jobs = execution?.output?.data?.jobs;
+  if (!Array.isArray(jobs)) return;
+  for (const job of jobs) {
+    if (
+      typeof job?.jobId !== "string"
+      || typeof job?.format !== "string"
+      || typeof job?.status !== "string"
+    ) {
+      continue;
+    }
+    if (target.some((item) => item.jobId === job.jobId)) continue;
+    target.push({
+      jobId: job.jobId,
+      format: job.format,
+      status: job.status,
+    });
+  }
+}
+
 async function executeRequestedTools(functionCalls, toolContext, toolsUsed, remaining) {
   if (functionCalls.length > remaining) {
     const err = new Error("Limite de tools AURA alcanzado");
@@ -411,6 +448,7 @@ async function executeRequestedTools(functionCalls, toolContext, toolsUsed, rema
   }
 
   const outputs = [];
+  const imageJobs = [];
   for (const call of functionCalls) {
     let parsedArgs = {};
     try {
@@ -438,16 +476,33 @@ async function executeRequestedTools(functionCalls, toolContext, toolsUsed, rema
 
     const execution = await auraTools.runAuraToolCall(call.name, parsedArgs, toolContext);
     toolsUsed.push(execution.audit);
+    appendImageJobs(imageJobs, execution);
     outputs.push({
       type: "function_call_output",
       call_id: call.callId,
       output: JSON.stringify(execution.output),
     });
   }
-  return outputs;
+  return { outputs, imageJobs };
 }
 
 async function generateAuraReply({ message, history, businessContext, toolContext }) {
+  const toolSelection = typeof auraTools.selectOpenAITools === "function"
+    ? auraTools.selectOpenAITools(message)
+    : {
+        tools: auraTools.getOpenAITools(),
+        imageToolsEnabled: false,
+        imageIntent: false,
+      };
+  console.log(JSON.stringify({
+    level: "info",
+    event: "aura_tools_selected",
+    requestId: sanitizeProviderField(toolContext?.requestId, 100),
+    toolsCount: toolSelection.tools.length,
+    imageToolsEnabled: Boolean(toolSelection.imageToolsEnabled),
+    selectedToolNames: toolSelection.tools.map((tool) => tool.name),
+  }));
+
   if (isAuraMockProviderEnabled()) return generateMockAuraReply(businessContext);
   if (!process.env.OPENAI_API_KEY) throw missingKeyError();
 
@@ -455,6 +510,11 @@ async function generateAuraReply({ message, history, businessContext, toolContex
   const timeoutMs = configuredTimeoutMs();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const toolsUsed = [];
+  const imageJobs = [];
+  const trustedToolContext = {
+    ...toolContext,
+    imageJobBudget: { remaining: auraTools.MAX_IMAGE_JOBS_PER_RUN || 4 },
+  };
   let providerUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   const requestedModel = normalizeOpenAIModel();
   let requestSummary = summarizeOpenAIRequest(
@@ -467,7 +527,7 @@ async function generateAuraReply({ message, history, businessContext, toolContex
   };
 
   try {
-    const openAITools = auraTools.getOpenAITools();
+    const openAITools = toolSelection.tools;
     const basePayload = buildOpenAIResponsePayload({
       model: requestedModel,
       instructions: SYSTEM_PROMPT,
@@ -485,19 +545,22 @@ async function generateAuraReply({ message, history, businessContext, toolContex
       const calls = extractFunctionCalls(response.data);
       if (!calls.length) break;
 
-      const toolOutputs = await executeRequestedTools(
+      const execution = await executeRequestedTools(
         calls,
-        toolContext,
+        trustedToolContext,
         toolsUsed,
         auraTools.MAX_TOOLS_PER_RUN - toolsUsed.length
       );
+      for (const job of execution.imageJobs) {
+        if (!imageJobs.some((item) => item.jobId === job.jobId)) imageJobs.push(job);
+      }
 
       response = await sendOpenAIResponse(
         buildOpenAIResponsePayload({
           model: requestedModel,
           instructions: SYSTEM_PROMPT,
           previousResponseId: response.data?.id,
-          input: toolOutputs,
+          input: execution.outputs,
           tools: openAITools,
           toolChoice: "auto",
           maxOutputTokens: 900,
@@ -516,11 +579,14 @@ async function generateAuraReply({ message, history, businessContext, toolContex
 
     const parsed = parseAuraJson(extractOutputText(response.data));
     const suggestedActions = normalizeSuggestedActions(parsed.suggestedActions);
+    const requiresPolling = imageJobs.some((job) => ["queued", "running"].includes(job.status));
 
     return {
-      reply: typeof parsed.reply === "string" && parsed.reply.trim()
-        ? parsed.reply.trim()
-        : "Analice el contexto disponible, pero no encontre suficientes datos para una recomendacion precisa.",
+      reply: imageJobs.length
+        ? "Se crearon los trabajos de imagen."
+        : typeof parsed.reply === "string" && parsed.reply.trim()
+          ? parsed.reply.trim()
+          : "Analice el contexto disponible, pero no encontre suficientes datos para una recomendacion precisa.",
       suggestedActions: suggestedActions.length
         ? suggestedActions
         : fallbackActions(businessContext.insights),
@@ -528,6 +594,8 @@ async function generateAuraReply({ message, history, businessContext, toolContex
       model: response.data?.model || requestedModel,
       usage: providerUsage,
       toolsUsed,
+      jobs: imageJobs,
+      requiresPolling,
     };
   } catch (err) {
     if (toolsUsed.length && !err.toolsUsed) err.toolsUsed = toolsUsed;
