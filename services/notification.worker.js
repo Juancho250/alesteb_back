@@ -55,8 +55,15 @@ async function withTimeout(promise, timeoutMs) {
   }
 }
 
-async function runNotificationWorkerTick() {
+async function runNotificationWorkerTick(options = {}) {
   if (workerState.running) return { skipped: true, reason: 'tick_already_running' };
+  const claimScope = options.claimScope || {};
+  const skipRecovery = options.skipRecovery === true;
+  if (skipRecovery && (!claimScope.ownerAdminId || !claimScope.notificationId)) {
+    const err = new Error('skipRecovery requiere un claim exacto por tenant y notificationId');
+    err.code = 'NOTIFICATION_WORKER_UNSAFE_SCOPE';
+    throw err;
+  }
   workerState.running = true;
   workerState.lastStartedAt = new Date().toISOString();
   const timeoutMs = Math.min(
@@ -64,11 +71,20 @@ async function runNotificationWorkerTick() {
     300_000
   );
   try {
-    const recovery = await recoverStaleNotificationJobs();
+    const recovery = skipRecovery
+      ? { recovered: 0, strategy: 'skipped_for_exact_one_shot_claim' }
+      : await recoverStaleNotificationJobs();
+    const requestedBatchSize = options.batchSize === undefined
+      ? Number(process.env.AURA_NOTIFICATION_BATCH_SIZE || 20)
+      : Number(options.batchSize);
+    const requestedWorkerId = options.workerId
+      || process.env.RENDER_INSTANCE_ID
+      || `notification-worker:${process.pid}`;
     const result = await withTimeout(
       processNotificationOutboxBatch(
-        Math.min(Math.max(Number(process.env.AURA_NOTIFICATION_BATCH_SIZE || 20), 1), 100),
-        process.env.RENDER_INSTANCE_ID || `notification-worker:${process.pid}`
+        Math.min(Math.max(requestedBatchSize, 1), 100),
+        requestedWorkerId,
+        claimScope
       ),
       timeoutMs
     );

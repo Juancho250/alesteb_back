@@ -37,8 +37,12 @@ function redactedError(err) {
   };
 }
 
-async function processOneImageJob(id = workerId()) {
-  const job = await imageJobs.claimNextImageJob({ workerId: id });
+async function processOneImageJob(id = workerId(), claimScope = {}) {
+  const job = await imageJobs.claimNextImageJob({
+    workerId: id,
+    ownerAdminId: claimScope.ownerAdminId,
+    jobId: claimScope.jobId,
+  });
   if (!job) return { processed: false };
 
   try {

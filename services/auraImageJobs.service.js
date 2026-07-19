@@ -722,7 +722,39 @@ async function deleteCampaignAsset(input) {
   return mapAssetRow(rows[0]);
 }
 
-async function claimNextImageJob({ workerId }) {
+function normalizeImageClaimScope({ ownerAdminId = null, jobId = null } = {}) {
+  const hasOwner = ownerAdminId !== undefined && ownerAdminId !== null;
+  const hasJob = jobId !== undefined && jobId !== null;
+  if (!hasOwner && !hasJob) return null;
+  if (!hasOwner || !hasJob) {
+    throw createImageJobError(
+      "Un claim acotado requiere ownerAdminId y jobId",
+      "AURA_IMAGE_CLAIM_SCOPE_INCOMPLETE",
+      500
+    );
+  }
+  const parsedOwner = Number(ownerAdminId);
+  if (!Number.isSafeInteger(parsedOwner) || parsedOwner <= 0 || !isUuid(jobId)) {
+    throw createImageJobError(
+      "Alcance de claim invalido",
+      "AURA_IMAGE_CLAIM_SCOPE_INVALID",
+      500
+    );
+  }
+  return { ownerAdminId: parsedOwner, jobId };
+}
+
+async function claimNextImageJob({ workerId, ownerAdminId = null, jobId = null }) {
+  const scope = normalizeImageClaimScope({ ownerAdminId, jobId });
+  const params = [workerId];
+  let scopeSql = "";
+  if (scope) {
+    params.push(scope.ownerAdminId, scope.jobId);
+    scopeSql = `
+         AND owner_admin_id = $2
+         AND id = $3`;
+  }
+
   const { rows } = await db.query(
     `WITH next_job AS (
        SELECT id
@@ -731,6 +763,7 @@ async function claimNextImageJob({ workerId }) {
          AND type IN ('aura_image_generate', 'aura_image_edit')
          AND available_at <= NOW()
          AND attempts < max_attempts
+         ${scopeSql}
        ORDER BY priority ASC, created_at ASC
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -745,7 +778,7 @@ async function claimNextImageJob({ workerId }) {
      FROM next_job
      WHERE j.id = next_job.id
      RETURNING j.*`,
-    [workerId]
+    params
   );
   return rows.length ? mapJobRow(rows[0]) : null;
 }
@@ -978,6 +1011,7 @@ module.exports = {
   getJob,
   listCampaignAssets,
   deleteCampaignAsset,
+  normalizeImageClaimScope,
   claimNextImageJob,
   recoverStaleImageJobs,
   markJobFailed,

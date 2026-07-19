@@ -326,7 +326,7 @@ function buildRestockRecommendation({ forecast, leadTimeDays, safetyStock, stock
 }
 
 async function getOrCreateModelVersion(client = db) {
-  const id = crypto.randomUUID();
+  const requestedId = crypto.randomUUID();
   const { rows } = await client.query(
     `INSERT INTO model_versions
        (id, name, version, model_type, feature_version, status, metrics, metadata)
@@ -338,7 +338,7 @@ async function getOrCreateModelVersion(client = db) {
        updated_at = NOW()
      RETURNING id`,
     [
-      id,
+      requestedId,
       FORECAST_MODEL_NAME,
       FORECAST_MODEL_VERSION,
       FEATURE_VERSION,
@@ -349,7 +349,10 @@ async function getOrCreateModelVersion(client = db) {
       }),
     ]
   );
-  return rows[0].id;
+  return {
+    id: rows[0].id,
+    created: String(rows[0].id) === requestedId,
+  };
 }
 
 function groupByTarget(rows, keyField) {
@@ -397,9 +400,18 @@ async function fetchFeatureRows({ ownerAdminId, targetType, productId = null, va
   return rows;
 }
 
-async function saveForecastRun({ ownerAdminId, userId = null, targetType = 'product', productId = null, variantId = null, horizons = [7, 14, 30] }, client = db) {
+async function saveForecastRun({
+  ownerAdminId,
+  userId = null,
+  targetType = 'product',
+  productId = null,
+  variantId = null,
+  horizons = [7, 14, 30],
+  auditTag = null,
+}, client = db) {
   const safeHorizons = [...new Set(horizons.map((h) => normalizeHorizon(h)))];
-  const modelVersionId = await getOrCreateModelVersion(client);
+  const modelVersion = await getOrCreateModelVersion(client);
+  const modelVersionId = modelVersion.id;
   const rows = await fetchFeatureRows({ ownerAdminId, targetType, productId, variantId }, client);
   const keyField = targetType === 'variant' ? 'variant_id' : 'product_id';
   const grouped = groupByTarget(rows, keyField);
@@ -419,7 +431,14 @@ async function saveForecastRun({ ownerAdminId, userId = null, targetType = 'prod
       dates[0] || null,
       dates[dates.length - 1] || null,
       userId,
-      JSON.stringify({ targetType, productId, variantId, horizons: safeHorizons }),
+      JSON.stringify({
+        targetType,
+        productId,
+        variantId,
+        horizons: safeHorizons,
+        modelVersionCreated: modelVersion.created,
+        ...(auditTag ? { auditTag: String(auditTag).slice(0, 80) } : {}),
+      }),
     ]
   );
 
@@ -502,7 +521,13 @@ async function saveForecastRun({ ownerAdminId, userId = null, targetType = 'prod
     [runId, inserted, JSON.stringify(quality)]
   );
 
-  return { runId, inserted, quality };
+  return {
+    runId,
+    inserted,
+    quality,
+    modelVersionId,
+    modelVersionCreated: modelVersion.created,
+  };
 }
 
 async function recalculateForecasts(input) {
@@ -824,7 +849,48 @@ async function getRestockRecommendations({ ownerAdminId, query = {} }) {
   return rows;
 }
 
-async function claimForecastJobs(limit = 5, workerId = `forecast-worker:${process.pid}`) {
+function normalizeForecastClaimScope({ ownerAdminId = null, jobId = null } = {}) {
+  const hasOwner = ownerAdminId !== undefined && ownerAdminId !== null;
+  const hasJob = jobId !== undefined && jobId !== null;
+  if (!hasOwner && !hasJob) return null;
+  if (!hasOwner || !hasJob) {
+    throw createForecastError(
+      'Un claim acotado requiere ownerAdminId y jobId',
+      'AURA_FORECAST_CLAIM_SCOPE_INCOMPLETE',
+      500
+    );
+  }
+  const parsedOwner = Number(ownerAdminId);
+  if (
+    !Number.isSafeInteger(parsedOwner)
+    || parsedOwner <= 0
+    || typeof jobId !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(jobId)
+  ) {
+    throw createForecastError(
+      'Alcance de claim invalido',
+      'AURA_FORECAST_CLAIM_SCOPE_INVALID',
+      500
+    );
+  }
+  return { ownerAdminId: parsedOwner, jobId };
+}
+
+async function claimForecastJobs(
+  limit = 5,
+  workerId = `forecast-worker:${process.pid}`,
+  claimScope = {}
+) {
+  const scope = normalizeForecastClaimScope(claimScope);
+  const params = [limit, workerId];
+  let scopeSql = '';
+  if (scope) {
+    params.push(scope.ownerAdminId, scope.jobId);
+    scopeSql = `
+         AND owner_admin_id = $3
+         AND id = $4`;
+  }
+
   const { rows } = await db.query(
     `WITH next_jobs AS (
        SELECT id
@@ -833,6 +899,7 @@ async function claimForecastJobs(limit = 5, workerId = `forecast-worker:${proces
          AND status = 'queued'
          AND COALESCE(available_at, NOW()) <= NOW()
          AND COALESCE(attempts, 0) < COALESCE(max_attempts, 2)
+         ${scopeSql}
        ORDER BY priority ASC, created_at ASC
        LIMIT $1
        FOR UPDATE SKIP LOCKED
@@ -847,7 +914,7 @@ async function claimForecastJobs(limit = 5, workerId = `forecast-worker:${proces
      FROM next_jobs
      WHERE j.id = next_jobs.id
      RETURNING j.*`,
-    [limit, workerId]
+    params
   );
   return rows;
 }
@@ -918,8 +985,8 @@ async function recoverStaleForecastJobs(staleMinutes = Number(process.env.AURA_F
   return { recovered: rows.length, strategy: 'quarantine_for_manual_review' };
 }
 
-async function processForecastJobs(limit = 5, workerId) {
-  const jobs = await claimForecastJobs(limit, workerId);
+async function processForecastJobs(limit = 5, workerId, claimScope = {}) {
+  const jobs = await claimForecastJobs(limit, workerId, claimScope);
   const results = [];
   for (const job of jobs) {
     results.push(await processForecastJob(job));
@@ -940,6 +1007,7 @@ module.exports = {
   recalculateForecasts,
   getDemandForecasts,
   getRestockRecommendations,
+  normalizeForecastClaimScope,
   claimForecastJobs,
   recoverStaleForecastJobs,
   processForecastJobs,

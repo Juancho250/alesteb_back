@@ -1,5 +1,24 @@
+[CmdletBinding()]
+param(
+  [switch]$SelfTest
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Get-AuraItemCount {
+  param(
+    [AllowNull()]
+    [AllowEmptyCollection()]
+    [object]$Value
+  )
+
+  if ($null -eq $Value) {
+    return 0
+  }
+
+  return [int](@($Value).Count)
+}
 
 function Get-RequiredEnvironmentVariable {
   param([Parameter(Mandatory = $true)][string]$Name)
@@ -55,7 +74,8 @@ function Invoke-AuraSmokeRequest {
     [Parameter(Mandatory = $true)][string]$Path,
     [ValidateSet('GET', 'POST')][string]$Method = 'GET',
     [object]$Body = $null,
-    [switch]$RequireMockAnswer
+    [switch]$RequireMockAnswer,
+    [scriptblock]$RequestInvoker = $null
   )
 
   $uri = [uri]::new($script:BaseUri, $Path)
@@ -76,7 +96,11 @@ function Invoke-AuraSmokeRequest {
       $params.ContentType = 'application/json'
       $params.Body = ($Body | ConvertTo-Json -Depth 8 -Compress)
     }
-    $response = Invoke-WebRequest @params
+    if ($null -eq $RequestInvoker) {
+      $response = Invoke-WebRequest @params
+    } else {
+      $response = & $RequestInvoker $params
+    }
     $statusCode = [int]$response.StatusCode
     $contentType = [string]$response.Headers['Content-Type']
     $rawBody = [string]$response.Content
@@ -101,7 +125,11 @@ function Invoke-AuraSmokeRequest {
       $jsonValid = $true
     } catch {}
   }
-  $sensitiveKeys = if ($jsonValid) { @(Find-SensitiveKeys -Value $parsed) } else { @() }
+  $sensitiveKeys = @()
+  if ($jsonValid) {
+    $sensitiveKeys = @(Find-SensitiveKeys -Value $parsed)
+  }
+  $sensitiveKeyCount = Get-AuraItemCount -Value $sensitiveKeys
   $mockValid = $true
   if ($RequireMockAnswer) {
     $answer = if ($jsonValid -and $null -ne $parsed.PSObject.Properties['answer']) {
@@ -114,7 +142,7 @@ function Invoke-AuraSmokeRequest {
   $passed = $statusCode -ge 200 -and $statusCode -lt 300 `
     -and $contentType -match '(?i)application/json' `
     -and $jsonValid `
-    -and $sensitiveKeys.Count -eq 0 `
+    -and $sensitiveKeyCount -eq 0 `
     -and $mockValid
 
   $result = [ordered]@{
@@ -134,6 +162,65 @@ function Invoke-AuraSmokeRequest {
   Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8
   Write-Host ("{0,-34} {1,-4} {2,6}ms {3}" -f $Name, $result.result, $result.latencyMs, $statusCode)
   return [pscustomobject]$result
+}
+
+function Invoke-AuraSmokeSelfTest {
+  $countCases = @(
+    [pscustomobject]@{ name = 'null'; value = $null; expected = 0 }
+    [pscustomobject]@{ name = 'zero'; value = @(); expected = 0 }
+    [pscustomobject]@{ name = 'one'; value = [pscustomobject]@{ status = 'ok' }; expected = 1 }
+    [pscustomobject]@{ name = 'many'; value = @('one', 'two', 'three'); expected = 3 }
+  )
+
+  foreach ($case in $countCases) {
+    $actual = Get-AuraItemCount -Value $case.value
+    if ($actual -ne $case.expected) {
+      throw "Count self-test '$($case.name)' failed: expected $($case.expected), got $actual."
+    }
+  }
+
+  $tempLogPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'aura_staging_smoke_self_test_{0}.log' -f [guid]::NewGuid().ToString('N')
+  )
+  try {
+    $script:BaseUri = [uri]'https://aura-staging.invalid'
+    $script:Headers = @{
+      Authorization = 'Bearer local-self-test-placeholder'
+      Accept = 'application/json'
+    }
+    $script:LogPath = $tempLogPath
+    $healthResponse = {
+      param([hashtable]$Parameters)
+      return [pscustomobject]@{
+        StatusCode = 200
+        Headers = @{ 'Content-Type' = 'application/json; charset=utf-8' }
+        Content = '{"success":true,"status":"ok"}'
+      }
+    }
+
+    $healthResult = Invoke-AuraSmokeRequest `
+      -Name 'health-single-object' `
+      -Path '/api/health' `
+      -RequestInvoker $healthResponse
+
+    if ($healthResult.result -ne 'PASS') {
+      throw 'Single-object health response self-test did not pass validation.'
+    }
+    if ((Get-AuraItemCount -Value $healthResult.sensitiveFields) -ne 0) {
+      throw 'Single-object health response self-test reported sensitive fields.'
+    }
+  } finally {
+    if (Test-Path -LiteralPath $tempLogPath) {
+      Remove-Item -LiteralPath $tempLogPath -Force
+    }
+  }
+
+  Write-Host 'AURA_STAGING_SMOKE_SELF_TEST_PASS'
+}
+
+if ($SelfTest) {
+  Invoke-AuraSmokeSelfTest
+  return
 }
 
 $baseUrl = Get-RequiredEnvironmentVariable -Name 'AURA_STAGING_API_URL'
@@ -174,16 +261,18 @@ $results = @(
 )
 
 $failed = @($results | Where-Object { $_.result -ne 'PASS' })
+$resultCount = Get-AuraItemCount -Value $results
+$failedCount = Get-AuraItemCount -Value $failed
 Add-Content -LiteralPath $LogPath -Value (([ordered]@{
   event = 'aura_staging_smoke_completed'
   timestamp = (Get-Date).ToUniversalTime().ToString('o')
-  passed = $results.Count - $failed.Count
-  failed = $failed.Count
-  result = if ($failed.Count) { 'FAIL' } else { 'PASS' }
+  passed = $resultCount - $failedCount
+  failed = $failedCount
+  result = if ($failedCount -gt 0) { 'FAIL' } else { 'PASS' }
 }) | ConvertTo-Json -Compress) -Encoding UTF8
 
 Write-Host "Log: $LogPath"
-if ($failed.Count) {
-  throw "$($failed.Count) AURA staging smoke test(s) failed."
+if ($failedCount -gt 0) {
+  throw "$failedCount AURA staging smoke test(s) failed."
 }
 Write-Host 'AURA_STAGING_SMOKE_PASS'

@@ -255,7 +255,45 @@ async function sendByChannel(job, recipient) {
   throw createOutboxError('Canal no soportado', 'NOTIFICATION_CHANNEL_NOT_SUPPORTED', 400);
 }
 
-async function claimNotificationJobs(limit = 20, workerId = `notification-worker:${process.pid}`) {
+function normalizeNotificationClaimScope(scope = {}) {
+  const hasOwner = scope.ownerAdminId !== undefined && scope.ownerAdminId !== null;
+  const hasNotification = scope.notificationId !== undefined && scope.notificationId !== null;
+  if (!hasOwner && !hasNotification) return null;
+  if (!hasOwner || !hasNotification) {
+    throw createOutboxError(
+      'Un claim acotado requiere ownerAdminId y notificationId',
+      'NOTIFICATION_CLAIM_SCOPE_INCOMPLETE',
+      500
+    );
+  }
+
+  const ownerAdminId = Number(scope.ownerAdminId);
+  const notificationId = String(scope.notificationId);
+  if (!Number.isSafeInteger(ownerAdminId) || ownerAdminId <= 0 || !/^\d+$/.test(notificationId)) {
+    throw createOutboxError(
+      'Alcance de claim invalido',
+      'NOTIFICATION_CLAIM_SCOPE_INVALID',
+      500
+    );
+  }
+  return { ownerAdminId, notificationId };
+}
+
+async function claimNotificationJobs(
+  limit = 20,
+  workerId = `notification-worker:${process.pid}`,
+  claimScope = {}
+) {
+  const scope = normalizeNotificationClaimScope(claimScope);
+  const params = [limit, workerId];
+  let scopeSql = '';
+  if (scope) {
+    params.push(scope.ownerAdminId, scope.notificationId);
+    scopeSql = `
+         AND owner_admin_id = $3
+         AND id = $4`;
+  }
+
   const { rows } = await db.query(
     `WITH next_jobs AS (
        SELECT id
@@ -264,6 +302,7 @@ async function claimNotificationJobs(limit = 20, workerId = `notification-worker
          AND available_at <= NOW()
          AND scheduled_for <= NOW()
          AND attempts < max_attempts
+         ${scopeSql}
        ORDER BY available_at ASC, scheduled_for ASC, created_at ASC, id ASC
        LIMIT $1
        FOR UPDATE SKIP LOCKED
@@ -277,7 +316,7 @@ async function claimNotificationJobs(limit = 20, workerId = `notification-worker
      FROM next_jobs
      WHERE nq.id = next_jobs.id
      RETURNING nq.*`,
-    [limit, workerId]
+    params
   );
   return rows;
 }
@@ -408,8 +447,12 @@ async function recoverStaleNotificationJobs(staleMinutes = Number(process.env.AU
   return { recovered: rows.length, strategy: 'quarantine_for_manual_review' };
 }
 
-async function processNotificationOutboxBatch(limit = 20, workerId = `notification-worker:${process.pid}`) {
-  const jobs = await claimNotificationJobs(limit, workerId);
+async function processNotificationOutboxBatch(
+  limit = 20,
+  workerId = `notification-worker:${process.pid}`,
+  claimScope = {}
+) {
+  const jobs = await claimNotificationJobs(limit, workerId, claimScope);
   if (!jobs.length) return { processed: 0 };
 
   let processed = 0;
@@ -633,6 +676,7 @@ module.exports = {
   isQuietHours,
   nextRunAfterQuiet,
   notificationMockEnabled,
+  normalizeNotificationClaimScope,
   claimNotificationJobs,
   recoverStaleNotificationJobs,
   processNotificationOutboxBatch,
