@@ -6,6 +6,7 @@ const calls = [];
 const runs = [];
 const snapshots = [];
 let inputRows = [];
+let forcedError = null;
 
 function asNumber(value) {
   return Number(value || 0);
@@ -41,6 +42,7 @@ function aggregateSnapshots(runId, ownerAdminId, key) {
 
 async function handleQuery(sql, params = []) {
   calls.push({ sql, params });
+  if (forcedError) throw forcedError;
 
   if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
 
@@ -165,6 +167,7 @@ require.cache[dbPath] = {
 };
 
 const customerGrowth = require("../services/auraCustomerGrowth.service");
+const customerController = require("../controllers/auraCustomers.controller");
 
 function row(overrides) {
   return {
@@ -189,6 +192,7 @@ test.beforeEach(() => {
   runs.length = 0;
   snapshots.length = 0;
   inputRows = [];
+  forcedError = null;
 });
 
 test("cliente nuevo queda marcado como nuevo y sin certeza de abandono", () => {
@@ -263,6 +267,12 @@ test("tenant sin historial devuelve agregados vacios y snapshot trazable", async
   assert.equal(result.segments.length, 0);
   assert.equal(runs[0].owner_admin_id, 303);
   assert.equal(runs[0].rows_count, 0);
+  const salesQuery = calls.find((call) => call.sql.includes("WITH valid_sales AS"));
+  assert.ok(salesQuery);
+  assert.doesNotMatch(salesQuery.sql, /\bs\.status\b/);
+  assert.match(salesQuery.sql, /s\.payment_status = 'paid'/);
+  assert.match(salesQuery.sql, /s\.delivery_status::text/);
+  assert.deepEqual(salesQuery.params, [303, "2026-07-14"]);
 });
 
 test("snapshots y agregados quedan aislados por tenant", async () => {
@@ -302,4 +312,44 @@ test("detalle individual requiere admin", async () => {
     }),
     /requiere rol admin/
   );
+});
+
+test("error SQL devuelve 500 estable sin exponer detalles internos", async () => {
+  forcedError = Object.assign(
+    new Error('column "s.status" does not exist'),
+    { code: "42703", detail: "Undefined column" }
+  );
+  const req = {
+    id: "req-customer-segments-error",
+    auraAdminId: 101,
+    user: { id: 11, roles: ["admin"] },
+    query: { ownerAdminId: 202 },
+  };
+  const res = {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    },
+  };
+
+  await customerController.getSegments(req, res);
+
+  assert.equal(res.statusCode, 500);
+  assert.deepEqual(res.body, {
+    success: false,
+    message: "Error procesando analitica de clientes AURA",
+    code: "AURA_CUSTOMER_GROWTH_ERROR",
+    requestId: "req-customer-segments-error",
+  });
+  assert.doesNotMatch(JSON.stringify(res.body), /s\.status|42703|Undefined column/i);
+  assert.equal(calls[0].params[0], 101);
+  assert.match(calls[0].params[1], /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(calls[0].params[2], customerGrowth.CUSTOMER_GROWTH_VERSION);
+  assert.equal(calls[0].params.includes(202), false);
 });

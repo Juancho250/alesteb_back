@@ -8,7 +8,6 @@ const MAX_TOOL_EXAMPLES = 8;
 const PAID_VALID_SALES_SQL = `
   s.payment_status = 'paid'
   AND LOWER(COALESCE(s.payment_status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
-  AND LOWER(COALESCE(s.status::text, '')) NOT IN ('cancelled', 'canceled', 'anulado', 'annulled', 'void')
   AND LOWER(COALESCE(s.delivery_status::text, '')) NOT IN ('cancelled', 'canceled')
 `;
 
