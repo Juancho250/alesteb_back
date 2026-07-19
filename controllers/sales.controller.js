@@ -530,7 +530,7 @@ exports.createOrder = async (req, res) => {
 
     // Auto-create procurement orders if configured and sale has on_demand items
     if (hasOnDemandItems && autoCreateProcurement) {
-      await procurement.createProcurementOrdersForSale(saleId, client);
+      await procurement.createProcurementOrdersForSale(saleId, client, ownerAdminId);
     }
 
     if (amountPaidInitial > 0) {

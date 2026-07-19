@@ -879,7 +879,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
         const procClient = await db.connect();
         try {
           await procClient.query('BEGIN');
-          await procurement.createProcurementOrdersForSale(saleId, procClient);
+          await procurement.createProcurementOrdersForSale(saleId, procClient, adminId);
           await procClient.query('COMMIT');
         } catch (procErr) {
           await procClient.query('ROLLBACK');

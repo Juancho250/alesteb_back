@@ -527,22 +527,23 @@ exports.receivePurchaseOrder = async (req, res) => {
   try {
     // Fetch PO items to build the items array for the service
     const ownerClause = req.isSuperAdmin ? "" : "AND po.owner_admin_id = $2";
-    const checkParams = req.isSuperAdmin ? [orderId] : [orderId, req.adminId];
+    const providerParam = req.isSuperAdmin ? 2 : 3;
+    const checkParams = req.isSuperAdmin
+      ? [orderId, req.params.id]
+      : [orderId, req.adminId, req.params.id];
 
     const { rows: poItems, rowCount: poExists } = await db.query(
       `SELECT poi.id, poi.quantity, poi.received_quantity, poi.unit_cost,
-              po.provider_id, po.order_number, po.status
+              po.provider_id, po.owner_admin_id, po.order_number, po.status
        FROM purchase_order_items poi
        JOIN purchase_orders po ON po.id = poi.purchase_order_id
-       WHERE poi.purchase_order_id = $1 ${ownerClause}`,
+       WHERE poi.purchase_order_id = $1 ${ownerClause}
+         AND po.provider_id = $${providerParam}`,
       checkParams
     );
 
     if (!poExists) {
-      const exists = await db.query("SELECT id FROM purchase_orders WHERE id = $1", [orderId]);
-      return res.status(exists.rowCount ? 403 : 404).json({
-        message: exists.rowCount ? "No autorizado" : "Orden no encontrada",
-      });
+      return res.status(404).json({ message: "Orden no encontrada" });
     }
 
     const po = poItems[0]; // status and order info from first row
@@ -555,7 +556,7 @@ exports.receivePurchaseOrder = async (req, res) => {
     const items = poItems.map(item => {
       const maxPending = Math.max(0, item.quantity - (item.received_quantity || 0));
       const receivedQty = received_quantities
-        ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
+        ? Math.max(0, parseInt(received_quantities[item.id] ?? 0, 10) || 0)
         : maxPending;
       const actualUnitCost = actual_unit_costs?.[item.id] ?? item.unit_cost;
       return { poItemId: item.id, actualUnitCost, receivedQty };
@@ -564,12 +565,20 @@ exports.receivePurchaseOrder = async (req, res) => {
     if (!items.length) {
       return res.status(400).json({ message: "No hay cantidades válidas para recibir" });
     }
+    const receivedCompletely = poItems.every(item => {
+      const pending = Math.max(0, item.quantity - (item.received_quantity || 0));
+      const received = items.find(row => row.poItemId === item.id)?.receivedQty ?? 0;
+      return pending === 0 || received === pending;
+    });
+    const ownerAdminId = req.isSuperAdmin ? Number(po.owner_admin_id) : req.adminId;
 
     const result = await procSvc.receivePurchaseOrder(
-      parseInt(orderId), items, req.user.id, req.isSuperAdmin ? null : req.adminId
+      parseInt(orderId), items, req.user.id, ownerAdminId
     );
 
-    emitDataUpdate("purchase_orders", "updated", { id: parseInt(orderId), status: "received" }, req.adminId);
+    emitDataUpdate("purchase_orders", "updated", {
+      id: parseInt(orderId), status: receivedCompletely ? "received" : "pending",
+    }, ownerAdminId);
 
     res.json({
       success: true,

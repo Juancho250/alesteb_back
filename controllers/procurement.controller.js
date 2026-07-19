@@ -9,7 +9,8 @@ const procurement = require('../services/procurement.service');
 function _send(res, err) {
   const status = err.status ?? (err.code === 'NOT_FOUND' ? 404
     : err.code === 'FORBIDDEN'    ? 403
-    : err.code === 'INVALID_STATE' || err.code === 'ALREADY_DONE' ? 400
+    : ['INVALID_STATE', 'ALREADY_DONE', 'VALIDATION', 'OVER_RECEIPT'].includes(err.code) ? 400
+    : ['SUPPLIER_MISMATCH', 'CONFLICT', 'DATA_INTEGRITY'].includes(err.code) ? 409
     : 500);
   res.status(status).json({ success: false, message: err.message });
 }
@@ -45,9 +46,9 @@ exports.getPending = async (req, res) => {
          s.sale_number,
          EXTRACT(DAY FROM NOW() - po.created_at)::int AS days_waiting
        FROM procurement_orders po
-       JOIN products p     ON p.id = po.product_id
-       LEFT JOIN providers prov ON prov.id = po.supplier_id
-       LEFT JOIN sales s        ON s.id    = po.sale_id
+       JOIN products p     ON p.id = po.product_id AND p.owner_admin_id = po.owner_admin_id
+       LEFT JOIN providers prov ON prov.id = po.supplier_id AND prov.owner_admin_id = po.owner_admin_id
+       JOIN sales s        ON s.id = po.sale_id AND s.owner_admin_id = po.owner_admin_id
        WHERE po.status = 'pending'
          ${ownerClause}
        ORDER BY prov.name, po.created_at ASC`,
@@ -82,11 +83,15 @@ exports.getSalesAwaiting = async (req, res) => {
          s.has_on_demand_items,
          u.name AS customer_name,
          (SELECT COUNT(*) FROM procurement_orders po
-          WHERE po.sale_id = s.id AND po.status = 'pending')::int     AS pending_pos,
+          WHERE po.sale_id = s.id
+            AND po.owner_admin_id = s.owner_admin_id
+            AND po.status = 'pending')::int AS pending_pos,
          (SELECT COUNT(*) FROM procurement_orders po
-          WHERE po.sale_id = s.id AND po.status != 'cancelled')::int  AS total_pos
+          WHERE po.sale_id = s.id
+            AND po.owner_admin_id = s.owner_admin_id
+            AND po.status != 'cancelled')::int AS total_pos
        FROM sales s
-       LEFT JOIN users u ON u.id = s.customer_id
+       LEFT JOIN users u ON u.id = s.customer_id AND u.owner_admin_id = s.owner_admin_id
        WHERE s.has_on_demand_items = true
          AND s.delivery_status NOT IN ('delivered', 'cancelled')
          ${ownerClause}
@@ -132,9 +137,9 @@ exports.getPurchaseOrders = async (req, res) => {
            ) ORDER BY poi.id
          ) AS items
        FROM purchase_orders po
-       LEFT JOIN providers prov ON prov.id = po.provider_id
+       JOIN providers prov ON prov.id = po.provider_id AND prov.owner_admin_id = po.owner_admin_id
        LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
-       LEFT JOIN products p ON p.id = poi.product_id
+       LEFT JOIN products p ON p.id = poi.product_id AND p.owner_admin_id = po.owner_admin_id
        WHERE po.status NOT IN ('received', 'cancelled')
          ${ownerClause}
        GROUP BY po.id, prov.id, prov.name
@@ -216,9 +221,12 @@ exports.receivePurchaseOrder = async (req, res) => {
     const { received_quantities, actual_unit_costs } = req.body;
 
     const { rows: poItems } = await db.query(
-      `SELECT id, quantity, received_quantity, unit_cost
-       FROM purchase_order_items WHERE purchase_order_id = $1`,
-      [purchaseOrderId]
+      `SELECT poi.id, poi.quantity, poi.received_quantity, poi.unit_cost
+       FROM purchase_order_items poi
+       JOIN purchase_orders po ON po.id = poi.purchase_order_id
+       WHERE poi.purchase_order_id = $1
+         AND po.owner_admin_id = $2`,
+      [purchaseOrderId, req.adminId]
     );
 
     if (!poItems.length) {
@@ -232,7 +240,7 @@ exports.receivePurchaseOrder = async (req, res) => {
       .map(item => {
         const maxPending  = Math.max(0, item.quantity - (item.received_quantity || 0));
         const receivedQty = received_quantities
-          ? Math.min(Math.max(0, parseInt(received_quantities[item.id] ?? 0) || 0), maxPending)
+          ? Math.max(0, parseInt(received_quantities[item.id] ?? 0, 10) || 0)
           : maxPending;
         const actualUnitCost = actual_unit_costs
           ? Number(actual_unit_costs[item.id] ?? item.unit_cost ?? 0)
