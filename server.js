@@ -1,4 +1,6 @@
 // server.js
+process.env.ALESTEB_PROCESS_ROLE = 'web';
+
 require('dotenv/config');
 require('./config/env')(); // Valida variables de entorno al arrancar
 

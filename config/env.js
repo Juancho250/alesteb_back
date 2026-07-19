@@ -1,4 +1,15 @@
-const REQUIRED = [
+'use strict';
+
+const PROCESS_ROLES = Object.freeze([
+  'web',
+  'notification-worker',
+  'image-worker',
+  'predictive-worker',
+]);
+const PROCESS_ROLE_SET = new Set(PROCESS_ROLES);
+
+const DATABASE_REQUIRED = Object.freeze(['NEON_DB_URL']);
+const WEB_REQUIRED = Object.freeze([
   'JWT_SECRET',
   'JWT_REFRESH_SECRET',
   'NEON_DB_URL',
@@ -6,131 +17,187 @@ const REQUIRED = [
   'CLOUDINARY_API_SECRET',
   'CLOUDINARY_CLOUD_NAME',
   'PAYMENTS_ENCRYPTION_KEY',
-];
+]);
+const IMAGE_PROVIDER_REQUIRED = Object.freeze([
+  'OPENAI_API_KEY',
+  'OPENAI_IMAGE_MODEL',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'CLOUDINARY_CLOUD_NAME',
+]);
 
 const INSECURE_DEFAULTS = {
   SETUP_SECRET_KEY: 'alesteb-setup-2024',
 };
-
-// Longitud mínima de secretos JWT para garantizar entropía suficiente (256 bits)
 const JWT_MIN_LENGTH = 32;
 
-module.exports = function validateEnv() {
-  const missing = REQUIRED.filter((k) => !process.env[k]);
-  if (missing.length) {
-    console.error(`[ENV] Faltan variables de entorno requeridas: ${missing.join(', ')}`);
-    process.exit(1);
+function envFlag(env, name) {
+  return String(env[name] || '').trim().toLowerCase() === 'true';
+}
+
+function isImageStagingMockEnabled(env) {
+  return envFlag(env, 'AURA_STAGING_MODE')
+    && envFlag(env, 'AURA_IMAGE_MOCK_PROVIDER_ENABLED');
+}
+
+function requiredVariablesForRole(role, env) {
+  if (role === 'web') return [...WEB_REQUIRED];
+  if (role === 'notification-worker' || role === 'predictive-worker') {
+    return [...DATABASE_REQUIRED];
+  }
+  if (role === 'image-worker') {
+    return isImageStagingMockEnabled(env)
+      ? [...DATABASE_REQUIRED]
+      : [...DATABASE_REQUIRED, ...IMAGE_PROVIDER_REQUIRED];
+  }
+  throw new Error(`Unsupported ALESTEB_PROCESS_ROLE: ${role}`);
+}
+
+function createValidationError(message) {
+  const err = new Error(String(message).replace(/^\[ENV\]\s*/, ''));
+  err.code = 'ENV_VALIDATION_FAILED';
+  return err;
+}
+
+function failValidation(message, { logger, exitOnError }) {
+  logger.error(message);
+  const err = createValidationError(message);
+  if (exitOnError) process.exit(1);
+  throw err;
+}
+
+function validateImageSettings(env, fail) {
+  const auraImageMaxJobs = Number.parseInt(env.AURA_IMAGE_MAX_JOBS_PER_DAY || '20', 10);
+  if (!Number.isSafeInteger(auraImageMaxJobs) || auraImageMaxJobs < 1 || auraImageMaxJobs > 500) {
+    fail('[ENV] AURA_IMAGE_MAX_JOBS_PER_DAY debe estar entre 1 y 500.');
   }
 
-  // PAYMENTS_ENCRYPTION_KEY must decode to exactly 32 bytes for AES-256-GCM
-  const encKeyRaw = process.env.PAYMENTS_ENCRYPTION_KEY;
+  const auraImageTimeout = Number.parseInt(env.AURA_IMAGE_OPENAI_TIMEOUT_MS || '90000', 10);
+  if (!Number.isSafeInteger(auraImageTimeout) || auraImageTimeout < 5000 || auraImageTimeout > 180000) {
+    fail('[ENV] AURA_IMAGE_OPENAI_TIMEOUT_MS debe estar entre 5000 y 180000 ms.');
+  }
+
+  const auraImageWorkerPollMs = Number.parseInt(env.AURA_IMAGE_WORKER_POLL_MS || '5000', 10);
+  if (
+    !Number.isSafeInteger(auraImageWorkerPollMs)
+    || auraImageWorkerPollMs < 1000
+    || auraImageWorkerPollMs > 60000
+  ) {
+    fail('[ENV] AURA_IMAGE_WORKER_POLL_MS debe estar entre 1000 y 60000 ms.');
+  }
+}
+
+function validateWebSettings(env, fail, logger) {
+  const encKeyRaw = env.PAYMENTS_ENCRYPTION_KEY;
   const encKeyBuf = Buffer.from(encKeyRaw, encKeyRaw.length === 64 ? 'hex' : 'base64');
   if (encKeyBuf.length !== 32) {
-    console.error('[ENV] PAYMENTS_ENCRYPTION_KEY debe decodificar a exactamente 32 bytes. Usa 64 caracteres hex o 44 caracteres base64.');
-    console.error('[ENV] Genera una clave válida con: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
-    process.exit(1);
+    fail('[ENV] PAYMENTS_ENCRYPTION_KEY debe decodificar a exactamente 32 bytes. Usa 64 caracteres hex o 44 caracteres base64.');
   }
 
   for (const [key, insecure] of Object.entries(INSECURE_DEFAULTS)) {
-    if (process.env[key] === insecure) {
-      console.warn(`[ENV] ADVERTENCIA: ${key} está usando el valor por defecto inseguro.`);
+    if (env[key] === insecure) {
+      logger.warn(`[ENV] ADVERTENCIA: ${key} esta usando el valor por defecto inseguro.`);
     }
   }
 
-  // Validar longitud mínima de secretos JWT
-  if (process.env.JWT_SECRET.length < JWT_MIN_LENGTH) {
-    console.error('[ENV] JWT_SECRET demasiado corto. Genera uno con: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
-    process.exit(1);
+  if (env.JWT_SECRET.length < JWT_MIN_LENGTH) {
+    fail('[ENV] JWT_SECRET demasiado corto. Genera un secreto de al menos 32 caracteres.');
   }
-  if (process.env.JWT_REFRESH_SECRET.length < JWT_MIN_LENGTH) {
-    console.error('[ENV] JWT_REFRESH_SECRET demasiado corto.');
-    process.exit(1);
+  if (env.JWT_REFRESH_SECRET.length < JWT_MIN_LENGTH) {
+    fail('[ENV] JWT_REFRESH_SECRET demasiado corto.');
   }
 
-  const auraDailyLimit = Number.parseInt(process.env.AURA_DAILY_REQUEST_LIMIT || '100', 10);
+  const auraDailyLimit = Number.parseInt(env.AURA_DAILY_REQUEST_LIMIT || '100', 10);
   if (!Number.isSafeInteger(auraDailyLimit) || auraDailyLimit <= 0) {
-    console.error('[ENV] AURA_DAILY_REQUEST_LIMIT debe ser un entero positivo.');
-    process.exit(1);
+    fail('[ENV] AURA_DAILY_REQUEST_LIMIT debe ser un entero positivo.');
   }
 
-  const auraProviderTimeout = Number.parseInt(process.env.AURA_OPENAI_TIMEOUT_MS || '18000', 10);
-  if (!Number.isSafeInteger(auraProviderTimeout) || auraProviderTimeout < 1000 || auraProviderTimeout > 25000) {
-    console.error('[ENV] AURA_OPENAI_TIMEOUT_MS debe estar entre 1000 y 25000 ms.');
-    process.exit(1);
+  const auraProviderTimeout = Number.parseInt(env.AURA_OPENAI_TIMEOUT_MS || '18000', 10);
+  if (
+    !Number.isSafeInteger(auraProviderTimeout)
+    || auraProviderTimeout < 1000
+    || auraProviderTimeout > 25000
+  ) {
+    fail('[ENV] AURA_OPENAI_TIMEOUT_MS debe estar entre 1000 y 25000 ms.');
   }
 
-  const auraConversationRetentionDays = Number.parseInt(process.env.AURA_CONVERSATION_RETENTION_DAYS || '180', 10);
-  if (!Number.isSafeInteger(auraConversationRetentionDays) || auraConversationRetentionDays < 1 || auraConversationRetentionDays > 730) {
-    console.error('[ENV] AURA_CONVERSATION_RETENTION_DAYS debe estar entre 1 y 730 dias.');
-    process.exit(1);
+  const retentionDays = Number.parseInt(env.AURA_CONVERSATION_RETENTION_DAYS || '180', 10);
+  if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 730) {
+    fail('[ENV] AURA_CONVERSATION_RETENTION_DAYS debe estar entre 1 y 730 dias.');
   }
 
-  const auraImageMaxJobs = Number.parseInt(process.env.AURA_IMAGE_MAX_JOBS_PER_DAY || '20', 10);
-  if (!Number.isSafeInteger(auraImageMaxJobs) || auraImageMaxJobs < 1 || auraImageMaxJobs > 500) {
-    console.error('[ENV] AURA_IMAGE_MAX_JOBS_PER_DAY debe estar entre 1 y 500.');
-    process.exit(1);
-  }
+  validateImageSettings(env, fail);
 
-  const auraImageTimeout = Number.parseInt(process.env.AURA_IMAGE_OPENAI_TIMEOUT_MS || '90000', 10);
-  if (!Number.isSafeInteger(auraImageTimeout) || auraImageTimeout < 5000 || auraImageTimeout > 180000) {
-    console.error('[ENV] AURA_IMAGE_OPENAI_TIMEOUT_MS debe estar entre 5000 y 180000 ms.');
-    process.exit(1);
+  if (!env.OPENAI_API_KEY) {
+    logger.warn('[ENV] OPENAI_API_KEY no configurada; AURA devolvera 503 hasta configurarla.');
   }
-
-  const auraImageWorkerPollMs = Number.parseInt(process.env.AURA_IMAGE_WORKER_POLL_MS || '5000', 10);
-  if (!Number.isSafeInteger(auraImageWorkerPollMs) || auraImageWorkerPollMs < 1000 || auraImageWorkerPollMs > 60000) {
-    console.error('[ENV] AURA_IMAGE_WORKER_POLL_MS debe estar entre 1000 y 60000 ms.');
-    process.exit(1);
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('[ENV] OPENAI_API_KEY no configurada; AURA devolvera 503 hasta configurarla.');
-  }
-
-  if (!process.env.OPENAI_IMAGE_MODEL) {
-    console.warn('[ENV] OPENAI_IMAGE_MODEL no configurado; los jobs de imagen AURA fallaran hasta configurarlo.');
+  if (!env.OPENAI_IMAGE_MODEL) {
+    logger.warn('[ENV] OPENAI_IMAGE_MODEL no configurado; los jobs de imagen AURA fallaran hasta configurarlo.');
   }
 
   for (const key of ['AURA_INPUT_USD_PER_1M', 'AURA_OUTPUT_USD_PER_1M']) {
-    if (process.env[key] !== undefined) {
-      const value = Number(process.env[key]);
+    if (env[key] !== undefined) {
+      const value = Number(env[key]);
       if (!Number.isFinite(value) || value < 0) {
-        console.error(`[ENV] ${key} debe ser un número mayor o igual a cero.`);
-        process.exit(1);
+        fail(`[ENV] ${key} debe ser un numero mayor o igual a cero.`);
       }
     }
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    if (!process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS === '*') {
-      console.error('[ENV] ALLOWED_ORIGINS no puede ser wildcard en producción.');
-      process.exit(1);
-    }
+  if (env.NODE_ENV !== 'production') return;
 
-    // Los secrets JWT deben ser distintos en producción
-    if (process.env.JWT_SECRET === process.env.JWT_REFRESH_SECRET) {
-      console.error('[ENV] JWT_SECRET y JWT_REFRESH_SECRET deben ser diferentes en producción.');
-      process.exit(1);
-    }
-
-    // Verificar que FRONTEND_URL está configurado
-    if (!process.env.FRONTEND_URL) {
-      console.error('[ENV] FRONTEND_URL es requerido en producción.');
-      process.exit(1);
-    }
-
-    if (!process.env.SETUP_SECRET_KEY) {
-      console.warn('[ENV] ADVERTENCIA: SETUP_SECRET_KEY vacío en producción — endpoint /setup deshabilitado.');
-    }
-
-    // Advertir si VAPID no está configurado (push notifications no funcionarán)
-    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
-      console.warn('[ENV] ADVERTENCIA: VAPID_PUBLIC_KEY/PRIVATE_KEY no configurados — push notifications deshabilitadas.');
-    }
-
-    // Advertir si Wompi no está en modo producción
-    if (process.env.WOMPI_ENV !== 'production') {
-      console.warn('[ENV] ADVERTENCIA: WOMPI_ENV no es "production" — usando entorno de pruebas Wompi.');
-    }
+  if (!env.ALLOWED_ORIGINS || env.ALLOWED_ORIGINS === '*') {
+    fail('[ENV] ALLOWED_ORIGINS no puede ser wildcard en produccion.');
   }
-};
+  if (env.JWT_SECRET === env.JWT_REFRESH_SECRET) {
+    fail('[ENV] JWT_SECRET y JWT_REFRESH_SECRET deben ser diferentes en produccion.');
+  }
+  if (!env.FRONTEND_URL) {
+    fail('[ENV] FRONTEND_URL es requerido en produccion.');
+  }
+  if (!env.SETUP_SECRET_KEY) {
+    logger.warn('[ENV] ADVERTENCIA: SETUP_SECRET_KEY vacio en produccion; endpoint /setup deshabilitado.');
+  }
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+    logger.warn('[ENV] ADVERTENCIA: VAPID_PUBLIC_KEY/PRIVATE_KEY no configurados; push notifications deshabilitadas.');
+  }
+  if (env.WOMPI_ENV !== 'production') {
+    logger.warn('[ENV] ADVERTENCIA: WOMPI_ENV no es "production"; usando entorno de pruebas Wompi.');
+  }
+}
+
+function validateEnv(options = {}) {
+  const env = options.env || process.env;
+  const logger = options.logger || console;
+  const exitOnError = options.exitOnError !== false;
+  const fail = (message) => failValidation(message, { logger, exitOnError });
+
+  const configuredRole = String(env.ALESTEB_PROCESS_ROLE || '').trim();
+  const role = configuredRole || 'web';
+  if (!PROCESS_ROLE_SET.has(role)) {
+    fail(`[ENV] ALESTEB_PROCESS_ROLE invalido. Valores permitidos: ${PROCESS_ROLES.join(', ')}.`);
+  }
+
+  const requiredVariables = requiredVariablesForRole(role, env);
+  const missing = requiredVariables.filter((key) => !env[key]);
+  if (missing.length) {
+    fail(`[ENV] Faltan variables de entorno requeridas: ${missing.join(', ')}`);
+  }
+
+  if (role === 'web') {
+    validateWebSettings(env, fail, logger);
+  } else if (role === 'image-worker') {
+    validateImageSettings(env, fail);
+  }
+
+  return {
+    role,
+    requiredVariables,
+    imageMockEnabled: role === 'image-worker' && isImageStagingMockEnabled(env),
+  };
+}
+
+module.exports = validateEnv;
+module.exports.PROCESS_ROLES = PROCESS_ROLES;
+module.exports.requiredVariablesForRole = requiredVariablesForRole;
+module.exports.isImageStagingMockEnabled = isImageStagingMockEnabled;

@@ -1,3 +1,5 @@
+process.env.ALESTEB_PROCESS_ROLE = "image-worker";
+
 require("dotenv/config");
 require("./config/env")();
 

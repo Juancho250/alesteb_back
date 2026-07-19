@@ -1,3 +1,5 @@
+process.env.ALESTEB_PROCESS_ROLE = "notification-worker";
+
 require("dotenv/config");
 require("./config/env")();
 
