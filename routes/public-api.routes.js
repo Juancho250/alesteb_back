@@ -20,6 +20,43 @@ const { createUpload }      = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
 
+
+const storefrontAvatarUpload = createUpload("avatars/storefront", 2);
+
+const uploadStorefrontAvatarMiddleware = (req, res, next) => {
+  storefrontAvatarUpload.single("avatar")(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    let status = 400;
+    let message = "Error al procesar la imagen";
+    let code = "UPLOAD_ERROR";
+
+    if (error.code === "LIMIT_FILE_SIZE") {
+      status = 413;
+      message = "La imagen es demasiado grande. Usa una imagen menor a 2 MB.";
+      code = "FILE_TOO_LARGE";
+    } else if (error.code === "LIMIT_FILE_COUNT") {
+      message = "Solo puedes subir una imagen de perfil.";
+      code = "TOO_MANY_FILES";
+    } else if (error.code === "LIMIT_UNEXPECTED_FILE") {
+      message = 'Campo de archivo inválido. Usa el campo multipart "avatar".';
+      code = "INVALID_FIELD";
+    } else if (error.message) {
+      message = error.message;
+      code = "INVALID_FILE";
+    }
+
+    return res.status(status).json({
+      success: false,
+      message,
+      code,
+    });
+  });
+};
+
 // GET /public-api/v1/ping
 router.get("/ping", (req, res) => {
   res.json({
@@ -977,6 +1014,21 @@ router.post("/auth/refresh", storefrontAuth.refreshToken);
 router.post("/auth/logout", auth, storefrontAuth.logout);
 router.get("/auth/profile", auth, storefrontAuth.getProfile);
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
+
+router.post(
+  "/auth/profile/avatar",
+  auth,
+  uploadStorefrontAvatarMiddleware,
+  storefrontAuth.uploadProfileAvatar
+);
+
+// Compatibilidad con el frontend actual, que puede usar PATCH para actualizar.
+router.patch(
+  "/auth/profile/avatar",
+  auth,
+  uploadStorefrontAvatarMiddleware,
+  storefrontAuth.uploadProfileAvatar
+);
 
 router.post(
   "/auth/google",

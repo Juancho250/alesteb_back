@@ -8,6 +8,7 @@ const db     = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
+const cloudinary = require("../config/cloudinary");
 const { generateVerificationCode, sendVerificationEmail } = require("../config/emailConfig");
 
 // Agregar arriba, junto a los otros requires:
@@ -782,33 +783,69 @@ exports.logout = async (req, res) => {
 // ============================================================
 // 👤 PERFIL DEL CLIENTE
 // ============================================================
+const buildStorefrontProfile = (user, roles = []) => ({
+  ...user,
+  profile_image_url: user.profile_image_url || null,
+  profile_image_public_id: user.profile_image_public_id || null,
+  avatar_url: user.profile_image_url || null,
+  avatar: user.profile_image_url || null,
+  foto: user.profile_image_url || null,
+  roles,
+});
+
+const getStorefrontUserProfile = async (client, userId, ownerAdminId) => {
+  const userRes = await client.query(
+    `SELECT
+       id, email, name, phone, cedula, city, address,
+       profile_image_url, profile_image_public_id,
+       created_at, last_login
+     FROM users
+     WHERE id = $1 AND owner_admin_id = $2`,
+    [userId, ownerAdminId]
+  );
+
+  if (userRes.rowCount === 0) return null;
+
+  const rolesRes = await client.query(
+    `SELECT r.name
+     FROM roles r
+     JOIN user_roles ur ON ur.role_id = r.id
+     WHERE ur.user_id = $1`,
+    [userId]
+  );
+
+  return buildStorefrontProfile(
+    userRes.rows[0],
+    rolesRes.rows.map((row) => row.name)
+  );
+};
+
 exports.getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const ownerAdminId = req.apiKey.adminId;
 
-    const userRes = await db.query(
-      `SELECT id, email, name, phone, cedula, city, address, created_at, last_login
-       FROM users WHERE id = $1`,
-      [userId]
-    );
+    const profile = await getStorefrontUserProfile(db, userId, ownerAdminId);
 
-    if (userRes.rowCount === 0) {
-      return res.status(404).json({ success: false, message: "Usuario no encontrado", code: "USER_NOT_FOUND" });
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuario no encontrado para esta tienda",
+        code: "USER_NOT_FOUND",
+      });
     }
-
-    const rolesRes = await db.query(
-      `SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1`,
-      [userId]
-    );
 
     return res.json({
       success: true,
-      data: { ...userRes.rows[0], roles: rolesRes.rows.map((r) => r.name) },
+      data: profile,
     });
-
   } catch (error) {
     console.error("[STOREFRONT GET PROFILE ERROR]", error);
-    return res.status(500).json({ success: false, message: "Error al obtener perfil", code: "SERVER_ERROR" });
+    return res.status(500).json({
+      success: false,
+      message: "Error al obtener perfil",
+      code: "SERVER_ERROR",
+    });
   }
 };
 
@@ -817,36 +854,229 @@ exports.getProfile = async (req, res) => {
 // ============================================================
 exports.updateProfile = async (req, res) => {
   const client = await db.connect();
+
   try {
     const userId = req.user.id;
+    const ownerAdminId = req.apiKey.adminId;
     const { name, phone, city, address } = req.body;
 
     if (!name?.trim()) {
-      return res.status(400).json({ success: false, message: "El nombre es requerido", code: "MISSING_FIELDS" });
+      return res.status(400).json({
+        success: false,
+        message: "El nombre es requerido",
+        code: "MISSING_FIELDS",
+      });
     }
 
-    await client.query(
-      `UPDATE users
-       SET name = $1, phone = $2, city = $3, address = $4, updated_at = NOW()
-       WHERE id = $5`,
-      [name.trim(), phone?.trim() || null, city?.trim() || null, address?.trim() || null, userId]
-    );
+    await client.query("BEGIN");
 
     const updated = await client.query(
-      "SELECT id, email, name, phone, cedula, city, address FROM users WHERE id = $1",
+      `UPDATE users
+       SET name = $1,
+           phone = $2,
+           city = $3,
+           address = $4,
+           updated_at = NOW()
+       WHERE id = $5 AND owner_admin_id = $6
+       RETURNING
+         id, email, name, phone, cedula, city, address,
+         profile_image_url, profile_image_public_id,
+         created_at, last_login`,
+      [
+        name.trim(),
+        phone?.trim() || null,
+        city?.trim() || null,
+        address?.trim() || null,
+        userId,
+        ownerAdminId,
+      ]
+    );
+
+    if (updated.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Usuario no encontrado para esta tienda",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    const rolesRes = await client.query(
+      `SELECT r.name
+       FROM roles r
+       JOIN user_roles ur ON ur.role_id = r.id
+       WHERE ur.user_id = $1`,
       [userId]
+    );
+
+    await client.query("COMMIT");
+
+    const profile = buildStorefrontProfile(
+      updated.rows[0],
+      rolesRes.rows.map((row) => row.name)
     );
 
     return res.json({
       success: true,
       message: "Perfil actualizado correctamente",
-      data: updated.rows[0],
+      data: profile,
     });
-
   } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
     console.error("[STOREFRONT UPDATE PROFILE ERROR]", error);
-    return res.status(500).json({ success: false, message: "Error al actualizar perfil", code: "SERVER_ERROR" });
+    return res.status(500).json({
+      success: false,
+      message: "Error al actualizar perfil",
+      code: "SERVER_ERROR",
+    });
   } finally {
+    client.release();
+  }
+};
+
+// ============================================================
+// 📸 SUBIR / ACTUALIZAR FOTO DE PERFIL
+// POST|PATCH /public-api/v1/auth/profile/avatar
+// Campo multipart: avatar
+// ============================================================
+exports.uploadProfileAvatar = async (req, res) => {
+  const client = await db.connect();
+
+  const uploadedUrl = req.file?.path || req.file?.secure_url || null;
+  const uploadedPublicId = req.file?.filename || req.file?.public_id || null;
+  let transactionStarted = false;
+  let shouldDeleteNewUpload = false;
+
+  try {
+    const userId = req.user.id;
+    const ownerAdminId = req.apiKey.adminId;
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debes enviar una imagen en el campo multipart "avatar".',
+        code: "AVATAR_REQUIRED",
+      });
+    }
+
+    if (!uploadedUrl || !uploadedPublicId) {
+      shouldDeleteNewUpload = Boolean(uploadedPublicId);
+      return res.status(502).json({
+        success: false,
+        message: "Cloudinary no devolvió una URL válida para la imagen.",
+        code: "CLOUDINARY_INVALID_RESPONSE",
+      });
+    }
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+    shouldDeleteNewUpload = true;
+
+    const currentUserRes = await client.query(
+      `SELECT id, profile_image_public_id
+       FROM users
+       WHERE id = $1 AND owner_admin_id = $2
+       FOR UPDATE`,
+      [userId, ownerAdminId]
+    );
+
+    if (currentUserRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return res.status(404).json({
+        success: false,
+        message: "Usuario no encontrado para esta tienda",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    const previousPublicId = currentUserRes.rows[0].profile_image_public_id;
+
+    const updatedRes = await client.query(
+      `UPDATE users
+       SET profile_image_url = $1,
+           profile_image_public_id = $2,
+           updated_at = NOW()
+       WHERE id = $3 AND owner_admin_id = $4
+       RETURNING
+         id, email, name, phone, cedula, city, address,
+         profile_image_url, profile_image_public_id,
+         created_at, last_login`,
+      [uploadedUrl, uploadedPublicId, userId, ownerAdminId]
+    );
+
+    const rolesRes = await client.query(
+      `SELECT r.name
+       FROM roles r
+       JOIN user_roles ur ON ur.role_id = r.id
+       WHERE ur.user_id = $1`,
+      [userId]
+    );
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    shouldDeleteNewUpload = false;
+
+    if (previousPublicId && previousPublicId !== uploadedPublicId) {
+      cloudinary.uploader
+        .destroy(previousPublicId, {
+          resource_type: "image",
+          invalidate: true,
+        })
+        .catch((destroyError) => {
+          console.warn(
+            "[STOREFRONT AVATAR] No fue posible eliminar el avatar anterior:",
+            destroyError.message
+          );
+        });
+    }
+
+    const profile = buildStorefrontProfile(
+      updatedRes.rows[0],
+      rolesRes.rows.map((row) => row.name)
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Foto de perfil actualizada correctamente",
+      data: {
+        ...profile,
+        user: profile,
+      },
+    });
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
+    }
+
+    console.error("[STOREFRONT UPLOAD AVATAR ERROR]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "No fue posible guardar la foto de perfil",
+      code: "AVATAR_UPLOAD_ERROR",
+    });
+  } finally {
+    if (shouldDeleteNewUpload && uploadedPublicId) {
+      try {
+        await cloudinary.uploader.destroy(uploadedPublicId, {
+          resource_type: "image",
+          invalidate: true,
+        });
+      } catch (cleanupError) {
+        console.warn(
+          "[STOREFRONT AVATAR] No fue posible limpiar la imagen temporal:",
+          cleanupError.message
+        );
+      }
+    }
+
     client.release();
   }
 };
