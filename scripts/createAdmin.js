@@ -2,7 +2,7 @@
 // Uso: ADMIN_EMAIL=tu@email.com ADMIN_PASSWORD='TuClave123!' node createAdmin.js
 require('dotenv/config');
 const bcrypt = require('bcryptjs');
-const pool   = require('./config/db');
+const pool   = require('../config/db');
 
 const email    = process.env.SEED_ADMIN_EMAIL    || process.env.ADMIN_EMAIL;
 const password = process.env.SEED_ADMIN_PASSWORD;
