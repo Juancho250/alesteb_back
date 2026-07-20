@@ -978,6 +978,11 @@ router.post("/auth/logout", auth, storefrontAuth.logout);
 router.get("/auth/profile", auth, storefrontAuth.getProfile);
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
 
+router.post(
+  "/auth/google",
+  checkRateLimit("ip", 20, 15 * 60 * 1000),
+  storefrontAuth.googleLogin
+);
 // ─────────────────────────────────────────────────────────────────────────────
 // HISTORIAL Y ESTADÍSTICAS DEL USUARIO
 // ─────────────────────────────────────────────────────────────────────────────

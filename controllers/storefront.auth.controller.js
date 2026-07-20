@@ -10,6 +10,13 @@ const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
 const { generateVerificationCode, sendVerificationEmail } = require("../config/emailConfig");
 
+// Agregar arriba, junto a los otros requires:
+const { OAuth2Client } = require("google-auth-library");
+
+const googleClientId = process.env.GOOGLE_CLIENT_ID;
+const googleClient   = googleClientId ? new OAuth2Client(googleClientId) : null;
+
+
 const SALT_ROUNDS              = 12;
 const JWT_ACCESS_EXPIRY        = "15m";
 const JWT_REFRESH_EXPIRY       = "7d";
@@ -46,6 +53,181 @@ const saveRefreshToken = async (client, userId, refreshToken, deviceInfo) => {
   );
 };
 
+
+// ── Verificar token de Google (id_token o access_token) ─────────────────────
+const verifyGoogleToken = async (token) => {
+  const segments = token.split(".");
+
+  // id_token (JWT de 3 segmentos) — flujo popup / One Tap
+  if (segments.length === 3) {
+    if (!googleClient) {
+      throw new Error("GOOGLE_CLIENT_ID no configurado en el servidor");
+    }
+    const ticket  = await googleClient.verifyIdToken({ idToken: token, audience: googleClientId });
+    const payload = ticket.getPayload();
+    if (!payload?.email) throw new Error("Google no devolvió email en el id_token");
+    return {
+      email:   payload.email.toLowerCase().trim(),
+      name:    payload.name || payload.given_name || payload.email.split("@")[0],
+      picture: payload.picture || null,
+    };
+  }
+
+  // access_token opaco — flujo implícito
+  const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error(`Google userinfo falló: ${response.status}`);
+  const info = await response.json();
+  if (!info?.email) throw new Error("Google no devolvió email en userinfo");
+  return {
+    email:   info.email.toLowerCase().trim(),
+    name:    info.name || info.given_name || info.email.split("@")[0],
+    picture: info.picture || null,
+  };
+};
+
+// ============================================================
+// 🔵 LOGIN CON GOOGLE (storefront, scopeado por tenant)
+// ============================================================
+exports.googleLogin = async (req, res) => {
+  const client = await db.connect();
+  try {
+    const ownerAdminId = req.apiKey.adminId;
+    const { token, deviceInfo } = req.body || {};
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "El token de Google es requerido",
+        code: "MISSING_TOKEN",
+      });
+    }
+
+    let googleUser;
+    try {
+      googleUser = await verifyGoogleToken(token);
+    } catch (err) {
+      console.error("[STOREFRONT GOOGLE LOGIN] Verificación falló:", err.message);
+      return res.status(401).json({
+        success: false,
+        message: "No se pudo verificar el token con Google",
+        code: "INVALID_GOOGLE_TOKEN",
+      });
+    }
+
+    const { email, name } = googleUser;
+
+    await client.query("BEGIN");
+
+    // Búsqueda SIEMPRE scopeada al tenant, igual que en login()
+    const existingRes = await client.query(
+      `SELECT id, email, name, phone, cedula, city, address, is_active, is_verified
+       FROM users WHERE email = $1 AND owner_admin_id = $2`,
+      [email, ownerAdminId]
+    );
+
+    let user;
+
+    if (existingRes.rowCount > 0) {
+      user = existingRes.rows[0];
+
+      if (!user.is_active) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({
+          success: false,
+          message: "Cuenta desactivada. Contacta al administrador de la tienda.",
+          code: "USER_INACTIVE",
+        });
+      }
+
+      // Google ya validó el correo → si no estaba verificado, se autoverifica
+      if (!user.is_verified) {
+        await client.query("UPDATE users SET is_verified = true WHERE id = $1", [user.id]);
+        user.is_verified = true;
+      }
+
+      await client.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
+
+    } else {
+      const roleRes = await client.query("SELECT id FROM roles WHERE name = 'user' LIMIT 1");
+      if (roleRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({
+          success: false,
+          message: "Configuración de roles incompleta en el servidor",
+          code: "ROLE_NOT_FOUND",
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(crypto.randomBytes(24).toString("hex"), SALT_ROUNDS);
+
+      // cedula es NOT NULL y única a nivel plataforma — placeholder único,
+      // needsCedula:true en la respuesta le indica al frontend que debe pedirla.
+      const placeholderCedula = `G-${crypto.randomBytes(8).toString("hex")}`;
+
+      const insertRes = await client.query(
+        `INSERT INTO users (email, password, name, cedula, is_active, is_verified, owner_admin_id)
+         VALUES ($1, $2, $3, $4, true, true, $5)
+         RETURNING id, email, name, phone, cedula, city, address, is_active, is_verified`,
+        [email, hashedPassword, name, placeholderCedula, ownerAdminId]
+      );
+      user = insertRes.rows[0];
+
+      await client.query(
+        "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [user.id, roleRes.rows[0].id]
+      );
+
+      console.log(`[STOREFRONT GOOGLE LOGIN] Nuevo usuario: ${email} → tenant ${ownerAdminId}`);
+    }
+
+    const rolesRes = await client.query(
+      `SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1`,
+      [user.id]
+    );
+    const roles = rolesRes.rows.map((r) => r.name);
+
+    const tokenPayload  = { id: user.id, email: user.email, name: user.name, roles, owner_admin_id: ownerAdminId };
+    const accessToken   = generateAccessToken(tokenPayload);
+    const refreshToken  = generateRefreshToken({ id: user.id, email: user.email });
+
+    await saveRefreshToken(client, user.id, refreshToken, deviceInfo);
+    await client.query("COMMIT");
+
+    console.log(`[STOREFRONT GOOGLE LOGIN SUCCESS] ${email} → tenant ${ownerAdminId}`);
+
+    return res.json({
+      success: true,
+      message: "Login con Google exitoso",
+      user: {
+        id:             user.id,
+        email:          user.email,
+        name:           user.name || "Usuario",
+        phone:          user.phone,
+        cedula:         user.cedula,
+        city:           user.city,
+        address:        user.address,
+        roles,
+        owner_admin_id: ownerAdminId,
+        needsCedula:    !!user.cedula?.startsWith("G-"),
+      },
+      token:        accessToken,
+      refreshToken,
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[STOREFRONT GOOGLE LOGIN ERROR]", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error interno al procesar el login con Google",
+      code: "SERVER_ERROR",
+    });
+  } finally {
+    client.release();
+  }
+};
 // ============================================================
 // 📝 REGISTRO
 // ============================================================
