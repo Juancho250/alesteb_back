@@ -1,8 +1,8 @@
-// routes/categories.routes.js
+// src/modules/catalog/categories.routes.js
 const express = require("express");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
-const ctrl = require("../controllers/categories.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
+const ctrl = require("./categories.controller");
 
 const router = express.Router();
 

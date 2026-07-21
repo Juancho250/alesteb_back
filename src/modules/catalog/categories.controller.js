@@ -1,9 +1,9 @@
-// controllers/categories.controller.js
+// src/modules/catalog/categories.controller.js
 "use strict";
 
-const db = require("../src/platform/database");
-const { emitDataUpdate }  = require("../config/socket");
-const { assertOwnership } = require("../middleware/adminScope");
+const db = require("../../platform/database");
+const { emitDataUpdate }  = require("../../../config/socket");
+const { assertOwnership } = require("../../../middleware/adminScope");
 
 // ─────────────────────────────────────────────
 // GET /categories  — árbol jerárquico

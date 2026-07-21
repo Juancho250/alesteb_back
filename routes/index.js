@@ -12,8 +12,8 @@ router.use(auth);        // ← verifica JWT
 router.use(adminScope);  // ← inyecta req.isSuperAdmin y req.adminId
 
 // ── Rutas del panel (todas protegidas) ────────────────
-router.use("/products",       require("./products.routes"));
-router.use("/categories",     require("./categories.routes"));
+router.use("/products",       require("../src/modules/catalog").productsRoutes);
+router.use("/categories",     require("../src/modules/catalog").categoriesRoutes);
 router.use("/providers",      require("../src/modules/providers").routes);
 router.use("/sales",          require("../src/modules/sales").routes);
 router.use("/users",          require("../src/modules/identity/users").routes);
@@ -29,7 +29,7 @@ router.use("/notifications",  require("./notifications.routes"));
 router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("../src/modules/identity/api-keys").routes);
 router.use("/superadmin",     require("../src/modules/identity/superadmin").routes);
-router.use("/variants",       require("./variants_bundles.routes"));
+router.use("/variants",       require("../src/modules/catalog").variantsRoutes);
 router.use("/wompi",          require("../src/modules/payments").wompiRoutes);
 // Agrega esta línea junto a las demás rutas del panel
 router.use("/subscriptions", require("../src/modules/subscriptions").routes);

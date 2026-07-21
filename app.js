@@ -117,15 +117,15 @@ const subscriptionsModule = safeRequire("./src/modules/subscriptions", "subscrip
 const statsRoutes         = safeRequire("./routes/stats.routes",            "stats.routes");
 const providersModule = safeRequire("./src/modules/providers", "providers.module");
 const financeModule = safeRequire("./src/modules/finance", "finance.module");
-const productsRoutes      = safeRequire("./routes/products.routes",         "products.routes");
-const categoriesRoutes    = safeRequire("./routes/categories.routes",       "categories.routes");
+const catalogModule = safeRequire("./src/modules/catalog", "catalog.module");
+
 const discountsRoutes     = safeRequire("./routes/discounts.routes",        "discounts.routes");
 const salesModule = safeRequire("./src/modules/sales", "sales.module");
 const bannersRoutes       = safeRequire("./routes/banners.routes",          "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
 const auraRoutes          = safeRequire("./routes/aura.routes",             "aura.routes");
-const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
+
 const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
 const paymentsModule = safeRequire("./src/modules/payments", "payments.module");
@@ -166,13 +166,13 @@ if (subscriptionsModule?.routes) app.use("/api/subscriptions", subscriptionsModu
 if (statsRoutes)         app.use("/api/stats",         statsRoutes);
 if (providersModule?.routes) app.use("/api/providers", providersModule.routes);
 if (financeModule?.routes) app.use("/api/finance", financeModule.routes);
-if (productsRoutes)      app.use("/api/products",      productsRoutes);
-if (categoriesRoutes)    app.use("/api/categories",    categoriesRoutes);
+if (catalogModule?.productsRoutes) app.use("/api/products", catalogModule.productsRoutes);
+if (catalogModule?.categoriesRoutes) app.use("/api/categories", catalogModule.categoriesRoutes);
 if (salesModule?.routes) app.use("/api/sales", salesModule.routes);
 if (discountsRoutes)     app.use("/api/discounts",     discountsRoutes);
 if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
-if (variantsRoutes)      app.use("/api",               variantsRoutes);
+if (catalogModule?.variantsRoutes) app.use("/api", catalogModule.variantsRoutes);
 if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
@@ -207,13 +207,13 @@ app.get("/api/health", (req, res) => {
       stats:         !!statsRoutes,
       providers:     !!providersModule?.routes,
       finance:       !!financeModule?.routes,
-      products:      !!productsRoutes,
-      categories:    !!categoriesRoutes,
+      products:      !!catalogModule?.productsRoutes,
+      categories:    !!catalogModule?.categoriesRoutes,
       sales:         !!salesModule?.routes,
       discounts:     !!discountsRoutes,
       banners:       !!bannersRoutes,
       notifications: !!notificationsRoutes,
-      variants:      !!variantsRoutes,
+      variants:      !!catalogModule?.variantsRoutes,
       reviews:       !!reviewsRoutes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,

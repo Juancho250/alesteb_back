@@ -1,5 +1,5 @@
-// src/controllers/bundles.controller.js
-const db = require("../src/platform/database");
+// src/modules/catalog/bundles.controller.js
+const db = require("../../platform/database");
 
 const getBundleItems = async (bundleId) => {
   const result = await db.query(`

@@ -1,8 +1,8 @@
-// src/controllers/variants.controller.js
-const db = require("../src/platform/database");
-const cloudinary = require("../config/cloudinary");
-const { emitDataUpdate } = require("../config/socket");
-const inv = require("../src/modules/inventory").service;
+// src/modules/catalog/variants.controller.js
+const db = require("../../platform/database");
+const cloudinary = require("../../../config/cloudinary");
+const { emitDataUpdate } = require("../../../config/socket");
+const inv = require("../inventory").service;
 
 // ─── Helper: obtener variantes completas de un producto ──────────────────────
 const getVariantsForProduct = async (productId) => {

@@ -1,11 +1,11 @@
-// routes/products.routes.js
+// src/modules/catalog/products.routes.js
 const express = require("express");
-const { auth, requireRole } = require("../src/modules/identity/auth");
-const { adminScope }        = require("../middleware/adminScope");
-const { uploadProduct }     = require("../middleware/upload.middleware");
-const ctrl = require("../controllers/products.controller");
-const db     = require("../src/platform/database");
-const invSvc = require("../src/modules/inventory").service;
+const { auth, requireRole } = require("../identity/auth");
+const { adminScope }        = require("../../../middleware/adminScope");
+const { uploadProduct }     = require("../../../middleware/upload.middleware");
+const ctrl = require("./products.controller");
+const db     = require("../../platform/database");
+const invSvc = require("../inventory").service;
 
 const router = express.Router();
 

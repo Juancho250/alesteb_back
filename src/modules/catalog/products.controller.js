@@ -1,8 +1,8 @@
-// controllers/products.controller.js
-const db         = require("../src/platform/database");
-const cloudinary = require("../config/cloudinary");
-const { emitDataUpdate }              = require("../config/socket");
-const { assertOwnership }             = require("../middleware/adminScope");
+// src/modules/catalog/products.controller.js
+const db         = require("../../platform/database");
+const cloudinary = require("../../../config/cloudinary");
+const { emitDataUpdate }              = require("../../../config/socket");
+const { assertOwnership }             = require("../../../middleware/adminScope");
 
 // ─────────────────────────────────────────────
 // Helpers internos
