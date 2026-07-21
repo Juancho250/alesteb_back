@@ -5,7 +5,7 @@ const {
   getChatUsers, getConversation, editMessage, deleteMessage,
   uploadImage, uploadChatImage, clearHistory,
 } = require('../controllers/chat.controller');
-const { auth } = require('../middleware/auth.middleware');
+const { auth } = require('../src/modules/identity/auth');
 
 router.get('/users',                auth, getChatUsers);
 router.get('/conversation/:userId', auth, getConversation);

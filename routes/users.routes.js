@@ -5,7 +5,7 @@ const express      = require("express");
 const router       = express.Router();
 const usersCtrl    = require("../controllers/users.controller");
 const creditProfile = require("../controllers/creditProfile.controller");
-const { auth, requireAdmin } = require("../middleware/auth.middleware");
+const { auth, requireAdmin } = require("../src/modules/identity/auth");
 
 // Todas las rutas requieren autenticación como mínimo admin
 router.use(auth, requireAdmin);

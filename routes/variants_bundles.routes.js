@@ -1,6 +1,6 @@
 const express = require("express");
 const router  = express.Router();
-const { auth, requireManager } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../src/modules/identity/auth");
 const { uploadBundle, uploadProduct } = require("../middleware/upload.middleware");
 const varCtrl    = require("../controllers/variants.controller");
 const bundleCtrl = require("../controllers/bundles.controller");

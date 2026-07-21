@@ -2,7 +2,7 @@
 const express             = require("express");
 const router              = express.Router();
 const rolesCtrl           = require("../controllers/roles.controller");
-const { auth, requireAdmin, requireSuperAdmin } = require("../middleware/auth.middleware");
+const { auth, requireAdmin, requireSuperAdmin } = require("../src/modules/identity/auth");
 
 // GET  /api/roles  — Admins y superadmin pueden listar (para poblar selectores)
 router.get("/", auth, requireAdmin, rolesCtrl.getRoles);

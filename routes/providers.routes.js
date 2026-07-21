@@ -1,6 +1,6 @@
 // routes/providers.routes.js
 const express = require("express");
-const { auth, requireManager } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../src/modules/identity/auth");
 const { adminScope }           = require("../middleware/adminScope");
 const ctrl = require("../controllers/providers.controller");
 

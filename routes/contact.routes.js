@@ -1,6 +1,6 @@
 // routes/contact.routes.js
 const express = require("express");
-const { auth, isAdmin } = require("../middleware/auth.middleware"); // ajusta si tu middleware de admin tiene otro nombre
+const { auth, isAdmin } = require("../src/modules/identity/auth"); // ajusta si tu middleware de admin tiene otro nombre
 const {
   submit,
   list,

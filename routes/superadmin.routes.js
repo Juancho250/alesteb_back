@@ -2,7 +2,7 @@
 const express        = require("express");
 const router         = express.Router();
 const superadminCtrl = require("../controllers/superadmin.controller");
-const { auth, requireSuperAdmin } = require("../middleware/auth.middleware");
+const { auth, requireSuperAdmin } = require("../src/modules/identity/auth");
 
 // Toda ruta requiere JWT válido + rol superadmin
 router.use(auth, requireSuperAdmin);

@@ -3,7 +3,7 @@
 const express  = require('express');
 const router   = express.Router();
 const db       = require('../src/platform/database');
-const { auth, requireAdmin } = require('../middleware/auth.middleware');
+const { auth, requireAdmin } = require('../src/modules/identity/auth');
 const { requireFeature } = require("../middleware/subscription.middleware");
 const { adminScope }         = require('../middleware/adminScope');
 const inv      = require('../services/inventory.service');

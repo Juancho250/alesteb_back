@@ -2,7 +2,7 @@
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../controllers/financePin.controller");
-const { auth, checkRateLimit } = require("../middleware/auth.middleware");
+const { auth, checkRateLimit } = require("../src/modules/identity/auth");
 const { adminScope }           = require("../middleware/adminScope");
 
 router.use(auth);

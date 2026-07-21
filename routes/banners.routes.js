@@ -3,7 +3,7 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../controllers/banners.controller");
 const { uploadBanner }         = require("../middleware/upload.middleware");
-const { auth, requireManager } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../src/modules/identity/auth");
 const { adminScope }           = require("../middleware/adminScope");
 
 // ── Pública — sin auth (storefront, con caché) ────────────────

@@ -1,4 +1,4 @@
-// routes/auth.routes.js
+// src/modules/identity/auth/auth.routes.js
 // ARQUITECTURA:
 //   - superadmin crea admins → via /api/superadmin/admins
 //   - admin crea sus usuarios → via /api/users
@@ -10,8 +10,8 @@
 const express = require("express");
 const router  = express.Router();
 
-const authController           = require("../controllers/auth.controller");
-const { auth, checkRateLimit } = require("../middleware/auth.middleware");
+const authController           = require("./auth.controller");
+const { auth, checkRateLimit } = require("./auth.middleware");
 
 // ============================================
 // 🔓 RUTAS PÚBLICAS

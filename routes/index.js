@@ -1,10 +1,10 @@
 // routes/index.js
 const router = require("express").Router();
-const { auth }       = require("../middleware/auth.middleware");
+const { auth }       = require("../src/modules/identity/auth");
 const { adminScope } = require("../middleware/adminScope");
 
 // ── Rutas públicas (sin auth) ─────────────────────────
-router.use("/auth",       require("./auth.routes"));
+router.use("/auth",       require("../src/modules/identity/auth").routes);
 router.use("/public-api", require("./public-api.routes")); // API key auth propia
 
 // ── Middleware global para TODO lo de abajo ───────────

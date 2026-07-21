@@ -6,7 +6,7 @@ const {
   auth,
   requireAdmin,
   requireSuperAdmin,
-} = require("../middleware/auth.middleware");
+} = require("../src/modules/identity/auth");
 
 // ── Pública ────────────────────────────────────────────────────
 // No requiere auth; la tabla debe tener filas con is_active=true, is_public=true

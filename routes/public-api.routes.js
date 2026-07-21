@@ -7,12 +7,12 @@ const {
   requireApiPermission,
   auth,
   checkRateLimit,
-} = require("../middleware/auth.middleware");
-const storefrontAuth  = require("../controllers/storefront.auth.controller");
+} = require("../src/modules/identity/auth");
+const storefrontAuth  = require("../src/modules/identity/auth").storefrontController;
 const reviewsCtrl     = require("../controllers/reviews.controller");
 const wompiCtrl       = require("../controllers/wompi.controller");
 const analyticsCtrl   = require("../controllers/analytics.controller");
-const googleAuth      = require("../controllers/storefront.google.controller");
+const googleAuth      = require("../src/modules/identity/auth").storefrontGoogleController;
 const inv                   = require("../services/inventory.service");
 const { service: procurement } = require("../src/modules/procurement");
 const { notifyTenant, Payloads } = require("../services/push.service");

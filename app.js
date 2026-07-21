@@ -106,7 +106,7 @@ console.log("\n[APP] Cargando rutas...");
 // ============================================
 // 🗺️ RUTAS — Panel de administración
 // ============================================
-const authRoutes          = safeRequire("./routes/auth.routes",             "auth.routes");
+const authModule = safeRequire("./src/modules/identity/auth", "identity.auth.module");
 const superadminRoutes    = safeRequire("./routes/superadmin.routes",       "superadmin.routes");
 const usersRoutes         = safeRequire("./routes/users.routes",            "users.routes");
 const rolesRoutes         = safeRequire("./routes/roles.routes",            "roles.routes");
@@ -153,7 +153,7 @@ console.log("[APP] Rutas cargadas.\n");
 
 // — Auth —
 if (creditPayRoutes)     app.use("/pay",               creditPayRoutes);
-if (authRoutes)          app.use("/api/auth",          authRoutes);
+if (authModule?.routes) app.use("/api/auth", authModule.routes);
 
 // — Panel de administración —
 if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);
@@ -198,7 +198,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ...base,
     routes: {
-      auth:          !!authRoutes,
+      auth:          !!authModule?.routes,
       superadmin:    !!superadminRoutes,
       users:         !!usersRoutes,
       roles:         !!rolesRoutes,

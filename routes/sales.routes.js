@@ -3,7 +3,7 @@ const express       = require("express");
 const router        = express.Router();
 const ctrl          = require("../controllers/sales.controller");
 const scheduleCtrl  = require("../controllers/creditSchedule.controller");
-const { auth, requireManager } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../src/modules/identity/auth");
 const { adminScope }           = require("../middleware/adminScope");
 const uploadProof   = require("../middleware/upload_proof.middleware");
 

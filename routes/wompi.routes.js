@@ -3,7 +3,7 @@
 //     express.raw() can capture the body as a Buffer for signature validation.
 //     Only the session and verify endpoints live here.
 const express  = require("express");
-const { auth } = require("../middleware/auth.middleware");
+const { auth } = require("../src/modules/identity/auth");
 const {
   getSession,
   verifyByReference,

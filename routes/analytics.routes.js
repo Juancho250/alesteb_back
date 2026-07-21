@@ -2,7 +2,7 @@
 const express    = require("express");
 const router     = express.Router();
 const ctrl       = require("../controllers/analytics.controller");
-const { auth, requireManager } = require("../middleware/auth.middleware");
+const { auth, requireManager } = require("../src/modules/identity/auth");
 const { adminScope } = require("../middleware/adminScope");
 const { requireFeature } = require("../middleware/subscription.middleware");
 

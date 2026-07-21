@@ -1,9 +1,9 @@
-// controllers/auth.controller.js
-const db     = require("../src/platform/database");
+// src/modules/identity/auth/auth.controller.js
+const db     = require("../../../platform/database");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
-const { generateVerificationCode, sendVerificationEmail } = require("../config/emailConfig");
+const { generateVerificationCode, sendVerificationEmail } = require("../../../../config/emailConfig");
 
 // ============================================
 // 🔐 CONFIGURACIÓN DE SEGURIDAD
@@ -865,7 +865,7 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-// controllers/auth.controller.js
+// src/modules/identity/auth/auth.controller.js
 // — Agregado al final del archivo existente —
 // Pega este método dentro del archivo auth.controller.js que ya tienes.
 

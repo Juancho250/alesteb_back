@@ -1,6 +1,6 @@
 // routes/products.routes.js
 const express = require("express");
-const { auth, requireRole } = require("../middleware/auth.middleware");
+const { auth, requireRole } = require("../src/modules/identity/auth");
 const { adminScope }        = require("../middleware/adminScope");
 const { uploadProduct }     = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");

@@ -5,7 +5,7 @@ const {
   setFinanceUnlocked,
   clearFinanceUnlocked,
   getFinanceExpiresAt,
-} = require("../middleware/auth.middleware");
+} = require("../src/modules/identity/auth");
 
 const SALT_ROUNDS    = 12;                // mismo que auth.controller.js
 const FINANCE_TTL_MS = 15 * 60 * 1000;

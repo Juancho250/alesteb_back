@@ -2,7 +2,7 @@
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../controllers/paymentAccounts.controller");
-const { auth, requireAdmin }  = require("../middleware/auth.middleware");
+const { auth, requireAdmin }  = require("../src/modules/identity/auth");
 const { requireFeature }      = require("../middleware/subscription.middleware");
 const { adminScope }          = require("../middleware/adminScope");
 

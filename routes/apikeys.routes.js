@@ -2,7 +2,7 @@
 const express     = require("express");
 const router      = express.Router();
 const ctrl        = require("../controllers/apikeys.controller");
-const { auth, requireAdmin } = require("../middleware/auth.middleware");
+const { auth, requireAdmin } = require("../src/modules/identity/auth");
 const { adminScope }         = require("../middleware/adminScope");
 
 // ── Middleware global ─────────────────────────────────────────

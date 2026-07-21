@@ -1,14 +1,14 @@
-// controllers/storefront.auth.controller.js
+// src/modules/identity/auth/storefront-auth.controller.js
 // Auth de clientes finales en el storefront.
 // Todas las rutas que usan este controller llegan protegidas por apiKeyAuth,
 // por lo que req.apiKey.adminId = owner_admin_id del tenant.
 // NUNCA se acepta owner_admin_id del cuerpo del request.
 
-const db     = require("../src/platform/database");
+const db     = require("../../../platform/database");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
-const { generateVerificationCode, sendVerificationEmail } = require("../config/emailConfig");
+const { generateVerificationCode, sendVerificationEmail } = require("../../../../config/emailConfig");
 
 const SALT_ROUNDS              = 12;
 const JWT_ACCESS_EXPIRY        = "15m";

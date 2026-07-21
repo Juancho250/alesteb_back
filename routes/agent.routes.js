@@ -1,5 +1,5 @@
 const express = require("express");
-const { auth, requireManager, checkRateLimit } = require("../middleware/auth.middleware");
+const { auth, requireManager, checkRateLimit } = require("../src/modules/identity/auth");
 const { adminScope } = require("../middleware/adminScope");
 const { requireFeature, requireActiveSubscription } = require("../middleware/subscription.middleware");
 const { resolveAuraTenant } = require("../middleware/aura.middleware");

@@ -1,7 +1,7 @@
 // routes/stats.routes.js
 const express = require("express");
 const router  = express.Router();
-const { auth }       = require("../middleware/auth.middleware");
+const { auth }       = require("../src/modules/identity/auth");
 const { adminScope } = require("../middleware/adminScope");
 const { getDashboardStats } = require("../controllers/stats.controller");
 
