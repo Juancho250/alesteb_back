@@ -6,7 +6,7 @@ const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail 
 const { getAdminBranding } = require("../services/branding.service");
 const { emitDataUpdate } = require("../config/socket");
 const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
-const procurement         = require("../services/procurement.service");
+const { service: procurement } = require("../src/modules/procurement");
 const { enqueueNotification } = require("../services/notification.service");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");

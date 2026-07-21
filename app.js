@@ -133,7 +133,7 @@ const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes", 
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
-const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
+const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
 const creditPayRoutes   = safeRequire("./routes/creditPay.routes",       "creditPay.routes");
 
@@ -183,7 +183,7 @@ if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRo
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryRoutes)     app.use("/api/inventory",     inventoryRoutes);
-if (procurementRoutes)   app.use("/api/procurement",   procurementRoutes);
+if (procurementModule?.routes) app.use("/api/procurement", procurementModule.routes);
 if (financePinRoutes) app.use("/api/finance-pin", financePinRoutes);
 
 // — API pública —

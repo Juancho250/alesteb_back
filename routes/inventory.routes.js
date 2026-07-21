@@ -7,7 +7,7 @@ const { auth, requireAdmin } = require('../middleware/auth.middleware');
 const { requireFeature } = require("../middleware/subscription.middleware");
 const { adminScope }         = require('../middleware/adminScope');
 const inv      = require('../services/inventory.service');
-const procCtrl = require('../controllers/procurement.controller');
+const { controller: procCtrl } = require("../src/modules/procurement");
 
 router.use(auth, adminScope);
 router.use(requireFeature("has_inventory"));
