@@ -117,14 +117,18 @@ exports.googleLogin = async (req, res) => {
       });
     }
 
-    const { email, name } = googleUser;
+    const { email, name, picture } = googleUser;
 
     await client.query("BEGIN");
 
     // Búsqueda SIEMPRE scopeada al tenant, igual que en login()
     const existingRes = await client.query(
-      `SELECT id, email, name, phone, cedula, city, address, is_active, is_verified
-       FROM users WHERE email = $1 AND owner_admin_id = $2`,
+      `SELECT
+         id, email, name, phone, cedula, city, address,
+         is_active, is_verified,
+         profile_image_url, profile_image_public_id
+       FROM users
+       WHERE email = $1 AND owner_admin_id = $2`,
       [email, ownerAdminId]
     );
 
@@ -142,13 +146,26 @@ exports.googleLogin = async (req, res) => {
         });
       }
 
-      // Google ya validó el correo → si no estaba verificado, se autoverifica
-      if (!user.is_verified) {
-        await client.query("UPDATE users SET is_verified = true WHERE id = $1", [user.id]);
-        user.is_verified = true;
-      }
+      /*
+       * La foto subida por el usuario siempre tiene prioridad.
+       * La imagen de Google solo se usa si aún no existe una foto guardada.
+       */
+      const updatedUserRes = await client.query(
+        `UPDATE users
+         SET is_verified = true,
+             last_login = NOW(),
+             profile_image_url = COALESCE(profile_image_url, $1),
+             updated_at = NOW()
+         WHERE id = $2 AND owner_admin_id = $3
+         RETURNING
+           id, email, name, phone, cedula, city, address,
+           is_active, is_verified,
+           profile_image_url, profile_image_public_id,
+           created_at, last_login`,
+        [picture || null, user.id, ownerAdminId]
+      );
 
-      await client.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
+      user = updatedUserRes.rows[0];
 
     } else {
       const roleRes = await client.query("SELECT id FROM roles WHERE name = 'user' LIMIT 1");
@@ -168,10 +185,31 @@ exports.googleLogin = async (req, res) => {
       const placeholderCedula = `G-${crypto.randomBytes(8).toString("hex")}`;
 
       const insertRes = await client.query(
-        `INSERT INTO users (email, password, name, cedula, is_active, is_verified, owner_admin_id)
-         VALUES ($1, $2, $3, $4, true, true, $5)
-         RETURNING id, email, name, phone, cedula, city, address, is_active, is_verified`,
-        [email, hashedPassword, name, placeholderCedula, ownerAdminId]
+        `INSERT INTO users (
+           email,
+           password,
+           name,
+           cedula,
+           is_active,
+           is_verified,
+           owner_admin_id,
+           profile_image_url,
+           last_login
+         )
+         VALUES ($1, $2, $3, $4, true, true, $5, $6, NOW())
+         RETURNING
+           id, email, name, phone, cedula, city, address,
+           is_active, is_verified,
+           profile_image_url, profile_image_public_id,
+           created_at, last_login`,
+        [
+          email,
+          hashedPassword,
+          name,
+          placeholderCedula,
+          ownerAdminId,
+          picture || null,
+        ]
       );
       user = insertRes.rows[0];
 
@@ -194,26 +232,45 @@ exports.googleLogin = async (req, res) => {
     const refreshToken  = generateRefreshToken({ id: user.id, email: user.email });
 
     await saveRefreshToken(client, user.id, refreshToken, deviceInfo);
+
+    /*
+     * La respuesta se reconstruye desde PostgreSQL.
+     * Así cada nuevo inicio de sesión devuelve la foto permanente guardada.
+     */
+    const profile = await getStorefrontUserProfile(
+      client,
+      user.id,
+      ownerAdminId
+    );
+
+    if (!profile) {
+      throw new Error(
+        "No fue posible recuperar el perfil después del login con Google."
+      );
+    }
+
     await client.query("COMMIT");
 
-    console.log(`[STOREFRONT GOOGLE LOGIN SUCCESS] ${email} → tenant ${ownerAdminId}`);
+    console.log(
+      `[STOREFRONT GOOGLE LOGIN SUCCESS] ${email} → tenant ${ownerAdminId}`
+    );
+
+    const responseUser = {
+      ...profile,
+      owner_admin_id: ownerAdminId,
+      needsCedula: !!profile.cedula?.startsWith("G-"),
+    };
 
     return res.json({
       success: true,
       message: "Login con Google exitoso",
-      user: {
-        id:             user.id,
-        email:          user.email,
-        name:           user.name || "Usuario",
-        phone:          user.phone,
-        cedula:         user.cedula,
-        city:           user.city,
-        address:        user.address,
-        roles,
-        owner_admin_id: ownerAdminId,
-        needsCedula:    !!user.cedula?.startsWith("G-"),
+      user: responseUser,
+      data: {
+        user: responseUser,
+        token: accessToken,
+        refreshToken,
       },
-      token:        accessToken,
+      token: accessToken,
       refreshToken,
     });
 
@@ -630,25 +687,38 @@ exports.login = async (req, res) => {
     const refreshToken = generateRefreshToken({ id: user.id, email: user.email });
 
     await saveRefreshToken(client, user.id, refreshToken, deviceInfo);
+
+    const profile = await getStorefrontUserProfile(
+      client,
+      user.id,
+      ownerAdminId
+    );
+
+    if (!profile) {
+      throw new Error(
+        "No fue posible recuperar el perfil después del inicio de sesión."
+      );
+    }
+
     await client.query("COMMIT");
 
     console.log(`[STOREFRONT LOGIN] ${user.email} → tenant ${ownerAdminId}`);
 
+    const responseUser = {
+      ...profile,
+      owner_admin_id: ownerAdminId,
+    };
+
     return res.json({
       success: true,
       message: "Login exitoso",
-      user: {
-        id:             user.id,
-        email:          user.email,
-        name:           user.name || "Usuario",
-        phone:          user.phone,
-        cedula:         user.cedula,
-        city:           user.city,
-        address:        user.address,
-        roles,
-        owner_admin_id: ownerAdminId,
+      user: responseUser,
+      data: {
+        user: responseUser,
+        token: accessToken,
+        refreshToken,
       },
-      token:        accessToken,
+      token: accessToken,
       refreshToken,
     });
 
