@@ -109,7 +109,7 @@ console.log("\n[APP] Cargando rutas...");
 const authModule = safeRequire("./src/modules/identity/auth", "identity.auth.module");
 const superadminRoutes    = safeRequire("./routes/superadmin.routes",       "superadmin.routes");
 const usersModule = safeRequire("./src/modules/identity/users", "identity.users.module");
-const rolesRoutes         = safeRequire("./routes/roles.routes",            "roles.routes");
+const rolesModule = safeRequire("./src/modules/identity/roles", "identity.roles.module");
 const apiKeysRoutes       = safeRequire("./routes/apikeys.routes",          "apikeys.routes");
 const adminProfileRoutes  = safeRequire("./routes/adminProfile.routes",     "adminProfile.routes");
 const subscriptionRoutes  = safeRequire("./routes/subscription.routes",     "subscription.routes"); // ← nuevo
@@ -158,7 +158,7 @@ if (authModule?.routes) app.use("/api/auth", authModule.routes);
 // — Panel de administración —
 if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);
 if (usersModule?.routes) app.use("/api/users", usersModule.routes);
-if (rolesRoutes)         app.use("/api/roles",          rolesRoutes);
+if (rolesModule?.routes) app.use("/api/roles", rolesModule.routes);
 if (apiKeysRoutes)       app.use("/api/api-keys",       apiKeysRoutes);
 if (adminProfileRoutes)  app.use("/api/admin-profile",  adminProfileRoutes);
 if (subscriptionRoutes)  app.use("/api/subscriptions",  subscriptionRoutes); // ← nuevo
@@ -201,7 +201,7 @@ app.get("/api/health", (req, res) => {
       auth:          !!authModule?.routes,
       superadmin:    !!superadminRoutes,
       users:         !!usersModule?.routes,
-      roles:         !!rolesRoutes,
+      roles:         !!rolesModule?.routes,
       apiKeys:       !!apiKeysRoutes,
       adminProfile:  !!adminProfileRoutes,
       subscriptions: !!subscriptionRoutes,

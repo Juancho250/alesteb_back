@@ -26,7 +26,7 @@ router.use("/agent",          require("./agent.routes"));
 router.use("/chat",           require("./chat.routes"));
 router.use("/contact",        require("./contact.routes"));
 router.use("/notifications",  require("./notifications.routes"));
-router.use("/roles",          require("./roles.routes"));
+router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("./apikeys.routes"));
 router.use("/superadmin",     require("./superadmin.routes"));
 router.use("/variants",       require("./variants_bundles.routes"));

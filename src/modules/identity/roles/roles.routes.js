@@ -1,8 +1,8 @@
-// routes/roles.routes.js
+// src/modules/identity/roles/roles.routes.js
 const express             = require("express");
 const router              = express.Router();
-const rolesCtrl           = require("../controllers/roles.controller");
-const { auth, requireAdmin, requireSuperAdmin } = require("../src/modules/identity/auth");
+const rolesCtrl           = require("./roles.controller");
+const { auth, requireAdmin, requireSuperAdmin } = require("../auth");
 
 // GET  /api/roles  — Admins y superadmin pueden listar (para poblar selectores)
 router.get("/", auth, requireAdmin, rolesCtrl.getRoles);
