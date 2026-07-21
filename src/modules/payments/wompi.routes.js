@@ -1,13 +1,13 @@
-// routes/wompi.routes.js
+// src/modules/payments/wompi.routes.js
 // ⚠️  The webhook route is registered in app.js BEFORE express.json() so that
 //     express.raw() can capture the body as a Buffer for signature validation.
 //     Only the session and verify endpoints live here.
 const express  = require("express");
-const { auth } = require("../src/modules/identity/auth");
+const { auth } = require("../identity/auth");
 const {
   getSession,
   verifyByReference,
-} = require("../controllers/wompi.controller");
+} = require("./wompi.controller");
 
 const router = express.Router();
 

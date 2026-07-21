@@ -552,7 +552,7 @@ test("sale cancellation flow writes only the compatible delivery status", () => 
     "utf8"
   );
   const wompiController = fs.readFileSync(
-    path.join(__dirname, "..", "controllers", "wompi.controller.js"),
+    path.join(__dirname, "..", "src", "modules", "payments", "wompi.controller.js"),
     "utf8"
   );
 

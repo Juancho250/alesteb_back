@@ -1,12 +1,12 @@
-// controllers/wompi.controller.js
-// Thin controller — all gateway logic lives in services/payment.service.js.
+// src/modules/payments/wompi.controller.js
+// Thin controller — all gateway logic lives in payment.service.js.
 // Credentials are NEVER read from .env here; each store loads its own account from the DB.
-const db = require("../src/platform/database");
-const { buildCheckoutSession, processWompiWebhook } = require("../services/payment.service");
-const { emitDataUpdate } = require("../config/socket");
-const { sendPaymentConfirmedEmail }             = require("../config/emailConfig");
-const { getAdminBranding }                     = require("../services/branding.service");
-const { notifyUser, notifyTenant, Payloads }    = require("../services/push.service");
+const db = require("../../platform/database");
+const { buildCheckoutSession, processWompiWebhook } = require("./payment.service");
+const { emitDataUpdate } = require("../../../config/socket");
+const { sendPaymentConfirmedEmail }             = require("../../../config/emailConfig");
+const { getAdminBranding }                     = require("../../../services/branding.service");
+const { notifyUser, notifyTenant, Payloads }    = require("../../../services/push.service");
 
 // ── GET /api/wompi/session/:sale_id ──────────────────────────────────────────
 // Returns checkout parameters for the Wompi Widget / Redirect.

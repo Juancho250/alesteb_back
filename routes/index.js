@@ -30,8 +30,7 @@ router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("../src/modules/identity/api-keys").routes);
 router.use("/superadmin",     require("../src/modules/identity/superadmin").routes);
 router.use("/variants",       require("./variants_bundles.routes"));
-router.use("/wompi",          require("./wompi.routes"));
-router.use("/payments",       require("./payments.controller")); // parece mal nombrado
+router.use("/wompi",          require("../src/modules/payments").wompiRoutes);
 // Agrega esta línea junto a las demás rutas del panel
 router.use("/subscriptions", require("../src/modules/subscriptions").routes);
 

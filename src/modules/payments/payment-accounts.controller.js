@@ -1,9 +1,9 @@
-// controllers/paymentAccounts.controller.js
+// src/modules/payments/payment-accounts.controller.js
 // CRUD for store payment gateway accounts.
 // Secrets are always stored AES-256-GCM encrypted; never returned in plaintext.
-const db = require("../src/platform/database");
-const { encrypt }              = require("../utils/crypto");
-const { decryptCredentials, verifyWompiCredentials } = require("../services/payment.service");
+const db = require("../../platform/database");
+const { encrypt }              = require("../../../utils/crypto");
+const { decryptCredentials, verifyWompiCredentials } = require("./payment.service");
 
 const ALLOWED_PROVIDERS    = ["wompi"];
 const ALLOWED_ENVIRONMENTS = ["sandbox", "production"];

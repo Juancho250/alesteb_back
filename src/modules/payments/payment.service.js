@@ -1,4 +1,4 @@
-// services/payment.service.js
+// src/modules/payments/payment.service.js
 // Provider-agnostic payment gateway layer.
 // Today: Wompi. Adding Mercado Pago / PayU = another implementation of the same interface.
 //
@@ -9,9 +9,9 @@
 //   mapStatus(providerStatus)            → 'approved'|'declined'|'voided'|'error'|'pending'
 const crypto = require("crypto");
 const https  = require("https");
-const db     = require("../src/platform/database");
-const { encrypt, decrypt } = require("../utils/crypto");
-const { processInstallmentPayment } = require("../src/modules/sales").creditPayController;
+const db     = require("../../platform/database");
+const { encrypt, decrypt } = require("../../../utils/crypto");
+const { processInstallmentPayment } = require("../sales").creditPayController;
 
 // ─── Wompi endpoints ──────────────────────────────────────────────────────────
 // Evaluated lazily inside functions so tests can override process.env after module load.

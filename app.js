@@ -60,7 +60,7 @@ app.use((req, res, next) => {
 // express.raw() only runs for this exact path; all other routes use express.json() below
 app.post("/api/wompi/webhook",
   express.raw({ type: "application/json" }),
-  (req, res) => require("./controllers/wompi.controller").handleWebhook(req, res)
+  (req, res) => require("./src/modules/payments").wompiController.handleWebhook(req, res)
 );
 
 app.use(express.json({
@@ -128,8 +128,8 @@ const auraRoutes          = safeRequire("./routes/aura.routes",             "aur
 const variantsRoutes      = safeRequire("./routes/variants_bundles.routes", "variants_bundles.routes");
 const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
-const wompiRoutes              = safeRequire("./routes/wompi.routes",            "wompi.routes");
-const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
+const paymentsModule = safeRequire("./src/modules/payments", "payments.module");
+
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
@@ -177,8 +177,8 @@ if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (auraRoutes)          app.use("/api/aura",          auraRoutes);
-if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
-if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
+if (paymentsModule?.wompiRoutes) app.use("/api/wompi", paymentsModule.wompiRoutes);
+if (paymentsModule?.paymentAccountsRoutes) app.use("/api/payment-accounts", paymentsModule.paymentAccountsRoutes);
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryModule?.routes) app.use("/api/inventory", inventoryModule.routes);
@@ -220,8 +220,8 @@ app.get("/api/health", (req, res) => {
       aura:          !!auraRoutes,
       financePin:    !!financePinRoutes,
       creditPay:     !!salesModule?.creditPayRoutes,
-      wompi:          !!wompiRoutes,
-      paymentAccounts: !!paymentAccountsRoutes,
+      wompi:          !!paymentsModule?.wompiRoutes,
+      paymentAccounts: !!paymentsModule?.paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,
       contact:       !!contactRoutes,
       publicApi:     !!publicApiRoutes,
