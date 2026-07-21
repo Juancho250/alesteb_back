@@ -4,7 +4,7 @@ const db = require("../../platform/database");
 const {
   applyStockMovement,
   resolveAlerts,
-} = require("../../../services/inventory.service");
+} = require("../inventory").service;
 
 function _err(message, code) {
   const e = new Error(message);

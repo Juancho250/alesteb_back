@@ -1,4 +1,4 @@
-// services/inventory.service.js
+// src/modules/inventory/inventory.service.js
 // Central inventory engine.
 //
 // Formula: disponible = stock_fisico − stock_reserved − stock_safety
@@ -11,7 +11,7 @@
 
 'use strict';
 
-const db = require('../src/platform/database');
+const db = require("../../platform/database");
 
 const RESERVATION_TTL_MIN = 15;
 

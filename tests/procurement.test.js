@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const dbPath = require.resolve('../src/platform/database');
-const inventoryPath = require.resolve('../services/inventory.service');
+const inventoryPath = require.resolve('../src/modules/inventory/inventory.service');
 const socketPath = require.resolve('../config/socket');
 
 let state;

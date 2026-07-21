@@ -1,13 +1,13 @@
-// routes/inventory.routes.js
+// src/modules/inventory/inventory.routes.js
 // All routes require JWT (auth) + adminScope. Superadmin bypasses tenant checks.
 const express  = require('express');
 const router   = express.Router();
-const db       = require('../src/platform/database');
-const { auth, requireAdmin } = require('../src/modules/identity/auth');
-const { requireFeature } = require("../src/modules/subscriptions").middleware;
-const { adminScope }         = require('../middleware/adminScope');
-const inv      = require('../services/inventory.service');
-const { controller: procCtrl } = require("../src/modules/procurement");
+const db       = require("../../platform/database");
+const { auth, requireAdmin } = require("../identity/auth");
+const { requireFeature } = require("../subscriptions").middleware;
+const { adminScope }         = require("../../../middleware/adminScope");
+const inv      = require("./inventory.service");
+const { controller: procCtrl } = require("../procurement");
 
 router.use(auth, adminScope);
 router.use(requireFeature("has_inventory"));

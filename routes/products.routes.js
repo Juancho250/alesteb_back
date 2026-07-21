@@ -5,7 +5,7 @@ const { adminScope }        = require("../middleware/adminScope");
 const { uploadProduct }     = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");
 const db     = require("../src/platform/database");
-const invSvc = require("../services/inventory.service");
+const invSvc = require("../src/modules/inventory").service;
 
 const router = express.Router();
 

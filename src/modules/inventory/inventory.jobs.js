@@ -1,9 +1,9 @@
-// services/inventory.jobs.js
+// src/modules/inventory/inventory.jobs.js
 // Two cron jobs for the inventory engine:
 //   1. Release expired reservations (every minute)
 //   2. Create stock alerts for low/out-of-stock products (every 15 min)
 const cron = require('node-cron');
-const db   = require('../src/platform/database');
+const db   = require("../../platform/database");
 const inv  = require('./inventory.service');
 
 // ─── Job 1: liberar reservas vencidas ────────────────────────────────────────

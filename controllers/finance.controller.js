@@ -1,7 +1,7 @@
 // controllers/finance.controller.js
 "use strict";
 const pool            = require("../src/platform/database");
-const invSvc          = require("../services/inventory.service");
+const invSvc          = require("../src/modules/inventory").service;
 const { emitDataUpdate } = require("../config/socket");
 const fmtNum = (v) => parseFloat(v) || 0;
 

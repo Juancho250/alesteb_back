@@ -132,7 +132,7 @@ const wompiRoutes              = safeRequire("./routes/wompi.routes",           
 const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
-const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
+const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
 const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
 const creditPayRoutes   = safeRequire("./routes/creditPay.routes",       "creditPay.routes");
@@ -182,7 +182,7 @@ if (wompiRoutes)              app.use("/api/wompi",            wompiRoutes);
 if (paymentAccountsRoutes)    app.use("/api/payment-accounts", paymentAccountsRoutes);
 if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
-if (inventoryRoutes)     app.use("/api/inventory",     inventoryRoutes);
+if (inventoryModule?.routes) app.use("/api/inventory", inventoryModule.routes);
 if (procurementModule?.routes) app.use("/api/procurement", procurementModule.routes);
 if (financePinRoutes) app.use("/api/finance-pin", financePinRoutes);
 

@@ -3,7 +3,7 @@ require("./config/env")();
 
 const db = require("./src/platform/database");
 const { startSubscriptionCron } = require("./src/modules/subscriptions/subscription.cron");
-const { startInventoryJobs } = require("./services/inventory.jobs");
+const { startInventoryJobs } = require("./src/modules/inventory").jobs;
 const { startNotificationWorker } = require("./services/notification.worker");
 const { startAuraPredictiveJobs } = require("./services/auraPredictive.jobs");
 

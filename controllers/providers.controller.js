@@ -2,7 +2,7 @@
 "use strict";
 
 const db          = require("../src/platform/database");
-const invSvc      = require("../services/inventory.service");
+const invSvc      = require("../src/modules/inventory").service;
 const {
   service: procSvc,
 } = require("../src/modules/procurement");
