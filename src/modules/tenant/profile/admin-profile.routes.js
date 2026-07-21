@@ -1,14 +1,14 @@
 const express = require('express');
 const multer  = require('multer');
 
-const { auth } = require('../src/modules/identity/auth');
-const { adminScope }        = require('../middleware/adminScope');
+const { auth } = require('../../identity/auth');
+const { adminScope }        = require('../../../../middleware/adminScope');
 const {
   getAdminProfile,
   upsertAdminProfile,
   uploadLogo,
   deleteLogo,
-} = require('../controllers/adminProfile.controller');
+} = require('./admin-profile.controller');
 
 const router = express.Router();
 

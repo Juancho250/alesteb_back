@@ -111,7 +111,7 @@ const superadminModule = safeRequire("./src/modules/identity/superadmin", "ident
 const usersModule = safeRequire("./src/modules/identity/users", "identity.users.module");
 const rolesModule = safeRequire("./src/modules/identity/roles", "identity.roles.module");
 const apiKeysModule = safeRequire("./src/modules/identity/api-keys", "identity.api-keys.module");
-const adminProfileRoutes  = safeRequire("./routes/adminProfile.routes",     "adminProfile.routes");
+const tenantProfileModule = safeRequire("./src/modules/tenant/profile", "tenant.profile.module");
 const subscriptionRoutes  = safeRequire("./routes/subscription.routes",     "subscription.routes"); // ← nuevo
 
 const statsRoutes         = safeRequire("./routes/stats.routes",            "stats.routes");
@@ -160,7 +160,7 @@ if (superadminModule?.routes) app.use("/api/superadmin", superadminModule.routes
 if (usersModule?.routes) app.use("/api/users", usersModule.routes);
 if (rolesModule?.routes) app.use("/api/roles", rolesModule.routes);
 if (apiKeysModule?.routes) app.use("/api/api-keys", apiKeysModule.routes);
-if (adminProfileRoutes)  app.use("/api/admin-profile",  adminProfileRoutes);
+if (tenantProfileModule?.routes) app.use("/api/admin-profile", tenantProfileModule.routes);
 if (subscriptionRoutes)  app.use("/api/subscriptions",  subscriptionRoutes); // ← nuevo
 
 // — Resto del panel —
@@ -203,7 +203,7 @@ app.get("/api/health", (req, res) => {
       users:         !!usersModule?.routes,
       roles:         !!rolesModule?.routes,
       apiKeys:       !!apiKeysModule?.routes,
-      adminProfile:  !!adminProfileRoutes,
+      adminProfile:  !!tenantProfileModule?.routes,
       subscriptions: !!subscriptionRoutes,
       stats:         !!statsRoutes,
       providers:     !!providersRoutes,

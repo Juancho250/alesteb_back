@@ -1,7 +1,7 @@
-const pool       = require('../src/platform/database');
-const cloudinary = require('../config/cloudinary');
+const pool       = require('../../../platform/database');
+const cloudinary = require('../../../../config/cloudinary');
 const { Readable } = require('stream');
-const { invalidateBrandingCache } = require('../services/branding.service');
+const { invalidateBrandingCache } = require('../../../../services/branding.service');
 
 /* ─────────────────────────────────────────────
    Helper: buffer → stream para Cloudinary
