@@ -548,8 +548,11 @@ require.cache[socketPath] = {
   },
 };
 
-const procurement = require('../services/procurement.service');
-const procurementController = require('../controllers/procurement.controller');
+const {
+  service: procurement,
+  controller: procurementController,
+} = require('../src/modules/procurement');
+
 const providersController = require('../controllers/providers.controller');
 
 test.beforeEach(() => {
@@ -961,39 +964,81 @@ test('HTTP tenant errors are sanitized and provider receipt keeps its contract',
 
 test('source contract uses only real columns and trusted tenant callers', () => {
   const root = path.join(__dirname, '..');
-  const service = fs.readFileSync(path.join(root, 'services', 'procurement.service.js'), 'utf8');
-  const compact = service.replace(/\s+/g, ' ');
-  const sales = fs.readFileSync(path.join(root, 'controllers', 'sales.controller.js'), 'utf8');
-  const publicApi = fs.readFileSync(path.join(root, 'routes', 'public-api.routes.js'), 'utf8');
-  const procurementRoutes = fs.readFileSync(
-    path.join(root, 'routes', 'procurement.routes.js'), 'utf8'
-  );
-  const providerRoutes = fs.readFileSync(
-    path.join(root, 'routes', 'providers.routes.js'), 'utf8'
+
+  const service = fs.readFileSync(
+    path.join(
+      root,
+      'src',
+      'modules',
+      'procurement',
+      'procurement.service.js'
+    ),
+    'utf8'
   );
 
-  assert.doesNotMatch(service, /\bpoi\.(variant_id|procurement_order_id|updated_at)\b/i);
+  const compact = service.replace(/\s+/g, ' ');
+
+  const sales = fs.readFileSync(
+    path.join(root, 'controllers', 'sales.controller.js'),
+    'utf8'
+  );
+
+  const publicApi = fs.readFileSync(
+    path.join(root, 'routes', 'public-api.routes.js'),
+    'utf8'
+  );
+
+  const procurementRoutes = fs.readFileSync(
+    path.join(
+      root,
+      'src',
+      'modules',
+      'procurement',
+      'procurement.routes.js'
+    ),
+    'utf8'
+  );
+
+  const providerRoutes = fs.readFileSync(
+    path.join(root, 'routes', 'providers.routes.js'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(
+    service,
+    /\bpoi\.(variant_id|procurement_order_id|updated_at)\b/i
+  );
+
   assert.doesNotMatch(
     compact,
     /(?:INSERT|UPDATE)[^;`]*purchase_order_items[^;`]*\b(?:variant_id|procurement_order_id|updated_at)\b/i
   );
-  assert.doesNotMatch(compact, /UPDATE sale_items[^;`]*\bupdated_at\b/i);
+
+  assert.doesNotMatch(
+    compact,
+    /UPDATE sale_items[^;`]*\bupdated_at\b/i
+  );
+
   assert.match(
     service,
     /pro\.owner_admin_id = \$1[\s\S]*pro\.purchase_order_id = \$2[\s\S]*pro\.product_id = \$3/
   );
+
   assert.match(
     sales,
     /createProcurementOrdersForSale\(saleId, client, ownerAdminId\)/
   );
+
   assert.match(
     publicApi,
     /createProcurementOrdersForSale\(saleId, procClient, adminId\)/
   );
+
   assert.match(
     procurementRoutes,
-    /router\.post\('\/purchase-orders\/:id\/receive', requireManager, ctrl\.receivePurchaseOrder\)/
+    /router\.post\(\s*["']\/purchase-orders\/:id\/receive["']\s*,\s*requireManager\s*,\s*ctrl\.receivePurchaseOrder\s*\)/
   );
+
   assert.match(
     providerRoutes,
     /router\.patch\s*\(\"\/:id\/purchase-orders\/:orderId\/receive\",\s+requireManager,\s+ctrl\.receivePurchaseOrder\)/

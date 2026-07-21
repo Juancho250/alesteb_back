@@ -3,7 +3,9 @@
 
 const db          = require("../config/db");
 const invSvc      = require("../services/inventory.service");
-const procSvc     = require("../services/procurement.service");
+const {
+  service: procSvc,
+} = require("../src/modules/procurement");
 const { emitDataUpdate } = require("../config/socket");
 
 // ─────────────────────────────────────────────
