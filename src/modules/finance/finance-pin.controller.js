@@ -1,11 +1,11 @@
-// controllers/financePin.controller.js
+// src/modules/finance/finance-pin.controller.js
 const bcrypt = require("bcryptjs");
-const pool   = require("../src/platform/database");
+const pool   = require("../../platform/database");
 const {
   setFinanceUnlocked,
   clearFinanceUnlocked,
   getFinanceExpiresAt,
-} = require("../src/modules/identity/auth");
+} = require("../identity/auth");
 
 const SALT_ROUNDS    = 12;                // mismo que auth.controller.js
 const FINANCE_TTL_MS = 15 * 60 * 1000;

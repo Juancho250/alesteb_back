@@ -1,9 +1,9 @@
-// routes/financePin.routes.js
+// src/modules/finance/finance-pin.routes.js
 const express = require("express");
 const router  = express.Router();
-const ctrl    = require("../controllers/financePin.controller");
-const { auth, checkRateLimit } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
+const ctrl    = require("./finance-pin.controller");
+const { auth, checkRateLimit } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
 
 router.use(auth);
 router.use(adminScope);

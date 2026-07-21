@@ -1,9 +1,9 @@
-// routes/finance.routes.js
+// src/modules/finance/finance.routes.js
 const express = require("express");
 const router  = express.Router();
-const fc      = require("../controllers/finance.controller");
-const { auth, requireManager, requireFinancePin } = require("../src/modules/identity/auth");
-const { adminScope }                              = require("../middleware/adminScope");
+const fc      = require("./finance.controller");
+const { auth, requireManager, requireFinancePin } = require("../identity/auth");
+const { adminScope }                              = require("../../../middleware/adminScope");
 
 // ── Middleware global ─────────────────────────────────────────
 router.use(auth);

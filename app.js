@@ -116,7 +116,7 @@ const subscriptionsModule = safeRequire("./src/modules/subscriptions", "subscrip
 
 const statsRoutes         = safeRequire("./routes/stats.routes",            "stats.routes");
 const providersModule = safeRequire("./src/modules/providers", "providers.module");
-const financeRoutes       = safeRequire("./routes/finance.routes",          "finance.routes");
+const financeModule = safeRequire("./src/modules/finance", "finance.module");
 const productsRoutes      = safeRequire("./routes/products.routes",         "products.routes");
 const categoriesRoutes    = safeRequire("./routes/categories.routes",       "categories.routes");
 const discountsRoutes     = safeRequire("./routes/discounts.routes",        "discounts.routes");
@@ -134,7 +134,7 @@ const analyticsRoutes          = safeRequire("./routes/analytics.routes",       
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
 const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
-const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
+
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -165,7 +165,7 @@ if (subscriptionsModule?.routes) app.use("/api/subscriptions", subscriptionsModu
 // — Resto del panel —
 if (statsRoutes)         app.use("/api/stats",         statsRoutes);
 if (providersModule?.routes) app.use("/api/providers", providersModule.routes);
-if (financeRoutes)       app.use("/api/finance",       financeRoutes);
+if (financeModule?.routes) app.use("/api/finance", financeModule.routes);
 if (productsRoutes)      app.use("/api/products",      productsRoutes);
 if (categoriesRoutes)    app.use("/api/categories",    categoriesRoutes);
 if (salesModule?.routes) app.use("/api/sales", salesModule.routes);
@@ -183,7 +183,7 @@ if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryModule?.routes) app.use("/api/inventory", inventoryModule.routes);
 if (procurementModule?.routes) app.use("/api/procurement", procurementModule.routes);
-if (financePinRoutes) app.use("/api/finance-pin", financePinRoutes);
+if (financeModule?.pinRoutes) app.use("/api/finance-pin", financeModule.pinRoutes);
 
 // — API pública —
 if (publicApiRoutes)     app.use("/public-api/v1",     publicApiRoutes);
@@ -206,7 +206,7 @@ app.get("/api/health", (req, res) => {
       subscriptions: !!subscriptionsModule?.routes,
       stats:         !!statsRoutes,
       providers:     !!providersModule?.routes,
-      finance:       !!financeRoutes,
+      finance:       !!financeModule?.routes,
       products:      !!productsRoutes,
       categories:    !!categoriesRoutes,
       sales:         !!salesModule?.routes,
@@ -218,7 +218,7 @@ app.get("/api/health", (req, res) => {
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
       aura:          !!auraRoutes,
-      financePin:    !!financePinRoutes,
+      financePin:    !!financeModule?.pinRoutes,
       creditPay:     !!salesModule?.creditPayRoutes,
       wompi:          !!paymentsModule?.wompiRoutes,
       paymentAccounts: !!paymentsModule?.paymentAccountsRoutes,
