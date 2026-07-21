@@ -1,9 +1,9 @@
-// routes/apikeys.routes.js
+// src/modules/identity/api-keys/api-keys.routes.js
 const express     = require("express");
 const router      = express.Router();
-const ctrl        = require("../controllers/apikeys.controller");
-const { auth, requireAdmin } = require("../src/modules/identity/auth");
-const { adminScope }         = require("../middleware/adminScope");
+const ctrl        = require("./api-keys.controller");
+const { auth, requireAdmin } = require("../auth");
+const { adminScope }         = require("../../../../middleware/adminScope");
 
 // ── Middleware global ─────────────────────────────────────────
 router.use(auth);

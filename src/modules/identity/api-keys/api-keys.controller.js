@@ -1,5 +1,5 @@
-// controllers/apikeys.controller.js
-const db     = require("../src/platform/database");
+// src/modules/identity/api-keys/api-keys.controller.js
+const db     = require("../../../platform/database");
 const crypto = require("crypto");
 
 const AVAILABLE_PERMISSIONS = [
