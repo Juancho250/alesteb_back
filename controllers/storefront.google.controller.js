@@ -1,4 +1,4 @@
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
 

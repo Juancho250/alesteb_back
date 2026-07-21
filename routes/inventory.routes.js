@@ -2,7 +2,7 @@
 // All routes require JWT (auth) + adminScope. Superadmin bypasses tenant checks.
 const express  = require('express');
 const router   = express.Router();
-const db       = require('../config/db');
+const db       = require('../src/platform/database');
 const { auth, requireAdmin } = require('../middleware/auth.middleware');
 const { requireFeature } = require("../middleware/subscription.middleware");
 const { adminScope }         = require('../middleware/adminScope');

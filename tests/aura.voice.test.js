@@ -13,7 +13,7 @@ process.env.AURA_VOICE_MAX_AUDIO_MB = "1";
 process.env.AURA_VOICE_MAX_DURATION_SECONDS = "60";
 process.env.AURA_VOICE_SESSION_TTL_SECONDS = "600";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const auraChatPath = require.resolve("../services/auraChat.service");
 const axiosPath = require.resolve("axios");
 

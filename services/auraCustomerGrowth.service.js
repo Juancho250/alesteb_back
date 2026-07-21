@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 const CUSTOMER_GROWTH_VERSION = "aura_customer_growth_v1";
 const MAX_DETAIL_LIMIT = 100;

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const dbPath = require.resolve('../config/db');
+const dbPath = require.resolve('../src/platform/database');
 const inventoryPath = require.resolve('../services/inventory.service');
 const socketPath = require.resolve('../config/socket');
 

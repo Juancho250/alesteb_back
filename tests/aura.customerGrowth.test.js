@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const calls = [];
 const runs = [];
 const snapshots = [];

@@ -1,5 +1,5 @@
 // controllers/apikeys.controller.js
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const crypto = require("crypto");
 
 const AVAILABLE_PERMISSIONS = [

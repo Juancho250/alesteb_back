@@ -17,7 +17,7 @@ process.env.AURA_IMAGE_MOCK_PROVIDER_ENABLED = "true";
 process.env.AURA_VOICE_MOCK_PROVIDER_ENABLED = "true";
 delete process.env.OPENAI_API_KEY;
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 require.cache[dbPath] = {
   id: dbPath,
   filename: dbPath,

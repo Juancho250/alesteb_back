@@ -1,5 +1,5 @@
 // src/controllers/variants.controller.js
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const cloudinary = require("../config/cloudinary");
 const { emitDataUpdate } = require("../config/socket");
 const inv = require("../services/inventory.service");

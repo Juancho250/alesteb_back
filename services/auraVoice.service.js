@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const axios = require("axios");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const auraChat = require("./auraChat.service");
 const { redactText, redactObject } = require("./auraAudit.service");
 

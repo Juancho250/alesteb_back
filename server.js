@@ -7,7 +7,7 @@ require('./config/env')(); // Valida variables de entorno al arrancar
 const http            = require('http');
 const app             = require('./app');
 const { initSocket }  = require('./config/socket');
-const db              = require('./config/db');
+const db              = require('./src/platform/database');
 
 const PORT   = process.env.PORT || 4000;
 const server = http.createServer(app);

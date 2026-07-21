@@ -1,5 +1,5 @@
 'use strict';
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 const DEFAULTS = {
   businessName:   'Tu negocio',

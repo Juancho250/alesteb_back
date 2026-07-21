@@ -1,4 +1,4 @@
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 exports.registerPayment = async (req, res) => {
   const { provider_id, amount, payment_method } = req.body;

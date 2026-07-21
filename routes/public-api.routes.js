@@ -1,7 +1,7 @@
 // routes/public-api.routes.js
 const express        = require("express");
 const router         = express.Router();
-const db             = require("../config/db");
+const db             = require("../src/platform/database");
 const {
   apiKeyAuth,
   requireApiPermission,

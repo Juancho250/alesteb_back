@@ -1,5 +1,5 @@
 // controllers/stats.controller.js
-const pool = require("../config/db");
+const pool = require("../src/platform/database");
 
 // ─────────────────────────────────────────────
 // Helper de scope (tenant isolation)

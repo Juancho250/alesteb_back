@@ -5,7 +5,7 @@ process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "sk-test-aura-tools";
 process.env.OPENAI_MODEL = "gpt-5-mini";
 process.env.AURA_OPENAI_TIMEOUT_MS = "18000";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const calls = [];
 
 function tenantAmount(ownerAdminId, base) {

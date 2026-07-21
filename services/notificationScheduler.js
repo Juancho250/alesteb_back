@@ -1,6 +1,6 @@
 // src/services/notificationScheduler.js
 const cron = require("node-cron");
-const db   = require("../config/db");
+const db   = require("../src/platform/database");
 const { notifyUser, Payloads } = require("./push.service");
 
 // ─────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 require("dotenv/config");
 require("./config/env")();
 
-const db = require("./config/db");
+const db = require("./src/platform/database");
 const { startSubscriptionCron } = require("./services/subscription.cron");
 const { startInventoryJobs } = require("./services/inventory.jobs");
 const { startNotificationWorker } = require("./services/notification.worker");

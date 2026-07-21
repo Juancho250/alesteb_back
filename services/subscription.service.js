@@ -2,7 +2,7 @@
 // Núcleo de toda la lógica de suscripción.
 // Importado por: superadmin.controller, subscription.controller, cron jobs.
 
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { invalidateCache } = require("../middleware/subscription.middleware");
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

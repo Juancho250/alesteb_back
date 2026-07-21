@@ -1,7 +1,7 @@
 // controllers/users.controller.js
 // Cada admin gestiona ÚNICAMENTE sus propios usuarios registrados.
 // El superadmin puede ver y gestionar todos (bypass automático en el middleware).
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const bcrypt = require("bcryptjs");
 const { emitDataUpdate } = require("../config/socket");
 

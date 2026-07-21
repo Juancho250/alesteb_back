@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 const DEFAULT_HISTORY_LIMIT = 12;
 const DEFAULT_CONTENT_LIMIT = 2_000;

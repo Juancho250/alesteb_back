@@ -6,7 +6,7 @@ process.env.OPENAI_API_KEY = "sk-test-images";
 process.env.OPENAI_IMAGE_MODEL = "gpt-image-test";
 process.env.AURA_IMAGE_MAX_JOBS_PER_DAY = "20";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const providerPath = require.resolve("../services/auraImageOpenAI.service");
 const calls = [];
 const jobs = [];

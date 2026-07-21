@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { recordAuraUsage, estimateAuraCost } = require("./auraUsage.service");
 
 const SENSITIVE_KEY_RE = /(password|token|secret|api[_-]?key|authorization|cookie|cedula|documento|phone|email)/i;

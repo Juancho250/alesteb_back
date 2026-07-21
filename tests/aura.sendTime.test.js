@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 process.env.AURA_SEND_TIME_MIN_OBSERVATIONS = "10";
 process.env.AURA_SEND_TIME_MIN_CAMPAIGNS = "2";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const calls = [];
 const runs = [];
 const snapshots = [];

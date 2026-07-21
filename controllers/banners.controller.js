@@ -1,5 +1,5 @@
 // controllers/banners.controller.js
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { emitDataUpdate }  = require("../config/socket");
 const { assertOwnership } = require("../middleware/adminScope");
 

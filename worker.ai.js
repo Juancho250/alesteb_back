@@ -3,7 +3,7 @@ process.env.ALESTEB_PROCESS_ROLE = "image-worker";
 require("dotenv/config");
 require("./config/env")();
 
-const db = require("./config/db");
+const db = require("./src/platform/database");
 const { startAuraImageWorker } = require("./services/auraImageWorker.service");
 
 const worker = startAuraImageWorker();

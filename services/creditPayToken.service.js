@@ -1,7 +1,7 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const db  = require('../config/db');
+const db  = require('../src/platform/database');
 
 const AUDIENCE = 'credit-installment-pay';
 const EXPIRES_IN = '72h';

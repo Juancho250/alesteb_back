@@ -1,7 +1,7 @@
 // middleware/auth.middleware.js
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 
 // ============================================
 // 🛡️ AUTENTICACIÓN JWT (panel web)

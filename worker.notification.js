@@ -3,7 +3,7 @@ process.env.ALESTEB_PROCESS_ROLE = "notification-worker";
 require("dotenv/config");
 require("./config/env")();
 
-const db = require("./config/db");
+const db = require("./src/platform/database");
 const { startNotificationWorker } = require("./services/notification.worker");
 
 const worker = startNotificationWorker();

@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { enqueueCampaignDelivery } = require("./notificationOutbox.service");
 
 const ACTION_PERMISSIONS = {

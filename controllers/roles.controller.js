@@ -1,7 +1,7 @@
 // controllers/roles.controller.js
 // Solo superadmin puede crear/eliminar roles.
 // Admins pueden listar para poblar selectores en el frontend.
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 // Roles del sistema que nunca deben eliminarse
 const PROTECTED_ROLES = ["superadmin", "admin", "user"];

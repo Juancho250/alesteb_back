@@ -1,5 +1,5 @@
 // controllers/products.controller.js
-const db         = require("../config/db");
+const db         = require("../src/platform/database");
 const cloudinary = require("../config/cloudinary");
 const { emitDataUpdate }              = require("../config/socket");
 const { assertOwnership }             = require("../middleware/adminScope");

@@ -1,5 +1,5 @@
 // controllers/discounts.controller.js
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { emitDataUpdate } = require("../config/socket");
 
 // Helper: verifica ownership usando req.isSuperAdmin / req.adminId

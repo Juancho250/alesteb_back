@@ -1,6 +1,6 @@
 // controllers/notifications.controller.js
 const crypto   = require('crypto');
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { getOrCreateSettings, enqueueNotification } = require("../services/notification.service");
 const whatsapp = require("../services/providers/whatsapp.provider");
 const { updateProviderStatusByMessageId } = require("../services/notificationOutbox.service");

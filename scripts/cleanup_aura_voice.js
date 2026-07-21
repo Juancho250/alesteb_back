@@ -1,7 +1,7 @@
 require("dotenv/config");
 require("../config/env")();
 
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { cleanupExpiredVoiceData } = require("../services/auraVoice.service");
 
 async function main() {

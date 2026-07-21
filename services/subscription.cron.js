@@ -1,7 +1,7 @@
 // services/subscription.cron.js
 const cron = require("node-cron");
 const subscriptionService = require("./subscription.service");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 // ─────────────────────────────────────────────────────────────────
 // OPCIONAL: importa tu módulo de email cuando esté listo

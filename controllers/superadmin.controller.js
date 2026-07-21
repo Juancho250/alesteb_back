@@ -1,6 +1,6 @@
 // controllers/superadmin.controller.js
 // Solo accesible por el rol "superadmin"
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const bcrypt = require("bcryptjs");
 const subscriptionService = require("../services/subscription.service");
 

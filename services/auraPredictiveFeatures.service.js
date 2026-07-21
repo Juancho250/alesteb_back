@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 const FEATURE_VERSION = 'predictive_features_v1';
 const MAX_BACKFILL_DAYS = 370;

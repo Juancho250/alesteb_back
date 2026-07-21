@@ -6,7 +6,7 @@
 // Solo elimina filas sin business_name que no sean el registro más antiguo por user_id.
 // Siempre muestra un preview antes de borrar. Pasar --execute para aplicar.
 
-const db  = require('../config/db');
+const db  = require('../src/platform/database');
 const DRY = !process.argv.includes('--execute');
 
 async function main() {

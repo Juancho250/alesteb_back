@@ -1,6 +1,6 @@
 // src/controllers/pushSubscription.controller.js
 
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 // ── POST /api/notifications/subscribe ────────────────────────
 exports.subscribe = async (req, res) => {

@@ -4,7 +4,7 @@
 require('dotenv/config');
 require('../config/env')();
 
-const db = require('../config/db');
+const db = require('../src/platform/database');
 const predictive = require('../services/auraPredictiveFeatures.service');
 
 function arg(name) {

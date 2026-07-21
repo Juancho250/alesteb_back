@@ -1,7 +1,7 @@
 'use strict';
 // controllers/creditProfile.controller.js
 
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 // GET /users/:id/credit-profile
 exports.getCreditProfile = async (req, res) => {

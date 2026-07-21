@@ -1,7 +1,7 @@
 'use strict';
 // controllers/creditSchedule.controller.js
 
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 // controllers/analytics.controller.js
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 const ANALYTICS_WRITE_PERMISSION = "analytics:write";
 const RETENTION_DAYS = 180;

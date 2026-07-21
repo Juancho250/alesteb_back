@@ -1,7 +1,7 @@
 // controllers/providers.controller.js
 "use strict";
 
-const db          = require("../config/db");
+const db          = require("../src/platform/database");
 const invSvc      = require("../services/inventory.service");
 const {
   service: procSvc,

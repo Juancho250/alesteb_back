@@ -1,5 +1,5 @@
 // controllers/subscription.controller.js
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const subscriptionService = require("../services/subscription.service");
 
 // ──────────────────────────────────────────

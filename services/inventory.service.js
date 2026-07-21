@@ -11,7 +11,7 @@
 
 'use strict';
 
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 const RESERVATION_TTL_MIN = 15;
 

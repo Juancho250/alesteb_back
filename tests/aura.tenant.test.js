@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 process.env.JWT_SECRET = process.env.JWT_SECRET || "a".repeat(64);
 process.env.AURA_DAILY_REQUEST_LIMIT = "100";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const calls = [];
 const finishedRuns = new Set();
 let usageFinishUpdates = 0;

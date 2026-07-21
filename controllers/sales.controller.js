@@ -1,5 +1,5 @@
 // controllers/sales.controller.js
-const db         = require("../config/db");
+const db         = require("../src/platform/database");
 const inv        = require("../services/inventory.service");
 const cloudinary = require("../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail } = require("../config/emailConfig");

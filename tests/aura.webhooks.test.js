@@ -17,7 +17,7 @@ function mockModule(modulePath, exports) {
   require.cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports };
 }
 
-mockModule("../config/db", { query: async () => ({ rows: [], rowCount: 0 }) });
+mockModule("../src/platform/database", { query: async () => ({ rows: [], rowCount: 0 }) });
 mockModule("../services/notification.service", {
   getOrCreateSettings: async () => ({}),
   enqueueNotification: async () => null,

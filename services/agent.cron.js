@@ -2,7 +2,7 @@
 // DEPRECATED: legacy autonomous agent cron. Disabled by default and never
 // enabled in production. Worker-safe jobs should live in worker.js services.
 const cron = require("node-cron");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { TOOLS } = require("./agent.tools");
 const Groq = require("groq-sdk");
 const { recordUsage } = require("./token-budget");

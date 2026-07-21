@@ -1,7 +1,7 @@
 require("dotenv/config");
 require("../config/env")();
 
-const db = require("../config/db");
+const db = require("../src/platform/database");
 const { runDailyPredictiveFeatureJob } = require("../services/auraPredictiveFeatures.service");
 
 async function main() {

@@ -9,7 +9,7 @@
 //   mapStatus(providerStatus)            → 'approved'|'declined'|'voided'|'error'|'pending'
 const crypto = require("crypto");
 const https  = require("https");
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const { encrypt, decrypt } = require("../utils/crypto");
 const { processInstallmentPayment } = require("../controllers/creditPay.controller");
 

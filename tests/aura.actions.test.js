@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 process.env.AURA_ACTION_EXPIRY_HOURS = "24";
 process.env.WHATSAPP_REQUIRE_TEMPLATES = "true";
 
-const dbPath = require.resolve("../config/db");
+const dbPath = require.resolve("../src/platform/database");
 const calls = [];
 const actionsTable = [];
 const campaignsTable = [];

@@ -4,7 +4,7 @@ const { auth, requireRole } = require("../middleware/auth.middleware");
 const { adminScope }        = require("../middleware/adminScope");
 const { uploadProduct }     = require("../middleware/upload.middleware");
 const ctrl = require("../controllers/products.controller");
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const invSvc = require("../services/inventory.service");
 
 const router = express.Router();

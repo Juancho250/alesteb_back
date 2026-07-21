@@ -7,7 +7,7 @@
 //
 // El superadmin bypasea TODO.
 
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 // ─── Cache en memoria (TTL 5 min por admin) ──────────────────────────────────
 const _cache = new Map(); // adminId → { data, expiresAt }

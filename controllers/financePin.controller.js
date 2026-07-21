@@ -1,6 +1,6 @@
 // controllers/financePin.controller.js
 const bcrypt = require("bcryptjs");
-const pool   = require("../config/db");
+const pool   = require("../src/platform/database");
 const {
   setFinanceUnlocked,
   clearFinanceUnlocked,

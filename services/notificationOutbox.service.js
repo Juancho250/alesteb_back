@@ -1,7 +1,7 @@
 'use strict';
 
 const brevo = require('@getbrevo/brevo');
-const db = require('../config/db');
+const db = require('../src/platform/database');
 const whatsappProvider = require('./providers/whatsapp.provider');
 const { sendPushToOne } = require('./push.service');
 const { prepareCampaignRecipients } = require('./auraCampaigns.service');

@@ -1,6 +1,6 @@
 "use strict";
 
-const db = require("../../../config/db");
+const db = require("../../platform/database");
 const procurement = require("./procurement.service");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

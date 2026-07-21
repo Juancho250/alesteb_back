@@ -1,5 +1,5 @@
 // controllers/chat.controller.js
-const db = require('../config/db');
+const db = require('../src/platform/database');
 const cloudinary = require('../config/cloudinary');
 const { CloudinaryStorage } = require('../middleware/cloudinaryStorage');
 const multer = require('multer');

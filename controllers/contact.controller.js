@@ -1,5 +1,5 @@
 // controllers/contact.controller.js
-const db   = require("../config/db");
+const db   = require("../src/platform/database");
 const { getBrevoClient } = require("../config/emailConfig");   // reusa tu helper existente
 
 // ── POST /api/contact  (público — sin auth) ──────────────────────────────────

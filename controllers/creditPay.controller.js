@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const db     = require('../config/db');
+const db     = require('../src/platform/database');
 const { decrypt } = require('../utils/crypto');
 const { verifyInstallmentPayToken } = require('../services/creditPayToken.service');
 const { syncPaymentStatus } = require('./creditSchedule.controller');

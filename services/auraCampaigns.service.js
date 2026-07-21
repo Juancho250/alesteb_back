@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../config/db");
+const db = require("../src/platform/database");
 
 const CAMPAIGN_CHANNELS = new Set(["email", "whatsapp", "push", "instagram", "tiktok"]);
 const CONSENT_CHANNELS = new Set(["email", "whatsapp", "push"]);

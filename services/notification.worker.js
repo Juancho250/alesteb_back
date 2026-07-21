@@ -3,7 +3,7 @@
 
 const cron                        = require('node-cron');
 const notificationService         = require('./notification.service');
-const db                          = require('../config/db');
+const db                          = require('../src/platform/database');
 const { sendCreditReminderEmail } = require('../config/emailConfig');
 const { getAdminBranding }        = require('./branding.service');
 const { generateInstallmentPayToken } = require('./creditPayToken.service');

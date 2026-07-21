@@ -4,7 +4,7 @@
 // por lo que req.apiKey.adminId = owner_admin_id del tenant.
 // NUNCA se acepta owner_admin_id del cuerpo del request.
 
-const db     = require("../config/db");
+const db     = require("../src/platform/database");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const crypto = require("crypto");

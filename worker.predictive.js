@@ -3,7 +3,7 @@ process.env.ALESTEB_PROCESS_ROLE = "predictive-worker";
 require("dotenv/config");
 require("./config/env")();
 
-const db = require("./config/db");
+const db = require("./src/platform/database");
 const { startAuraPredictiveJobs } = require("./services/auraPredictive.jobs");
 
 const worker = startAuraPredictiveJobs();

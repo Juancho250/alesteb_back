@@ -1,7 +1,7 @@
 // services/notification.service.js
 'use strict';
 
-const db = require('../config/db');
+const db = require('../src/platform/database');
 
 function _render(template, payload) {
   if (!template) return '';
