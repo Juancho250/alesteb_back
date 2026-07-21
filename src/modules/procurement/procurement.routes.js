@@ -8,7 +8,7 @@ const ctrl = require("./procurement.controller");
 const {
   auth,
   requireManager,
-} = require("../../../src/modules/identity/auth");
+} = require("../identity/auth");
 
 const {
   adminScope,
