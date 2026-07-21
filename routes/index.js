@@ -28,7 +28,7 @@ router.use("/contact",        require("./contact.routes"));
 router.use("/notifications",  require("./notifications.routes"));
 router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("../src/modules/identity/api-keys").routes);
-router.use("/superadmin",     require("./superadmin.routes"));
+router.use("/superadmin",     require("../src/modules/identity/superadmin").routes);
 router.use("/variants",       require("./variants_bundles.routes"));
 router.use("/wompi",          require("./wompi.routes"));
 router.use("/payments",       require("./payments.controller")); // parece mal nombrado

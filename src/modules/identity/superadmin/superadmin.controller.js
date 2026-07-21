@@ -1,8 +1,8 @@
-// controllers/superadmin.controller.js
+// src/modules/identity/superadmin/superadmin.controller.js
 // Solo accesible por el rol "superadmin"
-const db     = require("../src/platform/database");
+const db     = require("../../../platform/database");
 const bcrypt = require("bcryptjs");
-const subscriptionService = require("../services/subscription.service");
+const subscriptionService = require("../../../../services/subscription.service");
 
 const SALT_ROUNDS = 12;
 

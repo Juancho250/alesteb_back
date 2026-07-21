@@ -107,7 +107,7 @@ console.log("\n[APP] Cargando rutas...");
 // 🗺️ RUTAS — Panel de administración
 // ============================================
 const authModule = safeRequire("./src/modules/identity/auth", "identity.auth.module");
-const superadminRoutes    = safeRequire("./routes/superadmin.routes",       "superadmin.routes");
+const superadminModule = safeRequire("./src/modules/identity/superadmin", "identity.superadmin.module");
 const usersModule = safeRequire("./src/modules/identity/users", "identity.users.module");
 const rolesModule = safeRequire("./src/modules/identity/roles", "identity.roles.module");
 const apiKeysModule = safeRequire("./src/modules/identity/api-keys", "identity.api-keys.module");
@@ -156,7 +156,7 @@ if (creditPayRoutes)     app.use("/pay",               creditPayRoutes);
 if (authModule?.routes) app.use("/api/auth", authModule.routes);
 
 // — Panel de administración —
-if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);
+if (superadminModule?.routes) app.use("/api/superadmin", superadminModule.routes);
 if (usersModule?.routes) app.use("/api/users", usersModule.routes);
 if (rolesModule?.routes) app.use("/api/roles", rolesModule.routes);
 if (apiKeysModule?.routes) app.use("/api/api-keys", apiKeysModule.routes);
@@ -199,7 +199,7 @@ app.get("/api/health", (req, res) => {
     ...base,
     routes: {
       auth:          !!authModule?.routes,
-      superadmin:    !!superadminRoutes,
+      superadmin:    !!superadminModule?.routes,
       users:         !!usersModule?.routes,
       roles:         !!rolesModule?.routes,
       apiKeys:       !!apiKeysModule?.routes,
