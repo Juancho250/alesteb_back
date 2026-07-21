@@ -16,7 +16,7 @@ router.use("/products",       require("./products.routes"));
 router.use("/categories",     require("./categories.routes"));
 router.use("/providers",      require("./providers.routes"));
 router.use("/sales",          require("./sales.routes"));
-router.use("/users",          require("./users.routes"));
+router.use("/users",          require("../src/modules/identity/users").routes);
 router.use("/banners",        require("./banners.routes"));
 router.use("/discounts",      require("./discounts.routes"));
 router.use("/finance",        require("./finance.routes"));

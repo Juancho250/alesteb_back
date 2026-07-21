@@ -1,11 +1,11 @@
-// routes/users.routes.js
+// src/modules/identity/users/users.routes.js
 // Cada admin gestiona únicamente sus propios usuarios.
 // El superadmin puede operar sobre todos (bypass en middleware).
 const express      = require("express");
 const router       = express.Router();
-const usersCtrl    = require("../controllers/users.controller");
-const creditProfile = require("../controllers/creditProfile.controller");
-const { auth, requireAdmin } = require("../src/modules/identity/auth");
+const usersCtrl    = require("./users.controller");
+const creditProfile = require("../../../../controllers/creditProfile.controller");
+const { auth, requireAdmin } = require("../auth");
 
 // Todas las rutas requieren autenticación como mínimo admin
 router.use(auth, requireAdmin);
