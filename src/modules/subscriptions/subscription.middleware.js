@@ -1,4 +1,4 @@
-// middleware/subscription.middleware.js
+// src/modules/subscriptions/subscription.middleware.js
 // Protege rutas de API según el plan del admin autenticado.
 //
 // Uso en rutas:
@@ -7,7 +7,7 @@
 //
 // El superadmin bypasea TODO.
 
-const db = require("../src/platform/database");
+const db = require("../../platform/database");
 
 // ─── Cache en memoria (TTL 5 min por admin) ──────────────────────────────────
 const _cache = new Map(); // adminId → { data, expiresAt }

@@ -112,7 +112,7 @@ const usersModule = safeRequire("./src/modules/identity/users", "identity.users.
 const rolesModule = safeRequire("./src/modules/identity/roles", "identity.roles.module");
 const apiKeysModule = safeRequire("./src/modules/identity/api-keys", "identity.api-keys.module");
 const tenantProfileModule = safeRequire("./src/modules/tenant/profile", "tenant.profile.module");
-const subscriptionRoutes  = safeRequire("./routes/subscription.routes",     "subscription.routes"); // ← nuevo
+const subscriptionsModule = safeRequire("./src/modules/subscriptions", "subscriptions.module");
 
 const statsRoutes         = safeRequire("./routes/stats.routes",            "stats.routes");
 const providersRoutes     = safeRequire("./routes/providers.routes",        "providers.routes");
@@ -161,7 +161,7 @@ if (usersModule?.routes) app.use("/api/users", usersModule.routes);
 if (rolesModule?.routes) app.use("/api/roles", rolesModule.routes);
 if (apiKeysModule?.routes) app.use("/api/api-keys", apiKeysModule.routes);
 if (tenantProfileModule?.routes) app.use("/api/admin-profile", tenantProfileModule.routes);
-if (subscriptionRoutes)  app.use("/api/subscriptions",  subscriptionRoutes); // ← nuevo
+if (subscriptionsModule?.routes) app.use("/api/subscriptions", subscriptionsModule.routes);
 
 // — Resto del panel —
 if (statsRoutes)         app.use("/api/stats",         statsRoutes);
@@ -204,7 +204,7 @@ app.get("/api/health", (req, res) => {
       roles:         !!rolesModule?.routes,
       apiKeys:       !!apiKeysModule?.routes,
       adminProfile:  !!tenantProfileModule?.routes,
-      subscriptions: !!subscriptionRoutes,
+      subscriptions: !!subscriptionsModule?.routes,
       stats:         !!statsRoutes,
       providers:     !!providersRoutes,
       finance:       !!financeRoutes,

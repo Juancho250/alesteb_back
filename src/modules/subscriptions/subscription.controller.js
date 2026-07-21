@@ -1,6 +1,6 @@
-// controllers/subscription.controller.js
-const db = require("../src/platform/database");
-const subscriptionService = require("../services/subscription.service");
+// src/modules/subscriptions/subscription.controller.js
+const db = require("../../platform/database");
+const subscriptionService = require("./subscription.service");
 
 // ──────────────────────────────────────────
 // PLANES PÚBLICOS

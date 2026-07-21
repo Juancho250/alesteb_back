@@ -16,7 +16,7 @@ const {
 
 const {
   requireFeature,
-} = require("../../../middleware/subscription.middleware");
+} = require("../subscriptions").middleware;
 
 router.use(auth);
 router.use(adminScope);

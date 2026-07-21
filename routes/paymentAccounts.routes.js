@@ -3,7 +3,7 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../controllers/paymentAccounts.controller");
 const { auth, requireAdmin }  = require("../src/modules/identity/auth");
-const { requireFeature }      = require("../middleware/subscription.middleware");
+const { requireFeature }      = require("../src/modules/subscriptions").middleware;
 const { adminScope }          = require("../middleware/adminScope");
 
 // All payment-account routes require: valid JWT + admin role + has_wompi_payments feature

@@ -1,12 +1,12 @@
-// routes/subscription.routes.js
+// src/modules/subscriptions/subscription.routes.js
 const express = require("express");
 const router  = express.Router();
-const ctrl    = require("../controllers/subscription.controller");
+const ctrl    = require("./subscription.controller");
 const {
   auth,
   requireAdmin,
   requireSuperAdmin,
-} = require("../src/modules/identity/auth");
+} = require("../identity/auth");
 
 // ── Pública ────────────────────────────────────────────────────
 // No requiere auth; la tabla debe tener filas con is_active=true, is_public=true

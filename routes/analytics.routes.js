@@ -4,7 +4,7 @@ const router     = express.Router();
 const ctrl       = require("../controllers/analytics.controller");
 const { auth, requireManager } = require("../src/modules/identity/auth");
 const { adminScope } = require("../middleware/adminScope");
-const { requireFeature } = require("../middleware/subscription.middleware");
+const { requireFeature } = require("../src/modules/subscriptions").middleware;
 
 // ── Pública — storefront sin auth ─────────────────────────────────
 router.post("/pageview", ctrl.trackPageview);

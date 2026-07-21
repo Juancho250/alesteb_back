@@ -346,7 +346,7 @@ require.cache[dbPath] = {
 
 const persistence = require("../services/auraPersistence.service");
 const { resolveAuraTenant } = require("../middleware/aura.middleware");
-const { requireFeature, invalidateCache } = require("../middleware/subscription.middleware");
+const { requireFeature, invalidateCache } = require("../src/modules/subscriptions").middleware;
 const { requireManager } = require("../src/modules/identity/auth");
 const auraController = require("../controllers/aura.controller");
 const agentController = require("../controllers/agent.controller");

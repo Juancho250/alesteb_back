@@ -2,7 +2,7 @@
 // Solo accesible por el rol "superadmin"
 const db     = require("../../../platform/database");
 const bcrypt = require("bcryptjs");
-const subscriptionService = require("../../../../services/subscription.service");
+const subscriptionService = require("../../subscriptions").service;
 
 const SALT_ROUNDS = 12;
 
