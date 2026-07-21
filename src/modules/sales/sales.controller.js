@@ -1,13 +1,13 @@
-// controllers/sales.controller.js
-const db         = require("../src/platform/database");
-const inv        = require("../src/modules/inventory").service;
-const cloudinary = require("../config/cloudinary");
-const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail } = require("../config/emailConfig");
-const { getAdminBranding } = require("../services/branding.service");
-const { emitDataUpdate } = require("../config/socket");
-const { notifyUser, notifyTenant, Payloads } = require("../services/push.service");
-const { service: procurement } = require("../src/modules/procurement");
-const { enqueueNotification } = require("../services/notification.service");
+// src/modules/sales/sales.controller.js
+const db         = require("../../platform/database");
+const inv        = require("../inventory").service;
+const cloudinary = require("../../../config/cloudinary");
+const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail } = require("../../../config/emailConfig");
+const { getAdminBranding } = require("../../../services/branding.service");
+const { emitDataUpdate } = require("../../../config/socket");
+const { notifyUser, notifyTenant, Payloads } = require("../../../services/push.service");
+const { service: procurement } = require("../procurement");
+const { enqueueNotification } = require("../../../services/notification.service");
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 

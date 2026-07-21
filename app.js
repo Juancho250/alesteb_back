@@ -120,7 +120,7 @@ const financeRoutes       = safeRequire("./routes/finance.routes",          "fin
 const productsRoutes      = safeRequire("./routes/products.routes",         "products.routes");
 const categoriesRoutes    = safeRequire("./routes/categories.routes",       "categories.routes");
 const discountsRoutes     = safeRequire("./routes/discounts.routes",        "discounts.routes");
-const salesRoutes         = safeRequire("./routes/sales.routes",            "sales.routes");
+const salesModule = safeRequire("./src/modules/sales", "sales.module");
 const bannersRoutes       = safeRequire("./routes/banners.routes",          "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
@@ -135,7 +135,6 @@ const contactRoutes       = safeRequire("./routes/contact.routes",          "con
 const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
 const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
-const creditPayRoutes   = safeRequire("./routes/creditPay.routes",       "creditPay.routes");
 
 // ============================================
 // 🌐 RUTAS — API Pública
@@ -152,7 +151,7 @@ console.log("[APP] Rutas cargadas.\n");
 // ============================================
 
 // — Auth —
-if (creditPayRoutes)     app.use("/pay",               creditPayRoutes);
+if (salesModule?.creditPayRoutes) app.use("/pay", salesModule.creditPayRoutes);
 if (authModule?.routes) app.use("/api/auth", authModule.routes);
 
 // — Panel de administración —
@@ -169,7 +168,7 @@ if (providersRoutes)     app.use("/api/providers",     providersRoutes);
 if (financeRoutes)       app.use("/api/finance",       financeRoutes);
 if (productsRoutes)      app.use("/api/products",      productsRoutes);
 if (categoriesRoutes)    app.use("/api/categories",    categoriesRoutes);
-if (salesRoutes)         app.use("/api/sales",         salesRoutes);
+if (salesModule?.routes) app.use("/api/sales", salesModule.routes);
 if (discountsRoutes)     app.use("/api/discounts",     discountsRoutes);
 if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
@@ -210,7 +209,7 @@ app.get("/api/health", (req, res) => {
       finance:       !!financeRoutes,
       products:      !!productsRoutes,
       categories:    !!categoriesRoutes,
-      sales:         !!salesRoutes,
+      sales:         !!salesModule?.routes,
       discounts:     !!discountsRoutes,
       banners:       !!bannersRoutes,
       notifications: !!notificationsRoutes,
@@ -220,7 +219,7 @@ app.get("/api/health", (req, res) => {
       agent:         !!agentRoutes,
       aura:          !!auraRoutes,
       financePin:    !!financePinRoutes,
-      creditPay:     !!creditPayRoutes,
+      creditPay:     !!salesModule?.creditPayRoutes,
       wompi:          !!wompiRoutes,
       paymentAccounts: !!paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,

@@ -15,7 +15,7 @@ router.use(adminScope);  // ← inyecta req.isSuperAdmin y req.adminId
 router.use("/products",       require("./products.routes"));
 router.use("/categories",     require("./categories.routes"));
 router.use("/providers",      require("./providers.routes"));
-router.use("/sales",          require("./sales.routes"));
+router.use("/sales",          require("../src/modules/sales").routes);
 router.use("/users",          require("../src/modules/identity/users").routes);
 router.use("/banners",        require("./banners.routes"));
 router.use("/discounts",      require("./discounts.routes"));

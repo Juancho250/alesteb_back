@@ -1,10 +1,10 @@
 'use strict';
 
 const crypto = require('crypto');
-const db     = require('../src/platform/database');
-const { decrypt } = require('../utils/crypto');
-const { verifyInstallmentPayToken } = require('../services/creditPayToken.service');
-const { syncPaymentStatus } = require('./creditSchedule.controller');
+const db     = require('../../platform/database');
+const { decrypt } = require('../../../utils/crypto');
+const { verifyInstallmentPayToken } = require('./credit-pay-token.service');
+const { syncPaymentStatus } = require('./credit-schedule.controller');
 
 function getBackendUrl() {
   return (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/+$/, '');

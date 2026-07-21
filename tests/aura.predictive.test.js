@@ -548,7 +548,7 @@ test("sale cancellation flow writes only the compatible delivery status", () => 
   const fs = require("node:fs");
   const path = require("node:path");
   const salesController = fs.readFileSync(
-    path.join(__dirname, "..", "controllers", "sales.controller.js"),
+    path.join(__dirname, "..", "src", "modules", "sales", "sales.controller.js"),
     "utf8"
   );
   const wompiController = fs.readFileSync(

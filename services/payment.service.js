@@ -11,7 +11,7 @@ const crypto = require("crypto");
 const https  = require("https");
 const db     = require("../src/platform/database");
 const { encrypt, decrypt } = require("../utils/crypto");
-const { processInstallmentPayment } = require("../controllers/creditPay.controller");
+const { processInstallmentPayment } = require("../src/modules/sales").creditPayController;
 
 // ─── Wompi endpoints ──────────────────────────────────────────────────────────
 // Evaluated lazily inside functions so tests can override process.env after module load.

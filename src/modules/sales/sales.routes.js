@@ -1,11 +1,11 @@
-// routes/sales.routes.js
+// src/modules/sales/sales.routes.js
 const express       = require("express");
 const router        = express.Router();
-const ctrl          = require("../controllers/sales.controller");
-const scheduleCtrl  = require("../controllers/creditSchedule.controller");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
-const uploadProof   = require("../middleware/upload_proof.middleware");
+const ctrl          = require("./sales.controller");
+const scheduleCtrl  = require("./credit-schedule.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
+const uploadProof   = require("./upload-proof.middleware");
 
 // ── Middleware global — auth + adminScope para todas ─────────
 router.use(auth);

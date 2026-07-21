@@ -1,6 +1,6 @@
 const multer = require("multer");
-const { CloudinaryStorage } = require("./cloudinaryStorage");
-const cloudinary = require("../config/cloudinary");
+const { CloudinaryStorage } = require("../../../middleware/cloudinaryStorage");
+const cloudinary = require("../../../config/cloudinary");
 
 // Los comprobantes pueden ser PDF o imagen — no forzamos WebP aquí
 const storage = new CloudinaryStorage({

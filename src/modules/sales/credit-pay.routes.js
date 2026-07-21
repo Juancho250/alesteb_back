@@ -4,7 +4,7 @@ const express = require('express');
 const {
   renderPayPage,
   renderResultPage,
-} = require('../controllers/creditPay.controller');
+} = require('./credit-pay.controller');
 
 const router = express.Router();
 

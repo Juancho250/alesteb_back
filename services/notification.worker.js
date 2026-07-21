@@ -6,7 +6,7 @@ const notificationService         = require('./notification.service');
 const db                          = require('../src/platform/database');
 const { sendCreditReminderEmail } = require('../config/emailConfig');
 const { getAdminBranding }        = require('./branding.service');
-const { generateInstallmentPayToken } = require('./creditPayToken.service');
+const { generateInstallmentPayToken } = require("../src/modules/sales").creditPayTokenService;
 const {
   processNotificationOutboxBatch,
   recoverStaleNotificationJobs,

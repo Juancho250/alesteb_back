@@ -979,7 +979,7 @@ test('source contract uses only real columns and trusted tenant callers', () => 
   const compact = service.replace(/\s+/g, ' ');
 
   const sales = fs.readFileSync(
-    path.join(root, 'controllers', 'sales.controller.js'),
+    path.join(root, 'src', 'modules', 'sales', 'sales.controller.js'),
     'utf8'
   );
 
