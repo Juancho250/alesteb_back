@@ -1,8 +1,8 @@
-// routes/providers.routes.js
+// src/modules/providers/providers.routes.js
 const express = require("express");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
-const ctrl = require("../controllers/providers.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
+const ctrl = require("./providers.controller");
 
 const router = express.Router();
 

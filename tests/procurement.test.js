@@ -553,7 +553,7 @@ const {
   controller: procurementController,
 } = require('../src/modules/procurement');
 
-const providersController = require('../controllers/providers.controller');
+const providersController = require('../src/modules/providers').controller;
 
 test.beforeEach(() => {
   state = seed();
@@ -1000,7 +1000,7 @@ test('source contract uses only real columns and trusted tenant callers', () => 
   );
 
   const providerRoutes = fs.readFileSync(
-    path.join(root, 'routes', 'providers.routes.js'),
+    path.join(root, 'src', 'modules', 'providers', 'providers.routes.js'),
     'utf8'
   );
 

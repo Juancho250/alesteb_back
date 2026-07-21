@@ -1,12 +1,12 @@
-// controllers/providers.controller.js
+// src/modules/providers/providers.controller.js
 "use strict";
 
-const db          = require("../src/platform/database");
-const invSvc      = require("../src/modules/inventory").service;
+const db          = require("../../platform/database");
+const invSvc      = require("../inventory").service;
 const {
   service: procSvc,
-} = require("../src/modules/procurement");
-const { emitDataUpdate } = require("../config/socket");
+} = require("../procurement");
+const { emitDataUpdate } = require("../../../config/socket");
 
 // ─────────────────────────────────────────────
 // Helpers de scope
