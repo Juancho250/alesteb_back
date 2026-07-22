@@ -119,7 +119,7 @@ const providersModule = safeRequire("./src/modules/providers", "providers.module
 const financeModule = safeRequire("./src/modules/finance", "finance.module");
 const catalogModule = safeRequire("./src/modules/catalog", "catalog.module");
 
-const discountsRoutes     = safeRequire("./routes/discounts.routes",        "discounts.routes");
+const discountsModule = safeRequire("./src/modules/discounts", "discounts.module");
 const salesModule = safeRequire("./src/modules/sales", "sales.module");
 const bannersRoutes       = safeRequire("./routes/banners.routes",          "banners.routes");
 const notificationsRoutes = safeRequire("./routes/notifications.routes",    "notifications.routes");
@@ -169,7 +169,7 @@ if (financeModule?.routes) app.use("/api/finance", financeModule.routes);
 if (catalogModule?.productsRoutes) app.use("/api/products", catalogModule.productsRoutes);
 if (catalogModule?.categoriesRoutes) app.use("/api/categories", catalogModule.categoriesRoutes);
 if (salesModule?.routes) app.use("/api/sales", salesModule.routes);
-if (discountsRoutes)     app.use("/api/discounts",     discountsRoutes);
+if (discountsModule?.routes) app.use("/api/discounts", discountsModule.routes);
 if (bannersRoutes)       app.use("/api/banners",       bannersRoutes);
 if (notificationsRoutes) app.use("/api/notifications", notificationsRoutes);
 if (catalogModule?.variantsRoutes) app.use("/api", catalogModule.variantsRoutes);
@@ -210,7 +210,7 @@ app.get("/api/health", (req, res) => {
       products:      !!catalogModule?.productsRoutes,
       categories:    !!catalogModule?.categoriesRoutes,
       sales:         !!salesModule?.routes,
-      discounts:     !!discountsRoutes,
+      discounts:     !!discountsModule?.routes,
       banners:       !!bannersRoutes,
       notifications: !!notificationsRoutes,
       variants:      !!catalogModule?.variantsRoutes,

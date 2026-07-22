@@ -1,6 +1,6 @@
-// controllers/discounts.controller.js
-const db = require("../src/platform/database");
-const { emitDataUpdate } = require("../config/socket");
+// src/modules/discounts/discounts.controller.js
+const db = require("../../platform/database");
+const { emitDataUpdate } = require("../../../config/socket");
 
 // Helper: verifica ownership usando req.isSuperAdmin / req.adminId
 // (adminScope ya corrió, así que siempre están definidos)

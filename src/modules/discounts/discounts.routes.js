@@ -1,8 +1,8 @@
-// routes/discounts.routes.js
+// src/modules/discounts/discounts.routes.js
 const express = require("express");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
-const ctrl = require("../controllers/discounts.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
+const ctrl = require("./discounts.controller");
 
 const router = express.Router();
 

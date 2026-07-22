@@ -18,7 +18,7 @@ router.use("/providers",      require("../src/modules/providers").routes);
 router.use("/sales",          require("../src/modules/sales").routes);
 router.use("/users",          require("../src/modules/identity/users").routes);
 router.use("/banners",        require("./banners.routes"));
-router.use("/discounts",      require("./discounts.routes"));
+router.use("/discounts",      require("../src/modules/discounts").routes);
 router.use("/finance",        require("../src/modules/finance").routes);
 router.use("/analytics",      require("./analytics.routes"));
 router.use("/stats",          require("./stats.routes"));
