@@ -1,10 +1,10 @@
-// routes/banners.routes.js
+// src/modules/banners/banners.routes.js
 const express = require("express");
 const router  = express.Router();
-const ctrl    = require("../controllers/banners.controller");
-const { uploadBanner }         = require("../middleware/upload.middleware");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
+const ctrl    = require("./banners.controller");
+const { uploadBanner }         = require("../../../middleware/upload.middleware");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
 
 // ── Pública — sin auth (storefront, con caché) ────────────────
 router.get("/", ctrl.getAll);

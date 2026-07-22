@@ -1,7 +1,7 @@
-// controllers/banners.controller.js
-const db = require("../src/platform/database");
-const { emitDataUpdate }  = require("../config/socket");
-const { assertOwnership } = require("../middleware/adminScope");
+// src/modules/banners/banners.controller.js
+const db = require("../../platform/database");
+const { emitDataUpdate }  = require("../../../config/socket");
+const { assertOwnership } = require("../../../middleware/adminScope");
 
 const CACHE_CONTROL_PUBLIC =
   "public, max-age=60, s-maxage=120, stale-while-revalidate=300";
