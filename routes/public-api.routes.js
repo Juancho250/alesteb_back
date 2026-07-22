@@ -11,7 +11,7 @@ const {
 const storefrontAuth  = require("../src/modules/identity/auth").storefrontController;
 const reviewsCtrl     = require("../controllers/reviews.controller");
 const wompiCtrl       = require("../src/modules/payments").wompiController;
-const analyticsCtrl   = require("../controllers/analytics.controller");
+const analyticsCtrl   = require("../src/modules/analytics").controller;
 const googleAuth      = require("../src/modules/identity/auth").storefrontGoogleController;
 const inv                   = require("../src/modules/inventory").service;
 const { service: procurement } = require("../src/modules/procurement");

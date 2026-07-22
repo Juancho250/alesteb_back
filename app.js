@@ -130,7 +130,7 @@ const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "rev
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
 const paymentsModule = safeRequire("./src/modules/payments", "payments.module");
 
-const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
+const analyticsModule = safeRequire("./src/modules/analytics", "analytics.module");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
 const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
@@ -179,7 +179,7 @@ if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (auraRoutes)          app.use("/api/aura",          auraRoutes);
 if (paymentsModule?.wompiRoutes) app.use("/api/wompi", paymentsModule.wompiRoutes);
 if (paymentsModule?.paymentAccountsRoutes) app.use("/api/payment-accounts", paymentsModule.paymentAccountsRoutes);
-if (analyticsRoutes)          app.use("/api/analytics",        analyticsRoutes);
+if (analyticsModule?.routes) app.use("/api/analytics", analyticsModule.routes);
 if (contactRoutes)       app.use("/api/contact",       contactRoutes);
 if (inventoryModule?.routes) app.use("/api/inventory", inventoryModule.routes);
 if (procurementModule?.routes) app.use("/api/procurement", procurementModule.routes);
@@ -222,7 +222,7 @@ app.get("/api/health", (req, res) => {
       creditPay:     !!salesModule?.creditPayRoutes,
       wompi:          !!paymentsModule?.wompiRoutes,
       paymentAccounts: !!paymentsModule?.paymentAccountsRoutes,
-      analytics:      !!analyticsRoutes,
+      analytics:      !!analyticsModule?.routes,
       contact:       !!contactRoutes,
       publicApi:     !!publicApiRoutes,
     },

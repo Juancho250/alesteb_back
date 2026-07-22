@@ -1,10 +1,10 @@
-// routes/analytics.routes.js
+// src/modules/analytics/analytics.routes.js
 const express    = require("express");
 const router     = express.Router();
-const ctrl       = require("../controllers/analytics.controller");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope } = require("../middleware/adminScope");
-const { requireFeature } = require("../src/modules/subscriptions").middleware;
+const ctrl       = require("./analytics.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope } = require("../../../middleware/adminScope");
+const { requireFeature } = require("../subscriptions").middleware;
 
 // ── Pública — storefront sin auth ─────────────────────────────────
 router.post("/pageview", ctrl.trackPageview);
