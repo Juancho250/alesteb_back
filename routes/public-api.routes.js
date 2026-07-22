@@ -15,8 +15,8 @@ const analyticsCtrl   = require("../controllers/analytics.controller");
 const googleAuth      = require("../src/modules/identity/auth").storefrontGoogleController;
 const inv                   = require("../src/modules/inventory").service;
 const { service: procurement } = require("../src/modules/procurement");
-const { notifyTenant, Payloads } = require("../services/push.service");
-const { enqueueNotification }    = require("../services/notification.service");
+const { notifyTenant, Payloads } = require("../src/modules/notifications").push;
+const { enqueueNotification }    = require("../src/modules/notifications").service;
 const { createUpload }      = require("../middleware/upload.middleware");
 
 router.use(apiKeyAuth);

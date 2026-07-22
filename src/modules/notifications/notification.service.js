@@ -1,7 +1,7 @@
-// services/notification.service.js
+// src/modules/notifications/notification.service.js
 'use strict';
 
-const db = require('../src/platform/database');
+const db = require('../../platform/database');
 
 function _render(template, payload) {
   if (!template) return '';
@@ -156,7 +156,7 @@ async function enqueueNotification({
  * Respects quiet_hours and exponential backoff on failure.
  */
 async function processQueueBatch(limit = 20) {
-  const { processNotificationOutboxBatch } = require('./notificationOutbox.service');
+  const { processNotificationOutboxBatch } = require('./notification-outbox.service');
   return processNotificationOutboxBatch(limit);
 
   // Recover jobs stuck in 'sending' after a process crash (reset after 5 min)

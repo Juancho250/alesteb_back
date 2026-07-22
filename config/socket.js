@@ -2,7 +2,7 @@
 const { Server }            = require('socket.io');
 const jwt                   = require('jsonwebtoken');
 const db                    = require('../src/platform/database');
-const { notifyUser, Payloads } = require('../services/push.service');
+const { notifyUser, Payloads } = require('../src/modules/notifications').push;
 
 let io;
 

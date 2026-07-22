@@ -1,10 +1,10 @@
 'use strict';
 
 const brevo = require('@getbrevo/brevo');
-const db = require('../src/platform/database');
-const whatsappProvider = require('./providers/whatsapp.provider');
+const db = require('../../platform/database');
+const whatsappProvider = require('../../../services/providers/whatsapp.provider');
 const { sendPushToOne } = require('./push.service');
-const { prepareCampaignRecipients } = require('./auraCampaigns.service');
+const { prepareCampaignRecipients } = require('../../../services/auraCampaigns.service');
 
 const DIRECT_CHANNELS = new Set(['email', 'whatsapp', 'push']);
 

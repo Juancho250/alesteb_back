@@ -1,6 +1,6 @@
-// src/services/notificationScheduler.js
+// src/modules/notifications/legacy-scheduler.js
 const cron = require("node-cron");
-const db   = require("../src/platform/database");
+const db   = require("../../platform/database");
 const { notifyUser, Payloads } = require("./push.service");
 
 // ─────────────────────────────────────────────────────────────

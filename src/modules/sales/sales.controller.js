@@ -5,9 +5,9 @@ const cloudinary = require("../../../config/cloudinary");
 const { sendOrderConfirmationEmail, sendPaymentConfirmedEmail, sendInvoiceEmail } = require("../../../config/emailConfig");
 const { getAdminBranding } = require("../../../services/branding.service");
 const { emitDataUpdate } = require("../../../config/socket");
-const { notifyUser, notifyTenant, Payloads } = require("../../../services/push.service");
+const { notifyUser, notifyTenant, Payloads } = require("../notifications").push;
 const { service: procurement } = require("../procurement");
-const { enqueueNotification } = require("../../../services/notification.service");
+const { enqueueNotification } = require("../notifications").service;
 
 const fmt = (n) => Number(n ?? 0).toLocaleString("es-CO");
 

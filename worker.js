@@ -4,14 +4,14 @@ require("./config/env")();
 const db = require("./src/platform/database");
 const { startSubscriptionCron } = require("./src/modules/subscriptions/subscription.cron");
 const { startInventoryJobs } = require("./src/modules/inventory").jobs;
-const { startNotificationWorker } = require("./services/notification.worker");
+const { startNotificationWorker } = require("./src/modules/notifications").worker;
 const { startAuraPredictiveJobs } = require("./services/auraPredictive.jobs");
 
 // notificationScheduler registra sus tareas al cargar el módulo.
 const workerHandles = [];
 if (String(process.env.LEGACY_NOTIFICATION_SCHEDULER_ENABLED || "false").toLowerCase() === "true") {
   // Deprecated side-effect scheduler. Keep disabled until it has lifecycle controls.
-  require("./services/notificationScheduler");
+  require("./src/modules/notifications/legacy-scheduler");
 }
 for (const handle of [
   startSubscriptionCron(),

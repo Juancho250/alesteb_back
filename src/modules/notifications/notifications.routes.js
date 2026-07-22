@@ -1,10 +1,10 @@
-// routes/notifications.routes.js
+// src/modules/notifications/notifications.routes.js
 const express = require("express");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
-const ctrl     = require("../controllers/notifications.controller");
-const pushCtrl = require("../controllers/pushSubscription.controller");
-const { broadcast, notifyUser, Payloads } = require("../services/push.service");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
+const ctrl     = require("./notifications.controller");
+const pushCtrl = require("./push-subscription.controller");
+const { broadcast, notifyUser, Payloads } = require("./push.service");
 
 const router = express.Router();
 

@@ -348,7 +348,7 @@ function installRealProviderGuard() {
   patch(whatsapp, 'send', 'whatsapp');
   patch(whatsapp, 'sendTemplate', 'whatsapp_template');
 
-  const push = require('../services/push.service');
+  const push = require('../src/modules/notifications').push;
   patch(push, 'sendPushToOne', 'web_push');
 
   const brevo = require('@getbrevo/brevo');
@@ -379,7 +379,7 @@ function installRealProviderGuard() {
 
 function loadOneShotServices() {
   return {
-    notificationWorker: require('../services/notification.worker'),
+    notificationWorker: require('../src/modules/notifications').worker,
     imageJobs: require('../services/auraImageJobs.service'),
     imageWorker: require('../services/auraImageWorker.service'),
     predictiveFeatures: require('../services/auraPredictiveFeatures.service'),

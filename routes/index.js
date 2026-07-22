@@ -25,7 +25,7 @@ router.use("/stats",          require("./stats.routes"));
 router.use("/agent",          require("./agent.routes"));
 router.use("/chat",           require("./chat.routes"));
 router.use("/contact",        require("./contact.routes"));
-router.use("/notifications",  require("./notifications.routes"));
+router.use("/notifications",  require("../src/modules/notifications").routes);
 router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("../src/modules/identity/api-keys").routes);
 router.use("/superadmin",     require("../src/modules/identity/superadmin").routes);

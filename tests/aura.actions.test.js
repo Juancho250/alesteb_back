@@ -465,7 +465,7 @@ require.cache[dbPath] = {
 
 const auraActions = require("../services/auraActions.service");
 const auraTools = require("../services/auraTools.service");
-const notificationOutbox = require("../services/notificationOutbox.service");
+const notificationOutbox = require("../src/modules/notifications/notification-outbox.service");
 
 const adminCtx = { ownerAdminId: 101, userId: 11, roles: ["admin"] };
 const managerCtx = { ownerAdminId: 101, userId: 12, roles: ["gerente"] };

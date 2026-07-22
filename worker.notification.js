@@ -4,7 +4,7 @@ require("dotenv/config");
 require("./config/env")();
 
 const db = require("./src/platform/database");
-const { startNotificationWorker } = require("./services/notification.worker");
+const { startNotificationWorker } = require("./src/modules/notifications").worker;
 
 const worker = startNotificationWorker();
 if (!worker.enabled) {

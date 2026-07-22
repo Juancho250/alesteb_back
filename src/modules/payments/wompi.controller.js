@@ -6,7 +6,7 @@ const { buildCheckoutSession, processWompiWebhook } = require("./payment.service
 const { emitDataUpdate } = require("../../../config/socket");
 const { sendPaymentConfirmedEmail }             = require("../../../config/emailConfig");
 const { getAdminBranding }                     = require("../../../services/branding.service");
-const { notifyUser, notifyTenant, Payloads }    = require("../../../services/push.service");
+const { notifyUser, notifyTenant, Payloads }    = require("../notifications").push;
 
 // ── GET /api/wompi/session/:sale_id ──────────────────────────────────────────
 // Returns checkout parameters for the Wompi Widget / Redirect.

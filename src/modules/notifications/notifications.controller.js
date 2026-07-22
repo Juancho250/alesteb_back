@@ -1,9 +1,9 @@
-// controllers/notifications.controller.js
+// src/modules/notifications/notifications.controller.js
 const crypto   = require('crypto');
-const db = require("../src/platform/database");
-const { getOrCreateSettings, enqueueNotification } = require("../services/notification.service");
-const whatsapp = require("../services/providers/whatsapp.provider");
-const { updateProviderStatusByMessageId } = require("../services/notificationOutbox.service");
+const db = require("../../platform/database");
+const { getOrCreateSettings, enqueueNotification } = require("./notification.service");
+const whatsapp = require("../../../services/providers/whatsapp.provider");
+const { updateProviderStatusByMessageId } = require("./notification-outbox.service");
 
 // Verifies X-Hub-Signature-256 sent by Meta on every webhook POST.
 // Returns true if META_WA_APP_SECRET is not set (dev/unconfig mode).

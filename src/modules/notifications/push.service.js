@@ -1,6 +1,6 @@
-// src/services/push.service.js  (backend Node.js)
+// src/modules/notifications/push.service.js
 const webpush = require("web-push");
-const db = require("../src/platform/database");
+const db = require("../../platform/database");
 
 // ── Inicializar VAPID solo si las claves están configuradas ──
 // Genera las claves con: npx web-push generate-vapid-keys

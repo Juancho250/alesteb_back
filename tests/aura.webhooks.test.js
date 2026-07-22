@@ -18,19 +18,19 @@ function mockModule(modulePath, exports) {
 }
 
 mockModule("../src/platform/database", { query: async () => ({ rows: [], rowCount: 0 }) });
-mockModule("../services/notification.service", {
+mockModule("../src/modules/notifications/notification.service", {
   getOrCreateSettings: async () => ({}),
   enqueueNotification: async () => null,
 });
 mockModule("../services/providers/whatsapp.provider", {});
-mockModule("../services/notificationOutbox.service", {
+mockModule("../src/modules/notifications/notification-outbox.service", {
   async updateProviderStatusByMessageId(providerMessageId, status, metadata) {
     updates.push({ providerMessageId, status, metadata });
     return { updated: 1 };
   },
 });
 
-const controller = require("../controllers/notifications.controller");
+const controller = require("../src/modules/notifications/notifications.controller");
 
 function responseMock() {
   return {

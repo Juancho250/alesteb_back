@@ -1,16 +1,16 @@
-// services/notification.worker.js
+// src/modules/notifications/notification.worker.js
 'use strict';
 
 const cron                        = require('node-cron');
 const notificationService         = require('./notification.service');
-const db                          = require('../src/platform/database');
-const { sendCreditReminderEmail } = require('../config/emailConfig');
-const { getAdminBranding }        = require('./branding.service');
-const { generateInstallmentPayToken } = require("../src/modules/sales").creditPayTokenService;
+const db                          = require('../../platform/database');
+const { sendCreditReminderEmail } = require('../../../config/emailConfig');
+const { getAdminBranding }        = require('../../../services/branding.service');
+const { generateInstallmentPayToken } = require("../sales").creditPayTokenService;
 const {
   processNotificationOutboxBatch,
   recoverStaleNotificationJobs,
-} = require('./notificationOutbox.service');
+} = require('./notification-outbox.service');
 
 const workerState = {
   enabled: false,

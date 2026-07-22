@@ -23,8 +23,8 @@ test("all resident AURA workers remain disabled in the example environment", () 
 });
 
 test("notification worker is flag-gated, non-overlapping and recovers stale claims conservatively", () => {
-  const worker = source("services/notification.worker.js");
-  const outbox = source("services/notificationOutbox.service.js");
+  const worker = source("src/modules/notifications/notification.worker.js");
+  const outbox = source("src/modules/notifications/notification-outbox.service.js");
   assert.match(worker, /AURA_NOTIFICATION_WORKER_ENABLED/);
   assert.match(worker, /noOverlap:\s*true/);
   assert.match(worker, /recoverStaleNotificationJobs/);
@@ -116,8 +116,8 @@ test("workers staging smoke accepts only direct non-production Neon URLs", () =>
 });
 
 test("one-shot claims are exact-ID and tenant-scoped while production defaults remain available", () => {
-  const notification = source("services/notificationOutbox.service.js");
-  const notificationWorker = source("services/notification.worker.js");
+  const notification = source("src/modules/notifications/notification-outbox.service.js");
+  const notificationWorker = source("src/modules/notifications/notification.worker.js");
   const images = source("services/auraImageJobs.service.js");
   const imageWorker = source("services/auraImageWorker.service.js");
   const forecast = source("services/auraForecasting.service.js");

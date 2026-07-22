@@ -68,7 +68,7 @@ test("notification queue claim index and worker use the same immutable eligibili
     "utf8"
   );
   const worker = fs.readFileSync(
-    path.join(repoRoot, "services", "notificationOutbox.service.js"),
+    path.join(repoRoot, "src", "modules", "notifications", "notification-outbox.service.js"),
     "utf8"
   );
   const claimStart = worker.indexOf("async function claimNotificationJobs");
@@ -199,7 +199,7 @@ test("notification history audit separates legacy warnings from delivery blocker
 
 test("legacy notification producers populate both required scheduling columns", () => {
   const service = fs.readFileSync(
-    path.join(repoRoot, "services", "notification.service.js"),
+    path.join(repoRoot, "src", "modules", "notifications", "notification.service.js"),
     "utf8"
   );
   const inserts = service.match(/INSERT INTO notification_queue[\s\S]*?(?=`)/g) || [];
