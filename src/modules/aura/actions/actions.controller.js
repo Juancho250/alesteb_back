@@ -1,4 +1,4 @@
-const actions = require("../../../../services/auraActions.service");
+const actions = require("./actions.service");
 
 function ctxFromReq(req) {
   return {

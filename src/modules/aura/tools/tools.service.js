@@ -1,9 +1,9 @@
-const db = require("../src/platform/database");
-const auraActions = require("./auraActions.service");
-const auraForecasting = require("../src/modules/aura/predictive/forecasting.service");
-const auraCustomerGrowth = require("../src/modules/aura/growth/customer-growth.service");
-const auraSendTime = require("../src/modules/aura/growth/send-time.service");
-const auraImageJobs = require("../src/modules/aura/images/image-jobs.service");
+const db = require("../../../platform/database");
+const auraActions = require("../actions/actions.service");
+const auraForecasting = require("../predictive/forecasting.service");
+const auraCustomerGrowth = require("../growth/customer-growth.service");
+const auraSendTime = require("../growth/send-time.service");
+const auraImageJobs = require("../images/image-jobs.service");
 
 const MAX_TOOLS_PER_RUN = 5;
 const MAX_TOOL_ROUNDS = 3;

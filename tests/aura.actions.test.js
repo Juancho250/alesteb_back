@@ -463,8 +463,8 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const auraActions = require("../services/auraActions.service");
-const auraTools = require("../services/auraTools.service");
+const auraActions = require("../src/modules/aura/actions/actions.service");
+const auraTools = require("../src/modules/aura/tools/tools.service");
 const notificationOutbox = require("../src/modules/notifications/notification-outbox.service");
 
 const adminCtx = { ownerAdminId: 101, userId: 11, roles: ["admin"] };

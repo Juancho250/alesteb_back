@@ -1,6 +1,6 @@
 const crypto = require("crypto");
-const db = require("../src/platform/database");
-const { enqueueCampaignDelivery } = require("../src/modules/notifications").outbox;
+const db = require("../../../platform/database");
+const { enqueueCampaignDelivery } = require("../../notifications").outbox;
 
 const ACTION_PERMISSIONS = {
   approve_campaign: "campaign:approve",
