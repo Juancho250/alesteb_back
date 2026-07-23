@@ -1,6 +1,7 @@
 // src/modules/storefront/storefront.routes.js
 const express        = require("express");
 const router         = express.Router();
+const { registerAuthRoutes } = require("./auth.routes");
 const db             = require("../../platform/database");
 const {
   apiKeyAuth,
@@ -8,11 +9,11 @@ const {
   auth,
   checkRateLimit,
 } = require("../identity/auth");
-const storefrontAuth  = require("../identity/auth").storefrontController;
+
 const reviewsCtrl     = require("../reviews").controller;
 const wompiCtrl       = require("../payments").wompiController;
 const analyticsCtrl   = require("../analytics").controller;
-const googleAuth      = require("../identity/auth").storefrontGoogleController;
+
 const inv                   = require("../inventory").service;
 const { service: procurement } = require("../procurement");
 const { notifyTenant, Payloads } = require("../notifications").push;
@@ -1022,15 +1023,15 @@ router.get("/customers", requireApiPermission("customers:read"), async (req, res
 // AUTH DEL STOREFRONT
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.post("/auth/register", checkRateLimit("ip", 10, 60 * 60 * 1000), storefrontAuth.register);
-router.post("/auth/verify", storefrontAuth.verifyEmail);
-router.post("/auth/resend-code", checkRateLimit("email", 3, 60 * 60 * 1000), storefrontAuth.resendCode);
-router.post("/auth/login", checkRateLimit("email", 5, 15 * 60 * 1000), storefrontAuth.login);
-router.post("/auth/refresh", storefrontAuth.refreshToken);
-router.post("/auth/logout", auth, storefrontAuth.logout);
-router.get("/auth/profile", auth, storefrontAuth.getProfile);
-router.put("/auth/profile", auth, storefrontAuth.updateProfile);
-router.post("/auth/google", googleAuth.googleAuth);
+registerAuthRoutes(router);
+
+
+
+
+
+
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HISTORIAL Y ESTADÍSTICAS DEL USUARIO
