@@ -5,7 +5,7 @@ const cron                        = require('node-cron');
 const notificationService         = require('./notification.service');
 const db                          = require('../../platform/database');
 const { sendCreditReminderEmail } = require('../../../config/emailConfig');
-const { getAdminBranding }        = require('../../../services/branding.service');
+const { getAdminBranding }        = require('../tenant/profile/branding.service');
 const { generateInstallmentPayToken } = require("../sales").creditPayTokenService;
 const {
   processNotificationOutboxBatch,

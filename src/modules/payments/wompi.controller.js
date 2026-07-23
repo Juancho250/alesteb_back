@@ -5,7 +5,7 @@ const db = require("../../platform/database");
 const { buildCheckoutSession, processWompiWebhook } = require("./payment.service");
 const { emitDataUpdate } = require("../../../config/socket");
 const { sendPaymentConfirmedEmail }             = require("../../../config/emailConfig");
-const { getAdminBranding }                     = require("../../../services/branding.service");
+const { getAdminBranding }                     = require("../tenant/profile/branding.service");
 const { notifyUser, notifyTenant, Payloads }    = require("../notifications").push;
 
 // ── GET /api/wompi/session/:sale_id ──────────────────────────────────────────
