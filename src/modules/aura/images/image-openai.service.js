@@ -1,5 +1,5 @@
 const axios = require("axios");
-const cloudinary = require("../config/cloudinary");
+const cloudinary = require("../../../../config/cloudinary");
 
 const OPENAI_IMAGES_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const OPENAI_IMAGES_EDITS_URL = "https://api.openai.com/v1/images/edits";

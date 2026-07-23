@@ -1,4 +1,4 @@
-const imageJobs = require("./auraImageJobs.service");
+const imageJobs = require("./image-jobs.service");
 
 const DEFAULT_POLL_MS = 5_000;
 const state = {

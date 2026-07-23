@@ -380,8 +380,8 @@ function installRealProviderGuard() {
 function loadOneShotServices() {
   return {
     notificationWorker: require('../src/modules/notifications').worker,
-    imageJobs: require('../services/auraImageJobs.service'),
-    imageWorker: require('../services/auraImageWorker.service'),
+    imageJobs: require('../src/modules/aura/images/image-jobs.service'),
+    imageWorker: require('../src/modules/aura/images/image-worker.service'),
     predictiveFeatures: require('../services/auraPredictiveFeatures.service'),
     forecasting: require('../services/auraForecasting.service'),
   };

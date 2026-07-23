@@ -315,7 +315,7 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const imageJobsPath = require.resolve("../services/auraImageJobs.service");
+const imageJobsPath = require.resolve("../src/modules/aura/images/image-jobs.service");
 const imageToolCalls = [];
 const imageJobIds = [
   "10000000-0000-4000-8000-000000000001",

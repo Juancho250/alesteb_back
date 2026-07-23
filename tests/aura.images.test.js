@@ -7,7 +7,7 @@ process.env.OPENAI_IMAGE_MODEL = "gpt-image-test";
 process.env.AURA_IMAGE_MAX_JOBS_PER_DAY = "20";
 
 const dbPath = require.resolve("../src/platform/database");
-const providerPath = require.resolve("../services/auraImageOpenAI.service");
+const providerPath = require.resolve("../src/modules/aura/images/image-openai.service");
 const calls = [];
 const jobs = [];
 const assets = [];
@@ -421,8 +421,8 @@ const fakeProvider = {
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: fakeDb };
 require.cache[providerPath] = { id: providerPath, filename: providerPath, loaded: true, exports: fakeProvider };
 
-const imageJobs = require("../services/auraImageJobs.service");
-const imageWorker = require("../services/auraImageWorker.service");
+const imageJobs = require("../src/modules/aura/images/image-jobs.service");
+const imageWorker = require("../src/modules/aura/images/image-worker.service");
 
 const ctxA = { ownerAdminId: 101, userId: 11, roles: ["admin"] };
 const ctxB = { ownerAdminId: 202, userId: 22, roles: ["admin"] };

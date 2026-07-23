@@ -30,7 +30,7 @@ require.cache[dbPath] = {
 };
 
 const auraOpenAI = require("../src/modules/aura/core/openai.service");
-const imageProvider = require("../services/auraImageOpenAI.service");
+const imageProvider = require("../src/modules/aura/images/image-openai.service");
 const voice = require("../src/modules/aura/voice/voice.service");
 
 test.after(() => {

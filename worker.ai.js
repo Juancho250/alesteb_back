@@ -4,7 +4,7 @@ require("dotenv/config");
 require("./config/env")();
 
 const db = require("./src/platform/database");
-const { startAuraImageWorker } = require("./services/auraImageWorker.service");
+const { startAuraImageWorker } = require("./src/modules/aura/images/image-worker.service");
 
 const worker = startAuraImageWorker();
 

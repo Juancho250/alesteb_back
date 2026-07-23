@@ -118,8 +118,8 @@ test("workers staging smoke accepts only direct non-production Neon URLs", () =>
 test("one-shot claims are exact-ID and tenant-scoped while production defaults remain available", () => {
   const notification = source("src/modules/notifications/notification-outbox.service.js");
   const notificationWorker = source("src/modules/notifications/notification.worker.js");
-  const images = source("services/auraImageJobs.service.js");
-  const imageWorker = source("services/auraImageWorker.service.js");
+  const images = source("src/modules/aura/images/image-jobs.service.js");
+  const imageWorker = source("src/modules/aura/images/image-worker.service.js");
   const forecast = source("services/auraForecasting.service.js");
   const features = source("services/auraPredictiveFeatures.service.js");
 

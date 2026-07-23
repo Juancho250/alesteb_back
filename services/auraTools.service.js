@@ -3,7 +3,7 @@ const auraActions = require("./auraActions.service");
 const auraForecasting = require("./auraForecasting.service");
 const auraCustomerGrowth = require("./auraCustomerGrowth.service");
 const auraSendTime = require("./auraSendTime.service");
-const auraImageJobs = require("./auraImageJobs.service");
+const auraImageJobs = require("../src/modules/aura/images/image-jobs.service");
 
 const MAX_TOOLS_PER_RUN = 5;
 const MAX_TOOL_ROUNDS = 3;

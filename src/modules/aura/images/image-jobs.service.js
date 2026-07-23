@@ -1,6 +1,6 @@
 const crypto = require("crypto");
-const db = require("../src/platform/database");
-const imageProvider = require("./auraImageOpenAI.service");
+const db = require("../../../platform/database");
+const imageProvider = require("./image-openai.service");
 
 const JOB_TYPES = {
   generate: "aura_image_generate",
