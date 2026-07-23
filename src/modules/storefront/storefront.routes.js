@@ -9,11 +9,11 @@ const { registerInventoryListRoute, registerInventoryAvailabilityRoute } = requi
 const { registerCatalogRoutes } = require("./catalog.routes");
 const { registerDiscountRoutes } = require("./discounts.routes");
 const { registerBannerRoutes } = require("./banners.routes");
+const { registerProfileRoutes } = require("./profile.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
 const { registerPaymentRoutes } = require("./payments.routes");
 const { registerReservationRoutes } = require("./reservations.routes");
-const db             = require("../../platform/database");
 const {
   apiKeyAuth,
   requireApiPermission,
@@ -40,34 +40,8 @@ router.get("/ping", (req, res) => {
 router.post("/analytics/pageview", requireApiPermission("analytics:write"), analyticsCtrl.trackPageview);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /public-api/v1/profile
-// ─────────────────────────────────────────────────────────────────────────────
-router.get("/profile", async (req, res) => {
-  try {
-    const adminId = req.apiKey.adminId;
+registerProfileRoutes(router);
 
-    const result = await db.query(
-      `SELECT
-         ap.business_name, ap.tagline, ap.description,
-         ap.logo_url, ap.favicon_url,
-         ap.primary_color, ap.secondary_color, ap.accent_color,
-         ap.business_email, ap.business_phone, ap.website,
-         ap.address, ap.city, ap.department, ap.country,
-         ap.currency, ap.social_links,
-         ap.store_navbar_bg, ap.store_navbar_text, ap.store_page_bg, ap.store_font
-       FROM admin_profiles ap
-       WHERE ap.user_id = $1`,
-      [adminId]
-    );
-
-    return res.json({ success: true, data: result.rows[0] ?? null });
-  } catch (error) {
-    console.error("[PUBLIC API] GET /profile", error);
-    res.status(500).json({ success: false, message: "Error al obtener el perfil del negocio" });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 registerCatalogRoutes(router);
 
 registerInventoryListRoute(router);
