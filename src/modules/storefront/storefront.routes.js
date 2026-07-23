@@ -3,6 +3,7 @@ const express        = require("express");
 const router         = express.Router();
 const { registerAuthRoutes } = require("./auth.routes");
 const { registerAccountRoutes } = require("./account.routes");
+const { registerCustomerRoutes } = require("./customers.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
 const { registerPaymentRoutes } = require("./payments.routes");
@@ -979,47 +980,7 @@ router.get("/inventory/availability", requireApiPermission("products:read"), asy
   }
 });
 
-// GET /public-api/v1/customers
-router.get("/customers", requireApiPermission("customers:read"), async (req, res) => {
-  try {
-    const adminId = req.apiKey.adminId;
-    const { search, page = 1, limit = 20 } = req.query;
-    const safeLimit = Math.min(parseInt(limit) || 20, 50);
-    const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
-
-    const params = [adminId];
-    let where = `WHERE u.owner_admin_id = $1 AND r.name = 'user' AND u.is_active = true`;
-
-    if (search) {
-      params.push(`%${search}%`);
-      where += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`;
-    }
-
-    params.push(safeLimit, offset);
-
-    const result = await db.query(
-      `SELECT
-         u.id, u.name, u.email, u.phone,
-         u.city, u.created_at,
-         COUNT(DISTINCT s.id)::int          AS total_orders,
-         COALESCE(SUM(s.total), 0)::numeric AS total_spent
-       FROM users u
-       LEFT JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN roles r       ON r.id = ur.role_id
-       LEFT JOIN sales s       ON s.customer_id = u.id AND s.owner_admin_id = $1
-       ${where}
-       GROUP BY u.id
-       ORDER BY total_spent DESC
-       LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params
-    );
-
-    return res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error("[PUBLIC API] GET /customers", error);
-    res.status(500).json({ success: false, message: "Error al obtener clientes" });
-  }
-});
+registerCustomerRoutes(router);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH DEL STOREFRONT
