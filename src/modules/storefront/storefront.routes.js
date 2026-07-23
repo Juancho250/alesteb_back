@@ -1,23 +1,23 @@
-// routes/public-api.routes.js
+// src/modules/storefront/storefront.routes.js
 const express        = require("express");
 const router         = express.Router();
-const db             = require("../src/platform/database");
+const db             = require("../../platform/database");
 const {
   apiKeyAuth,
   requireApiPermission,
   auth,
   checkRateLimit,
-} = require("../src/modules/identity/auth");
-const storefrontAuth  = require("../src/modules/identity/auth").storefrontController;
-const reviewsCtrl     = require("../src/modules/reviews").controller;
-const wompiCtrl       = require("../src/modules/payments").wompiController;
-const analyticsCtrl   = require("../src/modules/analytics").controller;
-const googleAuth      = require("../src/modules/identity/auth").storefrontGoogleController;
-const inv                   = require("../src/modules/inventory").service;
-const { service: procurement } = require("../src/modules/procurement");
-const { notifyTenant, Payloads } = require("../src/modules/notifications").push;
-const { enqueueNotification }    = require("../src/modules/notifications").service;
-const { createUpload }      = require("../middleware/upload.middleware");
+} = require("../identity/auth");
+const storefrontAuth  = require("../identity/auth").storefrontController;
+const reviewsCtrl     = require("../reviews").controller;
+const wompiCtrl       = require("../payments").wompiController;
+const analyticsCtrl   = require("../analytics").controller;
+const googleAuth      = require("../identity/auth").storefrontGoogleController;
+const inv                   = require("../inventory").service;
+const { service: procurement } = require("../procurement");
+const { notifyTenant, Payloads } = require("../notifications").push;
+const { enqueueNotification }    = require("../notifications").service;
+const { createUpload }      = require("../../../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
 

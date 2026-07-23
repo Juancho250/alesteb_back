@@ -5,7 +5,7 @@ const { adminScope } = require("../middleware/adminScope");
 
 // ── Rutas públicas (sin auth) ─────────────────────────
 router.use("/auth",       require("../src/modules/identity/auth").routes);
-router.use("/public-api", require("./public-api.routes")); // API key auth propia
+router.use("/public-api", require("../src/modules/storefront").routes); // API key auth propia
 
 // ── Middleware global para TODO lo de abajo ───────────
 router.use(auth);        // ← verifica JWT

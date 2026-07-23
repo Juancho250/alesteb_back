@@ -138,7 +138,8 @@ const procurementModule = safeRequire("./src/modules/procurement", "procurement.
 // ============================================
 // 🌐 RUTAS — API Pública
 // ============================================
-const publicApiRoutes = safeRequire("./routes/public-api.routes", "public-api.routes");
+const storefrontModule = safeRequire("./src/modules/storefront", "storefront.module");
+const publicApiRoutes = storefrontModule?.routes;
 
 console.log("[APP] Rutas cargadas.\n");
 

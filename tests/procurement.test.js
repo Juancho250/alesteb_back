@@ -984,7 +984,13 @@ test('source contract uses only real columns and trusted tenant callers', () => 
   );
 
   const publicApi = fs.readFileSync(
-    path.join(root, 'routes', 'public-api.routes.js'),
+    path.join(
+      root,
+      'src',
+      'modules',
+      'storefront',
+      'storefront.routes.js'
+    ),
     'utf8'
   );
 
