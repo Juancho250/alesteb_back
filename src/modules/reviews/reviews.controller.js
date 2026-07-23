@@ -1,6 +1,6 @@
-// controllers/reviews.controller.js
-const db = require("../src/platform/database");
-const { emitDataUpdate } = require("../config/socket");
+// src/modules/reviews/reviews.controller.js
+const db = require("../../platform/database");
+const { emitDataUpdate } = require("../../../config/socket");
 
 // ─── Helper: refrescar la vista materializada (fire-and-forget) ──────────────
 const refreshStats = () =>

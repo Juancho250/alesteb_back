@@ -126,7 +126,7 @@ const notificationsModule = safeRequire("./src/modules/notifications", "notifica
 const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
 const auraRoutes          = safeRequire("./routes/aura.routes",             "aura.routes");
 
-const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "reviews.routes");
+const reviewsModule = safeRequire("./src/modules/reviews", "reviews.module");
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
 const paymentsModule = safeRequire("./src/modules/payments", "payments.module");
 
@@ -173,7 +173,7 @@ if (discountsModule?.routes) app.use("/api/discounts", discountsModule.routes);
 if (bannersModule?.routes) app.use("/api/banners", bannersModule.routes);
 if (notificationsModule?.routes) app.use("/api/notifications", notificationsModule.routes);
 if (catalogModule?.variantsRoutes) app.use("/api", catalogModule.variantsRoutes);
-if (reviewsRoutes)       app.use("/api",               reviewsRoutes);
+if (reviewsModule?.routes) app.use("/api", reviewsModule.routes);
 if (chatRoutes)          app.use("/api/chat",          chatRoutes);
 if (agentRoutes)         app.use("/api/agent",         agentRoutes);
 if (auraRoutes)          app.use("/api/aura",          auraRoutes);
@@ -214,7 +214,7 @@ app.get("/api/health", (req, res) => {
       banners:       !!bannersModule?.routes,
       notifications: !!notificationsModule?.routes,
       variants:      !!catalogModule?.variantsRoutes,
-      reviews:       !!reviewsRoutes,
+      reviews:       !!reviewsModule?.routes,
       chat:          !!chatRoutes,
       agent:         !!agentRoutes,
       aura:          !!auraRoutes,

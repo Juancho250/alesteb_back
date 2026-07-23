@@ -9,7 +9,7 @@ const {
   checkRateLimit,
 } = require("../src/modules/identity/auth");
 const storefrontAuth  = require("../src/modules/identity/auth").storefrontController;
-const reviewsCtrl     = require("../controllers/reviews.controller");
+const reviewsCtrl     = require("../src/modules/reviews").controller;
 const wompiCtrl       = require("../src/modules/payments").wompiController;
 const analyticsCtrl   = require("../src/modules/analytics").controller;
 const googleAuth      = require("../src/modules/identity/auth").storefrontGoogleController;

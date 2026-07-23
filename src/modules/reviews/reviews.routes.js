@@ -1,10 +1,10 @@
-// routes/reviews.routes.js
+// src/modules/reviews/reviews.routes.js
 const express = require("express");
 const router  = express.Router();
 const jwt     = require("jsonwebtoken");
-const ctrl    = require("../controllers/reviews.controller");
-const { auth, requireManager } = require("../src/modules/identity/auth");
-const { adminScope }           = require("../middleware/adminScope");
+const ctrl    = require("./reviews.controller");
+const { auth, requireManager } = require("../identity/auth");
+const { adminScope }           = require("../../../middleware/adminScope");
 
 // Token válido pero NO requerido — el controller puede funcionar sin req.user
 const optionalAuth = (req, _res, next) => {
