@@ -5,7 +5,7 @@ const cron = require("node-cron");
 const db = require("../../../platform/database");
 const { TOOLS } = require("./agent.tools");
 const Groq = require("groq-sdk");
-const { recordUsage } = require("../../../../services/token-budget");
+const { recordUsage } = require("./token-budget.service");
 
 const ENABLED_VALUE = "true";
 const MAX_CONFIGURED_TENANTS = 50;

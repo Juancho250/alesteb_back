@@ -1,4 +1,4 @@
-// services/token-budget.js
+// src/modules/aura/legacy/token-budget.service.js
 // ── Presupuesto diario de tokens para Groq ────────────────────────────────
 // Evita alcanzar el límite duro de 100k TPD con un límite suave configurable.
 // Funciona en memoria (se resetea al reiniciar el servidor).
