@@ -1,8 +1,8 @@
 'use strict';
 
 const cron = require('node-cron');
-const { runDailyPredictiveFeatureJob } = require('./auraPredictiveFeatures.service');
-const { processForecastJobs, recoverStaleForecastJobs } = require('./auraForecasting.service');
+const { runDailyPredictiveFeatureJob } = require('./features.service');
+const { processForecastJobs, recoverStaleForecastJobs } = require('./forecasting.service');
 
 const health = {
   dailyFeatures: { enabled: false, running: false, lastCompletedAt: null, lastErrorCode: null },

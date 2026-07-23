@@ -1,4 +1,4 @@
-const forecasting = require("../../../../services/auraForecasting.service");
+const forecasting = require("./forecasting.service");
 
 function sendPredictionError(req, res, err) {
   const known = {

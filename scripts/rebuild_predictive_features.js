@@ -5,7 +5,7 @@ require('dotenv/config');
 require('../config/env')();
 
 const db = require('../src/platform/database');
-const predictive = require('../services/auraPredictiveFeatures.service');
+const predictive = require('../src/modules/aura/predictive/features.service');
 
 function arg(name) {
   const prefix = `--${name}=`;

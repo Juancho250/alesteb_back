@@ -175,7 +175,7 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const forecasting = require("../services/auraForecasting.service");
+const forecasting = require("../src/modules/aura/predictive/forecasting.service");
 
 function addDays(dateString, days) {
   const date = new Date(`${dateString}T00:00:00.000Z`);

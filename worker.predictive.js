@@ -4,7 +4,7 @@ require("dotenv/config");
 require("./config/env")();
 
 const db = require("./src/platform/database");
-const { startAuraPredictiveJobs } = require("./services/auraPredictive.jobs");
+const { startAuraPredictiveJobs } = require("./src/modules/aura/predictive/jobs.service");
 
 const worker = startAuraPredictiveJobs();
 if (!worker.enabled) {

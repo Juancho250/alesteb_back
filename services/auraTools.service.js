@@ -1,6 +1,6 @@
 const db = require("../src/platform/database");
 const auraActions = require("./auraActions.service");
-const auraForecasting = require("./auraForecasting.service");
+const auraForecasting = require("../src/modules/aura/predictive/forecasting.service");
 const auraCustomerGrowth = require("./auraCustomerGrowth.service");
 const auraSendTime = require("./auraSendTime.service");
 const auraImageJobs = require("../src/modules/aura/images/image-jobs.service");

@@ -2,7 +2,7 @@ require("dotenv/config");
 require("../config/env")();
 
 const db = require("../src/platform/database");
-const { runDailyPredictiveFeatureJob } = require("../services/auraPredictiveFeatures.service");
+const { runDailyPredictiveFeatureJob } = require("../src/modules/aura/predictive/features.service");
 
 async function main() {
   if (String(process.env.AURA_PREDICTIVE_JOBS_ENABLED || "false").toLowerCase() !== "true") {

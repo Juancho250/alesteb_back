@@ -1,8 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
-const db = require('../src/platform/database');
-const { FEATURE_VERSION } = require('./auraPredictiveFeatures.service');
+const db = require('../../../platform/database');
+const { FEATURE_VERSION } = require('./features.service');
 
 const FORECAST_MODEL_NAME = 'aura_statistical_baseline_forecaster';
 const FORECAST_MODEL_VERSION = 'baseline_v1';

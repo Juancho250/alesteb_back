@@ -382,8 +382,8 @@ function loadOneShotServices() {
     notificationWorker: require('../src/modules/notifications').worker,
     imageJobs: require('../src/modules/aura/images/image-jobs.service'),
     imageWorker: require('../src/modules/aura/images/image-worker.service'),
-    predictiveFeatures: require('../services/auraPredictiveFeatures.service'),
-    forecasting: require('../services/auraForecasting.service'),
+    predictiveFeatures: require('../src/modules/aura/predictive/features.service'),
+    forecasting: require('../src/modules/aura/predictive/forecasting.service'),
   };
 }
 

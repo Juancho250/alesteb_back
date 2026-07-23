@@ -5,7 +5,7 @@ const db = require("./src/platform/database");
 const { startSubscriptionCron } = require("./src/modules/subscriptions/subscription.cron");
 const { startInventoryJobs } = require("./src/modules/inventory").jobs;
 const { startNotificationWorker } = require("./src/modules/notifications").worker;
-const { startAuraPredictiveJobs } = require("./services/auraPredictive.jobs");
+const { startAuraPredictiveJobs } = require("./src/modules/aura/predictive/jobs.service");
 
 // notificationScheduler registra sus tareas al cargar el módulo.
 const workerHandles = [];

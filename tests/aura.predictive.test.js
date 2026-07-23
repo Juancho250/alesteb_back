@@ -270,8 +270,8 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const predictive = require("../services/auraPredictiveFeatures.service");
-const jobs = require("../services/auraPredictive.jobs");
+const predictive = require("../src/modules/aura/predictive/features.service");
+const jobs = require("../src/modules/aura/predictive/jobs.service");
 
 test.beforeEach(() => {
   calls.length = 0;

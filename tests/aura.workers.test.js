@@ -34,7 +34,7 @@ test("notification worker is flag-gated, non-overlapping and recovers stale clai
 });
 
 test("forecast claim respects max attempts and quarantines abandoned jobs", () => {
-  const forecast = source("services/auraForecasting.service.js");
+  const forecast = source("src/modules/aura/predictive/forecasting.service.js");
   assert.match(forecast, /FOR UPDATE SKIP LOCKED/);
   assert.match(forecast, /COALESCE\(attempts, 0\) < COALESCE\(max_attempts, 2\)/);
   assert.match(forecast, /AURA_FORECAST_STALE_CLAIM/);
@@ -120,8 +120,8 @@ test("one-shot claims are exact-ID and tenant-scoped while production defaults r
   const notificationWorker = source("src/modules/notifications/notification.worker.js");
   const images = source("src/modules/aura/images/image-jobs.service.js");
   const imageWorker = source("src/modules/aura/images/image-worker.service.js");
-  const forecast = source("services/auraForecasting.service.js");
-  const features = source("services/auraPredictiveFeatures.service.js");
+  const forecast = source("src/modules/aura/predictive/forecasting.service.js");
+  const features = source("src/modules/aura/predictive/features.service.js");
 
   assert.match(notification, /owner_admin_id = \$3[\s\S]*id = \$4/);
   assert.match(notification, /normalizeNotificationClaimScope/);
