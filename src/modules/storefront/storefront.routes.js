@@ -5,12 +5,12 @@ const { registerAuthRoutes } = require("./auth.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
 const { registerPaymentRoutes } = require("./payments.routes");
+const { registerReservationRoutes } = require("./reservations.routes");
 const db             = require("../../platform/database");
 const {
   apiKeyAuth,
   requireApiPermission,
   auth,
-  checkRateLimit,
 } = require("../identity/auth");
 
 
@@ -1101,50 +1101,8 @@ registerUploadRoutes(router);
 // RESERVAS DE STOCK
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.post("/inventory/reservations",
-  checkRateLimit((req) => `rl:rsv:${req.apiKey?.id ?? req.ip}`, 10, 60_000),
-  async (req, res) => {
-  try {
-    const { items, sessionId, ttlMinutes } = req.body;
-    if (!Array.isArray(items) || !items.length) {
-      return res.status(400).json({ success: false, message: "items es requerido", code: "MISSING_ITEMS" });
-    }
-    const result = await inv.createReservation({
-      items,
-      sessionId:    sessionId ?? null,
-      userId:       req.user?.id ?? null,
-      ownerAdminId: req.apiKey.adminId,
-      ttlMinutes,
-    });
-    res.json({ success: true, data: result });
-  } catch (err) {
-    if (err?.code === 'INSUFFICIENT_STOCK') return res.status(409).json({ success: false, message: err.message, code: err.code });
-    res.status(400).json({ success: false, message: err.message ?? 'Error al crear reserva' });
-  }
-});
+registerReservationRoutes(router);
 
-router.delete("/inventory/reservations/:id", async (req, res) => {
-  try {
-    const { rows: [r] } = await db.query(
-      `SELECT owner_admin_id FROM stock_reservations WHERE id = $1`,
-      [req.params.id],
-    );
-    if (!r) return res.status(404).json({ success: false, message: "Reserva no encontrada" });
-    if (r.owner_admin_id !== req.apiKey.adminId) {
-      return res.status(403).json({ success: false, message: "No autorizado" });
-    }
-    const result = await inv.releaseReservation(
-      Number(req.params.id),
-      { ownerAdminId: req.apiKey.adminId, userId: req.user?.id ?? 0 },
-      'cancelled',
-    );
-    res.json({ success: true, data: result });
-  } catch (err) {
-    res.status(400).json({ success: false, message: err.message ?? 'Error al liberar reserva' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // WOMPI
 // ─────────────────────────────────────────────────────────────────────────────
 
