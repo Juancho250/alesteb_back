@@ -1,10 +1,10 @@
-const auraChat = require("../../../../services/auraChat.service");
+const auraChat = require("../core/chat.service");
 const {
   listConversations: listStoredConversations,
   getConversation: getStoredConversation,
   deleteConversation: deleteStoredConversation,
-} = require("../../../../services/auraPersistence.service");
-const { getAuraUsage } = require("../../../../services/auraUsage.service");
+} = require("../core/persistence.service");
+const { getAuraUsage } = require("../core/usage.service");
 
 const MAX_MESSAGE_LENGTH = 2000;
 

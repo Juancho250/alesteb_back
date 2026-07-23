@@ -29,7 +29,7 @@ require.cache[dbPath] = {
   },
 };
 
-const auraOpenAI = require("../services/auraOpenAI.service");
+const auraOpenAI = require("../src/modules/aura/core/openai.service");
 const imageProvider = require("../services/auraImageOpenAI.service");
 const voice = require("../services/auraVoice.service");
 

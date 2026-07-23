@@ -1,6 +1,6 @@
 const crypto = require("crypto");
-const db = require("../src/platform/database");
-const { recordAuraUsage, estimateAuraCost } = require("./auraUsage.service");
+const db = require("../../../platform/database");
+const { recordAuraUsage, estimateAuraCost } = require("./usage.service");
 
 const SENSITIVE_KEY_RE = /(password|token|secret|api[_-]?key|authorization|cookie|cedula|documento|phone|email)/i;
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;

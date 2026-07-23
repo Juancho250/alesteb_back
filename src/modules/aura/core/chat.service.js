@@ -1,17 +1,17 @@
 const crypto = require("crypto");
-const auraContext = require("./auraContext.service");
-const auraOpenAI = require("./auraOpenAI.service");
+const auraContext = require("./context.service");
+const auraOpenAI = require("./openai.service");
 const {
   getConversation,
   saveConversation,
   sanitizeHistory,
-} = require("./auraPersistence.service");
+} = require("./persistence.service");
 const {
   recordAuraRunStart,
   recordAuraRunCompletion,
   recordAuraRunFailure,
-} = require("./auraAudit.service");
-const { estimateAuraCost } = require("./auraUsage.service");
+} = require("./audit.service");
+const { estimateAuraCost } = require("./usage.service");
 
 function createServiceError(message, code, status = 500) {
   const err = new Error(message);

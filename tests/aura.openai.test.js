@@ -47,9 +47,9 @@ require.cache[toolsPath] = {
   },
 };
 
-const openAIPath = require.resolve("../services/auraOpenAI.service");
+const openAIPath = require.resolve("../src/modules/aura/core/openai.service");
 delete require.cache[openAIPath];
-const auraOpenAI = require("../services/auraOpenAI.service");
+const auraOpenAI = require("../src/modules/aura/core/openai.service");
 
 const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const tenantMarker = "TENANT_PRIVATE_REVENUE_999";

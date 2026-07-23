@@ -873,8 +873,8 @@ test("Responses API flow executes read-only tools and returns audited tool usage
   const originalPost = axios.post;
   const posts = [];
 
-  delete require.cache[require.resolve("../services/auraOpenAI.service")];
-  const auraOpenAI = require("../services/auraOpenAI.service");
+  delete require.cache[require.resolve("../src/modules/aura/core/openai.service")];
+  const auraOpenAI = require("../src/modules/aura/core/openai.service");
 
   axios.post = async (_url, payload) => {
     posts.push(payload);
@@ -940,8 +940,8 @@ test("Responses API image flow returns backend job ids and requires polling", as
   const posts = [];
   const logs = [];
 
-  delete require.cache[require.resolve("../services/auraOpenAI.service")];
-  const auraOpenAI = require("../services/auraOpenAI.service");
+  delete require.cache[require.resolve("../src/modules/aura/core/openai.service")];
+  const auraOpenAI = require("../src/modules/aura/core/openai.service");
 
   console.log = (line) => logs.push(String(line));
   axios.post = async (_url, payload) => {

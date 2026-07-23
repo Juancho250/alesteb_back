@@ -1,7 +1,7 @@
 const {
   getAuraQuotaLimit,
   reserveAuraRequest,
-} = require("../../../../services/auraUsage.service");
+} = require("../core/usage.service");
 
 function sendQuotaError(req, res, status, message, code, usage = null) {
   return res.status(status).json({

@@ -1,4 +1,4 @@
-const db = require("../src/platform/database");
+const db = require("../../../platform/database");
 
 const ACTIVE_STATUSES = new Set(["trial", "active", "past_due"]);
 const DEFAULT_DAILY_LIMIT = 100;

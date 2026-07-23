@@ -344,18 +344,18 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const persistence = require("../services/auraPersistence.service");
+const persistence = require("../src/modules/aura/core/persistence.service");
 const { resolveAuraTenant } = require("../src/modules/aura/middleware/tenant.middleware");
 const { requireFeature, invalidateCache } = require("../src/modules/subscriptions").middleware;
 const { requireManager } = require("../src/modules/identity/auth");
 const auraController = require("../src/modules/aura/controllers/aura.controller");
 const agentController = require("../src/modules/aura/controllers/agent-compat.controller");
 const analyticsController = require("../src/modules/analytics").controller;
-const auraChat = require("../services/auraChat.service");
-const auraAudit = require("../services/auraAudit.service");
+const auraChat = require("../src/modules/aura/core/chat.service");
+const auraAudit = require("../src/modules/aura/core/audit.service");
 const { auraQuota } = require("../src/modules/aura/middleware/quota.middleware");
-const { normalizeConversationId } = require("../services/auraChat.service");
-const { normalizeSuggestedActions } = require("../services/auraOpenAI.service");
+const { normalizeConversationId } = require("../src/modules/aura/core/chat.service");
+const { normalizeSuggestedActions } = require("../src/modules/aura/core/openai.service");
 
 function responseDouble() {
   return {
