@@ -144,7 +144,7 @@ require.cache[dbPath] = {
 };
 
 const sendTime = require("../src/modules/aura/growth/send-time.service");
-const auraTools = require("../services/auraTools.service");
+const auraTools = require("../src/modules/aura/tools/tools.service");
 
 const ctxA = { ownerAdminId: 101, userId: 11, roles: ["admin"], query: { asOfDate: "2026-07-14" } };
 

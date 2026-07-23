@@ -31,7 +31,7 @@ const validTool = {
   },
 };
 
-const toolsPath = require.resolve("../services/auraTools.service");
+const toolsPath = require.resolve("../src/modules/aura/tools/tools.service");
 const originalToolsCache = require.cache[toolsPath];
 require.cache[toolsPath] = {
   id: toolsPath,

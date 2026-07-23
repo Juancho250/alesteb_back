@@ -411,7 +411,7 @@ require.cache[imageJobsPath] = {
   exports: fakeImageJobs,
 };
 
-const auraTools = require("../services/auraTools.service");
+const auraTools = require("../src/modules/aura/tools/tools.service");
 
 const ctxA = {
   ownerAdminId: 101,
