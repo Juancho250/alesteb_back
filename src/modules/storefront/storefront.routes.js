@@ -2,6 +2,7 @@
 const express        = require("express");
 const router         = express.Router();
 const { registerAuthRoutes } = require("./auth.routes");
+const { registerReviewsRoutes } = require("./reviews.routes");
 const db             = require("../../platform/database");
 const {
   apiKeyAuth,
@@ -10,7 +11,7 @@ const {
   checkRateLimit,
 } = require("../identity/auth");
 
-const reviewsCtrl     = require("../reviews").controller;
+
 const wompiCtrl       = require("../payments").wompiController;
 const analyticsCtrl   = require("../analytics").controller;
 
@@ -1087,9 +1088,9 @@ router.get("/sales/user/stats", auth, async (req, res) => {
 // RESEÑAS
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get("/products/:productId/reviews", reviewsCtrl.getProductReviews);
-router.get("/reviews/my/:productId", auth, reviewsCtrl.getUserReviewForProduct);
-router.post("/reviews", auth, reviewsCtrl.createReview);
+registerReviewsRoutes(router);
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UPLOAD
