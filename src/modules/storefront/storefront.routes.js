@@ -2,6 +2,7 @@
 const express        = require("express");
 const router         = express.Router();
 const { registerAuthRoutes } = require("./auth.routes");
+const { registerAccountRoutes } = require("./account.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
 const { registerPaymentRoutes } = require("./payments.routes");
@@ -1038,51 +1039,7 @@ registerAuthRoutes(router);
 // HISTORIAL Y ESTADÍSTICAS DEL USUARIO
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get("/sales/user/history", auth, async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT
-         s.id,
-         s.sale_number     AS order_code,
-         s.sale_date       AS created_at,
-         s.total, s.amount_paid, s.payment_status, s.payment_method,
-         s.sale_type, s.subtotal, s.tax_amount, s.discount_amount,
-         s.credit_due_date, s.shipping_address, s.shipping_city, s.shipping_notes
-       FROM sales s
-       WHERE s.customer_id    = $1
-         AND s.owner_admin_id = $2
-       ORDER BY s.sale_date DESC`,
-      [req.user.id, req.apiKey.adminId]
-    );
-    res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error("[PUBLIC API] GET /sales/user/history:", err);
-    res.status(500).json({ success: false, message: "Error al obtener historial" });
-  }
-});
-
-router.get("/sales/user/stats", auth, async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT
-         COUNT(DISTINCT s.id) AS total_orders,
-         COALESCE(SUM(CASE WHEN s.payment_status = 'paid'    THEN s.total ELSE 0 END), 0) AS total_invested,
-         COALESCE(SUM(CASE WHEN s.payment_status = 'pending' THEN s.total ELSE 0 END), 0) AS pending_amount,
-         COALESCE(SUM(CASE WHEN s.payment_status = 'partial' THEN (s.total - s.amount_paid) ELSE 0 END), 0) AS partial_pending,
-         COUNT(DISTINCT CASE WHEN s.payment_status = 'paid'    THEN s.id END) AS completed_orders,
-         COUNT(DISTINCT CASE WHEN s.payment_status = 'pending' THEN s.id END) AS pending_orders,
-         COUNT(DISTINCT CASE WHEN s.payment_status = 'partial' THEN s.id END) AS partial_orders
-       FROM sales s
-       WHERE s.customer_id    = $1
-         AND s.owner_admin_id = $2`,
-      [req.user.id, req.apiKey.adminId]
-    );
-    res.json({ success: true, summary: rows[0] });
-  } catch (err) {
-    console.error("[PUBLIC API] GET /sales/user/stats:", err);
-    res.status(500).json({ success: false, message: "Error al obtener estadísticas" });
-  }
-});
+registerAccountRoutes(router);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RESEÑAS
