@@ -1,6 +1,6 @@
-// controllers/contact.controller.js
-const db   = require("../src/platform/database");
-const { getBrevoClient } = require("../config/emailConfig");   // reusa tu helper existente
+// src/modules/contact/contact.controller.js
+const db   = require("../../platform/database");
+const { getBrevoClient } = require("../../../config/emailConfig");   // reusa tu helper existente
 
 // ── POST /api/contact  (público — sin auth) ──────────────────────────────────
 exports.submit = async (req, res) => {

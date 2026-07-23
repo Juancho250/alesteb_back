@@ -1,13 +1,13 @@
-// routes/contact.routes.js
+// src/modules/contact/contact.routes.js
 const express = require("express");
-const { auth, isAdmin } = require("../src/modules/identity/auth"); // ajusta si tu middleware de admin tiene otro nombre
+const { auth, isAdmin } = require("../identity/auth"); // ajusta si tu middleware de admin tiene otro nombre
 const {
   submit,
   list,
   markRead,
   reply,
   remove,
-} = require("../controllers/contact.controller");
+} = require("./contact.controller");
 
 const router = express.Router();
 
@@ -23,4 +23,4 @@ router.delete("/:id",            auth, remove);
 module.exports = router;
 
 // ── Registrar en app.js ───────────────────────────────────────────────────────
-// app.use("/api/contact", require("./routes/contact.routes"));
+// app.use("/api/contact", require("./src/modules/contact").routes);

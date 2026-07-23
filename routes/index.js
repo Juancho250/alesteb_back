@@ -24,7 +24,7 @@ router.use("/analytics",      require("../src/modules/analytics").routes);
 router.use("/stats",          require("../src/modules/stats").routes);
 router.use("/agent",          require("./agent.routes"));
 router.use("/chat",           require("./chat.routes"));
-router.use("/contact",        require("./contact.routes"));
+router.use("/contact",        require("../src/modules/contact").routes);
 router.use("/notifications",  require("../src/modules/notifications").routes);
 router.use("/roles",          require("../src/modules/identity/roles").routes);
 router.use("/api-keys",       require("../src/modules/identity/api-keys").routes);

@@ -131,7 +131,7 @@ const chatRoutes          = safeRequire("./routes/chat.routes",             "cha
 const paymentsModule = safeRequire("./src/modules/payments", "payments.module");
 
 const analyticsModule = safeRequire("./src/modules/analytics", "analytics.module");
-const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
+const contactModule = safeRequire("./src/modules/contact", "contact.module");
 const inventoryModule = safeRequire("./src/modules/inventory", "inventory.module");
 const procurementModule = safeRequire("./src/modules/procurement", "procurement.module");
 
@@ -180,7 +180,7 @@ if (auraRoutes)          app.use("/api/aura",          auraRoutes);
 if (paymentsModule?.wompiRoutes) app.use("/api/wompi", paymentsModule.wompiRoutes);
 if (paymentsModule?.paymentAccountsRoutes) app.use("/api/payment-accounts", paymentsModule.paymentAccountsRoutes);
 if (analyticsModule?.routes) app.use("/api/analytics", analyticsModule.routes);
-if (contactRoutes)       app.use("/api/contact",       contactRoutes);
+if (contactModule?.routes) app.use("/api/contact", contactModule.routes);
 if (inventoryModule?.routes) app.use("/api/inventory", inventoryModule.routes);
 if (procurementModule?.routes) app.use("/api/procurement", procurementModule.routes);
 if (financeModule?.pinRoutes) app.use("/api/finance-pin", financeModule.pinRoutes);
@@ -223,7 +223,7 @@ app.get("/api/health", (req, res) => {
       wompi:          !!paymentsModule?.wompiRoutes,
       paymentAccounts: !!paymentsModule?.paymentAccountsRoutes,
       analytics:      !!analyticsModule?.routes,
-      contact:       !!contactRoutes,
+      contact:       !!contactModule?.routes,
       publicApi:     !!publicApiRoutes,
     },
     services: {
