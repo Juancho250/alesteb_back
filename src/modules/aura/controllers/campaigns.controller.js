@@ -1,5 +1,5 @@
-const campaigns = require("../services/auraCampaigns.service");
-const sendTime = require("../services/auraSendTime.service");
+const campaigns = require("../../../../services/auraCampaigns.service");
+const sendTime = require("../../../../services/auraSendTime.service");
 
 function ctxFromReq(req) {
   return {

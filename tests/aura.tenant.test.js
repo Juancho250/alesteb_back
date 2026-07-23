@@ -345,15 +345,15 @@ require.cache[dbPath] = {
 };
 
 const persistence = require("../services/auraPersistence.service");
-const { resolveAuraTenant } = require("../middleware/aura.middleware");
+const { resolveAuraTenant } = require("../src/modules/aura/middleware/tenant.middleware");
 const { requireFeature, invalidateCache } = require("../src/modules/subscriptions").middleware;
 const { requireManager } = require("../src/modules/identity/auth");
-const auraController = require("../controllers/aura.controller");
-const agentController = require("../controllers/agent.controller");
+const auraController = require("../src/modules/aura/controllers/aura.controller");
+const agentController = require("../src/modules/aura/controllers/agent-compat.controller");
 const analyticsController = require("../src/modules/analytics").controller;
 const auraChat = require("../services/auraChat.service");
 const auraAudit = require("../services/auraAudit.service");
-const { auraQuota } = require("../middleware/auraQuota.middleware");
+const { auraQuota } = require("../src/modules/aura/middleware/quota.middleware");
 const { normalizeConversationId } = require("../services/auraChat.service");
 const { normalizeSuggestedActions } = require("../services/auraOpenAI.service");
 
@@ -955,8 +955,8 @@ test("unknown suggested action types are downgraded to a safe read-only type", (
 });
 
 test("AURA and legacy compatibility routers load with the secure middleware chain", () => {
-  const auraRouter = require("../routes/aura.routes");
-  const agentRouter = require("../routes/agent.routes");
+  const auraRouter = require("../src/modules/aura").routes;
+  const agentRouter = require("../src/modules/aura").agentRoutes;
 
   assert.equal(typeof auraRouter, "function");
   assert.equal(typeof agentRouter, "function");

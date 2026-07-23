@@ -1,13 +1,13 @@
 // Deprecated compatibility adapter for the legacy /api/agent contract.
 // It delegates to the safe, read-only AURA flow and never loads
 // services/agent.service.js or its SQL-generating tools.
-const auraChat = require("../services/auraChat.service");
+const auraChat = require("../../../../services/auraChat.service");
 const {
   listConversations: listStoredConversations,
   getConversation: getStoredConversation,
   deleteConversation: deleteStoredConversation,
   sanitizeHistory,
-} = require("../services/auraPersistence.service");
+} = require("../../../../services/auraPersistence.service");
 
 function sendAgentError(req, res, err) {
   if (res.headersSent) return res;

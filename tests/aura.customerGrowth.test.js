@@ -167,7 +167,7 @@ require.cache[dbPath] = {
 };
 
 const customerGrowth = require("../services/auraCustomerGrowth.service");
-const customerController = require("../controllers/auraCustomers.controller");
+const customerController = require("../src/modules/aura/controllers/customers.controller");
 
 function row(overrides) {
   return {

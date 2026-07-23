@@ -1,10 +1,10 @@
 const express = require("express");
-const { auth, requireManager, checkRateLimit } = require("../src/modules/identity/auth");
-const { adminScope } = require("../middleware/adminScope");
-const { requireFeature, requireActiveSubscription } = require("../src/modules/subscriptions").middleware;
-const { resolveAuraTenant } = require("../middleware/aura.middleware");
-const { auraQuota } = require("../middleware/auraQuota.middleware");
-const ctrl = require("../controllers/agent.controller");
+const { auth, requireManager, checkRateLimit } = require("../identity/auth");
+const { adminScope } = require("../../../middleware/adminScope");
+const { requireFeature, requireActiveSubscription } = require("../subscriptions").middleware;
+const { resolveAuraTenant } = require("./middleware/tenant.middleware");
+const { auraQuota } = require("./middleware/quota.middleware");
+const ctrl = require("./controllers/agent-compat.controller");
 
 const router = express.Router();
 

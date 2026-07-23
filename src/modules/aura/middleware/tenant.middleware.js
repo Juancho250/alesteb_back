@@ -1,4 +1,4 @@
-const db = require("../src/platform/database");
+const db = require("../../../platform/database");
 
 function logSecurityEvent(level, event, req, extra = {}) {
   const payload = {

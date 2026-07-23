@@ -1,4 +1,4 @@
-const imageJobs = require("../services/auraImageJobs.service");
+const imageJobs = require("../../../../services/auraImageJobs.service");
 
 function ctxFromReq(req) {
   return {

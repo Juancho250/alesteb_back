@@ -283,7 +283,7 @@ test("AURA Voice rejects invalid audio type and excessive duration", () => {
 });
 
 test("AURA Voice consumes quota on turn routes and inherits secure AURA middleware", () => {
-  const routeSource = fs.readFileSync(path.join(__dirname, "../routes/aura.routes.js"), "utf8");
+  const routeSource = fs.readFileSync(path.join(__dirname, "../src/modules/aura/aura.routes.js"), "utf8");
   assert.match(routeSource, /router\.use\(auth\)/);
   assert.match(routeSource, /router\.use\(adminScope\)/);
   assert.match(routeSource, /router\.use\(requireFeature\("has_ai_agent"\)\)/);

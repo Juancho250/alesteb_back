@@ -1,18 +1,18 @@
 const express = require("express");
-const { auth, requireAdmin, requireManager, checkRateLimit } = require("../src/modules/identity/auth");
-const { adminScope } = require("../middleware/adminScope");
-const { requireFeature, requireActiveSubscription } = require("../src/modules/subscriptions").middleware;
-const { resolveAuraTenant } = require("../middleware/aura.middleware");
-const { auraQuota } = require("../middleware/auraQuota.middleware");
-const ctrl = require("../controllers/aura.controller");
-const campaignCtrl = require("../controllers/auraCampaigns.controller");
-const imageCtrl = require("../controllers/auraImages.controller");
-const actionCtrl = require("../controllers/auraActions.controller");
-const predictionCtrl = require("../controllers/auraPredictions.controller");
-const customerCtrl = require("../controllers/auraCustomers.controller");
-const voiceCtrl = require("../controllers/auraVoice.controller");
-const operationsCtrl = require("../controllers/auraOperations.controller");
-const { auraVoiceUpload } = require("../middleware/auraVoiceUpload.middleware");
+const { auth, requireAdmin, requireManager, checkRateLimit } = require("../identity/auth");
+const { adminScope } = require("../../../middleware/adminScope");
+const { requireFeature, requireActiveSubscription } = require("../subscriptions").middleware;
+const { resolveAuraTenant } = require("./middleware/tenant.middleware");
+const { auraQuota } = require("./middleware/quota.middleware");
+const ctrl = require("./controllers/aura.controller");
+const campaignCtrl = require("./controllers/campaigns.controller");
+const imageCtrl = require("./controllers/images.controller");
+const actionCtrl = require("./controllers/actions.controller");
+const predictionCtrl = require("./controllers/predictions.controller");
+const customerCtrl = require("./controllers/customers.controller");
+const voiceCtrl = require("./controllers/voice.controller");
+const operationsCtrl = require("./controllers/operations.controller");
+const { auraVoiceUpload } = require("./middleware/voice-upload.middleware");
 
 const router = express.Router();
 

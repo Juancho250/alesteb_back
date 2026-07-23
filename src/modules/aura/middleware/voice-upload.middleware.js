@@ -1,5 +1,5 @@
 const multer = require("multer");
-const { getMaxAudioBytes } = require("../services/auraVoice.service");
+const { getMaxAudioBytes } = require("../../../../services/auraVoice.service");
 
 function buildUpload() {
   return multer({

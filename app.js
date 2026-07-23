@@ -123,8 +123,7 @@ const discountsModule = safeRequire("./src/modules/discounts", "discounts.module
 const salesModule = safeRequire("./src/modules/sales", "sales.module");
 const bannersModule = safeRequire("./src/modules/banners", "banners.module");
 const notificationsModule = safeRequire("./src/modules/notifications", "notifications.module");
-const agentRoutes         = safeRequire("./routes/agent.routes",            "agent.routes");
-const auraRoutes          = safeRequire("./routes/aura.routes",             "aura.routes");
+const auraModule = safeRequire("./src/modules/aura", "aura.module");
 
 const reviewsModule = safeRequire("./src/modules/reviews", "reviews.module");
 const chatModule = safeRequire("./src/modules/chat", "chat.module");
@@ -175,8 +174,8 @@ if (notificationsModule?.routes) app.use("/api/notifications", notificationsModu
 if (catalogModule?.variantsRoutes) app.use("/api", catalogModule.variantsRoutes);
 if (reviewsModule?.routes) app.use("/api", reviewsModule.routes);
 if (chatModule?.routes) app.use("/api/chat", chatModule.routes);
-if (agentRoutes)         app.use("/api/agent",         agentRoutes);
-if (auraRoutes)          app.use("/api/aura",          auraRoutes);
+if (auraModule?.agentRoutes) app.use("/api/agent", auraModule.agentRoutes);
+if (auraModule?.routes) app.use("/api/aura", auraModule.routes);
 if (paymentsModule?.wompiRoutes) app.use("/api/wompi", paymentsModule.wompiRoutes);
 if (paymentsModule?.paymentAccountsRoutes) app.use("/api/payment-accounts", paymentsModule.paymentAccountsRoutes);
 if (analyticsModule?.routes) app.use("/api/analytics", analyticsModule.routes);
@@ -216,8 +215,8 @@ app.get("/api/health", (req, res) => {
       variants:      !!catalogModule?.variantsRoutes,
       reviews:       !!reviewsModule?.routes,
       chat:          !!chatModule?.routes,
-      agent:         !!agentRoutes,
-      aura:          !!auraRoutes,
+      agent:         !!auraModule?.agentRoutes,
+      aura:          !!auraModule?.routes,
       financePin:    !!financeModule?.pinRoutes,
       creditPay:     !!salesModule?.creditPayRoutes,
       wompi:          !!paymentsModule?.wompiRoutes,
