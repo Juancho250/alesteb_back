@@ -4,7 +4,7 @@ const { adminScope } = require("../../../middleware/adminScope");
 const { requireFeature, requireActiveSubscription } = require("../subscriptions").middleware;
 const { resolveAuraTenant } = require("./middleware/tenant.middleware");
 const { auraQuota } = require("./middleware/quota.middleware");
-const ctrl = require("./controllers/agent-compat.controller");
+const ctrl = require("./http").agentCompatController;
 
 const router = express.Router();
 

@@ -1,6 +1,6 @@
 // Deprecated compatibility adapter for the legacy /api/agent contract.
 // It delegates to the safe, read-only AURA flow and never loads
-// services/agent.service.js or its SQL-generating tools.
+// src/modules/aura/legacy/agent.service.js or its deprecated tools.
 const auraChat = require("../core/chat.service");
 const {
   listConversations: listStoredConversations,

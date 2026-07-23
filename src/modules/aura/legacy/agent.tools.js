@@ -1,10 +1,10 @@
-// services/agent.tools.js
+// src/modules/aura/legacy/agent.tools.js
 // DEPRECATED: legacy agent tools. Free-form SQL execution is disabled in the
 // secure AURA MVP. Keep this file only for compatibility with deprecated code.
-const db = require("../src/platform/database");
-const { getIO } = require("../config/socket");
+const db = require("../../../platform/database");
+const { getIO } = require("../../../../config/socket");
 const Groq = require("groq-sdk");
-const { sendAgentReportEmail } = require("../config/emailConfig");
+const { sendAgentReportEmail } = require("../../../../config/emailConfig");
 
 function legacyToolError(message, code) {
   const err = new Error(message);

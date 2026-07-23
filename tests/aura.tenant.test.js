@@ -348,8 +348,8 @@ const persistence = require("../src/modules/aura/core/persistence.service");
 const { resolveAuraTenant } = require("../src/modules/aura/middleware/tenant.middleware");
 const { requireFeature, invalidateCache } = require("../src/modules/subscriptions").middleware;
 const { requireManager } = require("../src/modules/identity/auth");
-const auraController = require("../src/modules/aura/controllers/aura.controller");
-const agentController = require("../src/modules/aura/controllers/agent-compat.controller");
+const auraController = require("../src/modules/aura/http/aura.controller");
+const agentController = require("../src/modules/aura/http/agent-compat.controller");
 const analyticsController = require("../src/modules/analytics").controller;
 const auraChat = require("../src/modules/aura/core/chat.service");
 const auraAudit = require("../src/modules/aura/core/audit.service");
@@ -967,9 +967,9 @@ test("AURA and legacy compatibility routers load with the secure middleware chai
 test("legacy agent cron is disabled by default", () => {
   const previous = process.env.ENABLE_LEGACY_AGENT_CRON;
   delete process.env.ENABLE_LEGACY_AGENT_CRON;
-  delete require.cache[require.resolve("../services/agent.cron")];
+  delete require.cache[require.resolve("../src/modules/aura/legacy/agent.cron")];
 
-  const legacyCron = require("../services/agent.cron");
+  const legacyCron = require("../src/modules/aura/legacy/agent.cron");
 
   assert.equal(legacyCron.isLegacyAgentCronEnabled(), false);
   assert.equal(legacyCron.getLegacyAgentCronStatus().enabled, false);

@@ -1,11 +1,11 @@
-// services/agent.cron.js
+// src/modules/aura/legacy/agent.cron.js
 // DEPRECATED: legacy autonomous agent cron. Disabled by default and never
 // enabled in production. Worker-safe jobs should live in worker.js services.
 const cron = require("node-cron");
-const db = require("../src/platform/database");
+const db = require("../../../platform/database");
 const { TOOLS } = require("./agent.tools");
 const Groq = require("groq-sdk");
-const { recordUsage } = require("./token-budget");
+const { recordUsage } = require("../../../../services/token-budget");
 
 const ENABLED_VALUE = "true";
 const MAX_CONFIGURED_TENANTS = 50;

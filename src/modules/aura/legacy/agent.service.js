@@ -1,4 +1,4 @@
-// services/agent.service.js
+// src/modules/aura/legacy/agent.service.js
 // DEPRECATED: legacy Groq/ReAct agent. Productive traffic must use the
 // /api/agent compatibility adapter, which delegates to safe AURA services.
 // This module no longer runs model-generated SQL or text-confirmed actions.
