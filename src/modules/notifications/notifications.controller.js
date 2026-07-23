@@ -2,7 +2,7 @@
 const crypto   = require('crypto');
 const db = require("../../platform/database");
 const { getOrCreateSettings, enqueueNotification } = require("./notification.service");
-const whatsapp = require("../../../services/providers/whatsapp.provider");
+const whatsapp = require("./providers/whatsapp.provider");
 const { updateProviderStatusByMessageId } = require("./notification-outbox.service");
 
 // Verifies X-Hub-Signature-256 sent by Meta on every webhook POST.

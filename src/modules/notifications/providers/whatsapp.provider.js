@@ -1,4 +1,4 @@
-// services/providers/whatsapp.provider.js
+// src/modules/notifications/providers/whatsapp.provider.js
 // Provider-agnostic dispatcher. Select via WHATSAPP_PROVIDER env var:
 //   'meta_cloud' (default) — native fetch, no extra deps
 //   'twilio'               — requires `twilio` npm package

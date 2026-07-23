@@ -22,7 +22,7 @@ mockModule("../src/modules/notifications/notification.service", {
   getOrCreateSettings: async () => ({}),
   enqueueNotification: async () => null,
 });
-mockModule("../services/providers/whatsapp.provider", {});
+mockModule("../src/modules/notifications/providers/whatsapp.provider", {});
 mockModule("../src/modules/notifications/notification-outbox.service", {
   async updateProviderStatusByMessageId(providerMessageId, status, metadata) {
     updates.push({ providerMessageId, status, metadata });

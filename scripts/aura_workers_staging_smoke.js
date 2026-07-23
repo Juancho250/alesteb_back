@@ -344,7 +344,7 @@ function installRealProviderGuard() {
   patch(cloudinary.uploader, 'upload_stream', 'cloudinary_upload');
   patch(cloudinary.uploader, 'destroy', 'cloudinary_destroy');
 
-  const whatsapp = require('../services/providers/whatsapp.provider');
+  const whatsapp = require('../src/modules/notifications/providers/whatsapp.provider');
   patch(whatsapp, 'send', 'whatsapp');
   patch(whatsapp, 'sendTemplate', 'whatsapp_template');
 
