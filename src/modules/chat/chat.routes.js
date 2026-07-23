@@ -1,11 +1,11 @@
-// routes/chat.routes.js
+// src/modules/chat/chat.routes.js
 const express = require('express');
 const router  = express.Router();
 const {
   getChatUsers, getConversation, editMessage, deleteMessage,
   uploadImage, uploadChatImage, clearHistory,
-} = require('../controllers/chat.controller');
-const { auth } = require('../src/modules/identity/auth');
+} = require('./chat.controller');
+const { auth } = require('../identity/auth');
 
 router.get('/users',                auth, getChatUsers);
 router.get('/conversation/:userId', auth, getConversation);

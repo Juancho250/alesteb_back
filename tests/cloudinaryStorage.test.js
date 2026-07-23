@@ -81,7 +81,7 @@ test("local Cloudinary storage rejects argument-injection characters", async () 
 });
 
 test("chat Cloudinary public id no longer embeds raw originalname", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../controllers/chat.controller.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../src/modules/chat/chat.controller.js"), "utf8");
   assert.match(source, /safeChatImageBaseName\(file\.originalname\)/);
   assert.doesNotMatch(source, /file\.originalname\.split/);
   assert.doesNotMatch(source, /multer-storage-cloudinary/);

@@ -51,7 +51,7 @@ test("worker entrypoints expose independent graceful shutdown", () => {
 });
 
 test("Socket direct messages validate same-tenant recipient before insert", () => {
-  const socket = source("config/socket.js");
+  const socket = source("src/modules/chat/chat.socket.js");
   const ownershipCheck = socket.indexOf("COALESCE(owner_admin_id, id) = $2");
   const messageInsert = socket.indexOf("INSERT INTO chat_messages");
   assert.ok(ownershipCheck >= 0 && ownershipCheck < messageInsert);

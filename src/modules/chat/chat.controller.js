@@ -1,9 +1,9 @@
-// controllers/chat.controller.js
-const db = require('../src/platform/database');
-const cloudinary = require('../config/cloudinary');
-const { CloudinaryStorage } = require('../middleware/cloudinaryStorage');
+// src/modules/chat/chat.controller.js
+const db = require('../../platform/database');
+const cloudinary = require('../../../config/cloudinary');
+const { CloudinaryStorage } = require('../../../middleware/cloudinaryStorage');
 const multer = require('multer');
-const { getIO } = require('../config/socket');
+const { getIO } = require('../../../config/socket');
 
 function safeChatImageBaseName(originalName) {
   const base = String(originalName || 'image').replace(/\.[^.]*$/, '');
