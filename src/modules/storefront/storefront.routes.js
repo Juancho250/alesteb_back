@@ -4,6 +4,7 @@ const router         = express.Router();
 const { registerAuthRoutes } = require("./auth.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
+const { registerPaymentRoutes } = require("./payments.routes");
 const db             = require("../../platform/database");
 const {
   apiKeyAuth,
@@ -13,7 +14,6 @@ const {
 } = require("../identity/auth");
 
 
-const wompiCtrl       = require("../payments").wompiController;
 const analyticsCtrl   = require("../analytics").controller;
 
 const inv                   = require("../inventory").service;
@@ -1148,7 +1148,7 @@ router.delete("/inventory/reservations/:id", async (req, res) => {
 // WOMPI
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get("/wompi/session/:sale_id", auth, wompiCtrl.getSession);
-router.get("/wompi/verify/:reference", auth, wompiCtrl.verifyByReference);
+registerPaymentRoutes(router);
+
 
 module.exports = router;
