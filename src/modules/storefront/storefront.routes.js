@@ -3,6 +3,7 @@ const express        = require("express");
 const router         = express.Router();
 const { registerAuthRoutes } = require("./auth.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
+const { registerUploadRoutes } = require("./uploads.routes");
 const db             = require("../../platform/database");
 const {
   apiKeyAuth,
@@ -19,7 +20,6 @@ const inv                   = require("../inventory").service;
 const { service: procurement } = require("../procurement");
 const { notifyTenant, Payloads } = require("../notifications").push;
 const { enqueueNotification }    = require("../notifications").service;
-const { createUpload }      = require("../../../middleware/upload.middleware");
 
 router.use(apiKeyAuth);
 
@@ -1096,19 +1096,8 @@ registerReviewsRoutes(router);
 // UPLOAD
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _uploadStorefront = createUpload("storefront", 5);
+registerUploadRoutes(router);
 
-router.post("/upload", auth, _uploadStorefront.single("image"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: "No se recibió ningún archivo", code: "NO_FILE" });
-  }
-  res.json({
-    success: true,
-    data: { url: req.file.path, public_id: req.file.filename },
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // RESERVAS DE STOCK
 // ─────────────────────────────────────────────────────────────────────────────
 
