@@ -254,7 +254,7 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const auraCampaigns = require("../services/auraCampaigns.service");
+const auraCampaigns = require("../src/modules/aura/growth/campaigns.service");
 
 const ctxA = { ownerAdminId: 101, userId: 11, roles: ["admin"] };
 const ctxB = { ownerAdminId: 202, userId: 22, roles: ["admin"] };

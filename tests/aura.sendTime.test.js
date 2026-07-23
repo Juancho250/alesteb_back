@@ -143,7 +143,7 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const sendTime = require("../services/auraSendTime.service");
+const sendTime = require("../src/modules/aura/growth/send-time.service");
 const auraTools = require("../services/auraTools.service");
 
 const ctxA = { ownerAdminId: 101, userId: 11, roles: ["admin"], query: { asOfDate: "2026-07-14" } };

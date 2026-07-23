@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const db = require("../src/platform/database");
+const db = require("../../../platform/database");
 
 const SEND_TIME_VERSION = "aura_send_time_v1";
 const DIRECT_CHANNELS = new Set(["email", "whatsapp", "push"]);

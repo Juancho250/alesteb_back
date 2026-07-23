@@ -166,8 +166,8 @@ require.cache[dbPath] = {
   exports: fakeDb,
 };
 
-const customerGrowth = require("../services/auraCustomerGrowth.service");
-const customerController = require("../src/modules/aura/controllers/customers.controller");
+const customerGrowth = require("../src/modules/aura/growth/customer-growth.service");
+const customerController = require("../src/modules/aura/growth/customers.controller");
 
 function row(overrides) {
   return {

@@ -1,4 +1,4 @@
-const customerGrowth = require("../../../../services/auraCustomerGrowth.service");
+const customerGrowth = require("./customer-growth.service");
 
 function ctxFromReq(req) {
   return {

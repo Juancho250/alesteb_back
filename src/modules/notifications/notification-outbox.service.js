@@ -4,7 +4,7 @@ const brevo = require('@getbrevo/brevo');
 const db = require('../../platform/database');
 const whatsappProvider = require('../../../services/providers/whatsapp.provider');
 const { sendPushToOne } = require('./push.service');
-const { prepareCampaignRecipients } = require('../../../services/auraCampaigns.service');
+const { prepareCampaignRecipients } = require('../aura/growth/campaigns.service');
 
 const DIRECT_CHANNELS = new Set(['email', 'whatsapp', 'push']);
 
