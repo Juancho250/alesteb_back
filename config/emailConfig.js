@@ -613,7 +613,7 @@ const sendCreditReminderEmail = async (email, customerName, data, type, branding
  * @param {object|null} branding
  */
 const sendInvoiceEmail = async (email, userName, orderData, emailType = 'confirmation', branding = null) => {
-  const { generateInvoicePdf } = require('../services/invoice.service');
+  const { generateInvoicePdf } = require('../src/modules/sales/documents');
   const { apiInstance, SendSmtpEmail } = getBrevoClient();
   const b = branding ?? ALESTEB_BRANDING;
 
