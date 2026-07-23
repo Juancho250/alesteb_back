@@ -11,7 +11,7 @@ const actionCtrl = require("./controllers/actions.controller");
 const predictionCtrl = require("./predictive").controller;
 const customerCtrl = require("./growth").customerController;
 const voiceModule = require("./voice");
-const operationsCtrl = require("./controllers/operations.controller");
+const operationsCtrl = require("./operations").controller;
 const voiceCtrl = voiceModule.controller;
 const { auraVoiceUpload } = voiceModule.uploadMiddleware;
 

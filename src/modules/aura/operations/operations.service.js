@@ -1,4 +1,4 @@
-const db = require("../src/platform/database");
+const db = require("../../../platform/database");
 
 function flag(name) {
   return String(process.env[name] || "false").toLowerCase() === "true";

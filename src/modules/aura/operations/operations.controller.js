@@ -1,4 +1,4 @@
-const operations = require("../../../../services/auraOperations.service");
+const operations = require("./operations.service");
 
 exports.health = async (req, res) => {
   try {

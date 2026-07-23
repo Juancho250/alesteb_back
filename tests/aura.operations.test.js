@@ -30,7 +30,7 @@ require.cache[dbPath] = {
   },
 };
 
-const operations = require("../services/auraOperations.service");
+const operations = require("../src/modules/aura/operations/operations.service");
 
 test.beforeEach(() => calls.splice(0));
 
