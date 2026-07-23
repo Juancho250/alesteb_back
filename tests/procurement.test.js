@@ -989,7 +989,7 @@ test('source contract uses only real columns and trusted tenant callers', () => 
       'src',
       'modules',
       'storefront',
-      'storefront.routes.js'
+      'sales.routes.js'
     ),
     'utf8'
   );
