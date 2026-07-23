@@ -114,7 +114,7 @@ const apiKeysModule = safeRequire("./src/modules/identity/api-keys", "identity.a
 const tenantProfileModule = safeRequire("./src/modules/tenant/profile", "tenant.profile.module");
 const subscriptionsModule = safeRequire("./src/modules/subscriptions", "subscriptions.module");
 
-const statsRoutes         = safeRequire("./routes/stats.routes",            "stats.routes");
+const statsModule = safeRequire("./src/modules/stats", "stats.module");
 const providersModule = safeRequire("./src/modules/providers", "providers.module");
 const financeModule = safeRequire("./src/modules/finance", "finance.module");
 const catalogModule = safeRequire("./src/modules/catalog", "catalog.module");
@@ -163,7 +163,7 @@ if (tenantProfileModule?.routes) app.use("/api/admin-profile", tenantProfileModu
 if (subscriptionsModule?.routes) app.use("/api/subscriptions", subscriptionsModule.routes);
 
 // — Resto del panel —
-if (statsRoutes)         app.use("/api/stats",         statsRoutes);
+if (statsModule?.routes) app.use("/api/stats", statsModule.routes);
 if (providersModule?.routes) app.use("/api/providers", providersModule.routes);
 if (financeModule?.routes) app.use("/api/finance", financeModule.routes);
 if (catalogModule?.productsRoutes) app.use("/api/products", catalogModule.productsRoutes);
@@ -204,7 +204,7 @@ app.get("/api/health", (req, res) => {
       apiKeys:       !!apiKeysModule?.routes,
       adminProfile:  !!tenantProfileModule?.routes,
       subscriptions: !!subscriptionsModule?.routes,
-      stats:         !!statsRoutes,
+      stats:         !!statsModule?.routes,
       providers:     !!providersModule?.routes,
       finance:       !!financeModule?.routes,
       products:      !!catalogModule?.productsRoutes,

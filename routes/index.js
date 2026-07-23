@@ -21,7 +21,7 @@ router.use("/banners",        require("../src/modules/banners").routes);
 router.use("/discounts",      require("../src/modules/discounts").routes);
 router.use("/finance",        require("../src/modules/finance").routes);
 router.use("/analytics",      require("../src/modules/analytics").routes);
-router.use("/stats",          require("./stats.routes"));
+router.use("/stats",          require("../src/modules/stats").routes);
 router.use("/agent",          require("./agent.routes"));
 router.use("/chat",           require("./chat.routes"));
 router.use("/contact",        require("./contact.routes"));
