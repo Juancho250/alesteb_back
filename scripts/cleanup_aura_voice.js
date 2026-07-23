@@ -2,7 +2,7 @@ require("dotenv/config");
 require("../config/env")();
 
 const db = require("../src/platform/database");
-const { cleanupExpiredVoiceData } = require("../services/auraVoice.service");
+const { cleanupExpiredVoiceData } = require("../src/modules/aura/voice/voice.service");
 
 async function main() {
   if (String(process.env.AURA_VOICE_CLEANUP_ENABLED || "false").toLowerCase() !== "true") {

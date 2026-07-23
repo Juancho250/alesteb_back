@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const axios = require("axios");
-const db = require("../src/platform/database");
-const auraChat = require("../src/modules/aura/core/chat.service");
-const { redactText, redactObject } = require("../src/modules/aura/core/audit.service");
+const db = require("../../../platform/database");
+const auraChat = require("../core/chat.service");
+const { redactText, redactObject } = require("../core/audit.service");
 
 const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
 const OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech";

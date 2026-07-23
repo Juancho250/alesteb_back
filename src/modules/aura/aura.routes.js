@@ -10,9 +10,10 @@ const imageCtrl = require("./controllers/images.controller");
 const actionCtrl = require("./controllers/actions.controller");
 const predictionCtrl = require("./controllers/predictions.controller");
 const customerCtrl = require("./controllers/customers.controller");
-const voiceCtrl = require("./controllers/voice.controller");
+const voiceModule = require("./voice");
 const operationsCtrl = require("./controllers/operations.controller");
-const { auraVoiceUpload } = require("./middleware/voice-upload.middleware");
+const voiceCtrl = voiceModule.controller;
+const { auraVoiceUpload } = voiceModule.uploadMiddleware;
 
 const router = express.Router();
 

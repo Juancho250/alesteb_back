@@ -1,4 +1,4 @@
-const auraVoice = require("../../../../services/auraVoice.service");
+const auraVoice = require("./voice.service");
 
 function quotaUsage(req) {
   const usage = req.auraUsage || {};

@@ -221,7 +221,7 @@ require.cache[axiosPath] = {
   },
 };
 
-const voice = require("../services/auraVoice.service");
+const voice = require("../src/modules/aura/voice/voice.service");
 
 function ctx(ownerAdminId = 101, userId = 11) {
   return {
