@@ -8,6 +8,7 @@ const { registerSalesRoutes } = require("./sales.routes");
 const { registerInventoryListRoute, registerInventoryAvailabilityRoute } = require("./inventory.routes");
 const { registerCatalogRoutes } = require("./catalog.routes");
 const { registerDiscountRoutes } = require("./discounts.routes");
+const { registerBannerRoutes } = require("./banners.routes");
 const { registerReviewsRoutes } = require("./reviews.routes");
 const { registerUploadRoutes } = require("./uploads.routes");
 const { registerPaymentRoutes } = require("./payments.routes");
@@ -71,28 +72,8 @@ registerCatalogRoutes(router);
 
 registerInventoryListRoute(router);
 
-// GET /public-api/v1/banners
-router.get("/banners", async (req, res) => {
-  try {
-    const adminId = req.apiKey.adminId;
+registerBannerRoutes(router);
 
-    const result = await db.query(
-      `SELECT id, title, description, image_url, button_text, button_link, display_order, is_active
-       FROM banners
-       WHERE is_active = true
-         AND created_by = $1
-       ORDER BY display_order ASC`,
-      [adminId]
-    );
-
-    return res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error("[PUBLIC API] GET /banners", error);
-    res.status(500).json({ success: false, message: "Error al obtener banners" });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 registerDiscountRoutes(router);
 
 registerSalesRoutes(router);
