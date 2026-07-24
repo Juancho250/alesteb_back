@@ -1014,6 +1014,7 @@ router.post("/auth/refresh", storefrontAuth.refreshToken);
 router.post("/auth/logout", auth, storefrontAuth.logout);
 router.get("/auth/profile", auth, storefrontAuth.getProfile);
 router.put("/auth/profile", auth, storefrontAuth.updateProfile);
+router.delete("/auth/account", auth, storefrontAuth.deleteAccount);
 
 router.post(
   "/auth/profile/avatar",

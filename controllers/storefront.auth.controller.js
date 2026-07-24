@@ -1150,3 +1150,93 @@ exports.uploadProfileAvatar = async (req, res) => {
     client.release();
   }
 };
+
+// ============================================================
+// ELIMINAR CUENTA DEL CLIENTE
+// Conserva la integridad de pedidos/facturas, pero anonimiza los
+// datos personales y revoca todas las sesiones del usuario.
+// ============================================================
+exports.deleteAccount = async (req, res) => {
+  const client = await db.connect();
+  try {
+    const userId = req.user.id;
+    const ownerAdminId = req.apiKey.adminId;
+    const deletionId = `${userId}-${Date.now()}`;
+    const anonymousEmail = `deleted-${deletionId}@deleted.blackroyale.invalid`;
+    const anonymousCedula = `deleted-${deletionId}`;
+    const unusablePassword = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), SALT_ROUNDS);
+
+    await client.query("BEGIN");
+
+    const userRes = await client.query(
+      `SELECT id, profile_image_public_id
+       FROM users
+       WHERE id = $1 AND owner_admin_id = $2 AND is_active = true
+       FOR UPDATE`,
+      [userId, ownerAdminId]
+    );
+
+    if (userRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Cuenta no encontrada",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    const previousPublicId = userRes.rows[0].profile_image_public_id;
+
+    await client.query(
+      `UPDATE refresh_tokens
+       SET revoked = true, revoked_at = NOW()
+       WHERE user_id = $1 AND revoked = false`,
+      [userId]
+    );
+
+    await client.query(
+      `UPDATE users
+       SET email = $1,
+           password = $2,
+           name = 'Cuenta eliminada',
+           cedula = $3,
+           phone = NULL,
+           city = NULL,
+           address = NULL,
+           profile_image_url = NULL,
+           profile_image_public_id = NULL,
+           reset_token = NULL,
+           reset_expires = NULL,
+           is_active = false,
+           updated_at = NOW()
+       WHERE id = $4 AND owner_admin_id = $5`,
+      [anonymousEmail, unusablePassword, anonymousCedula, userId, ownerAdminId]
+    );
+
+    await client.query("COMMIT");
+
+    if (previousPublicId) {
+      cloudinary.uploader.destroy(previousPublicId, {
+        resource_type: "image",
+        invalidate: true,
+      }).catch((error) => {
+        console.warn("[STOREFRONT DELETE ACCOUNT] No se pudo borrar el avatar:", error.message);
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Cuenta eliminada y datos personales anonimizados correctamente",
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[STOREFRONT DELETE ACCOUNT ERROR]", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error al eliminar la cuenta",
+      code: "SERVER_ERROR",
+    });
+  } finally {
+    client.release();
+  }
+};
